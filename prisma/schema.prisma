@@ -1,0 +1,286 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum MembershipRole {
+  ADMIN
+  MEMBER
+}
+
+enum ContractStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+enum EntityFieldType {
+  TEXT
+  TEXTAREA
+  INTEGER
+  DECIMAL
+  MONEY
+  BOOLEAN
+  DATE
+  DATETIME
+  SELECT
+  MULTISELECT
+  EMAIL
+  PHONE
+  URL
+  FILE
+  IMAGE
+  RELATION
+}
+
+enum EntityRecordStatus {
+  ACTIVE
+  INACTIVE
+  ARCHIVED
+}
+
+enum AuditAction {
+  RECORD_CREATED
+  RECORD_UPDATED
+  RECORD_STATUS_CHANGED
+  RECORD_ARCHIVED
+  VALUE_CHANGED
+  RELATION_ADDED
+  RELATION_REMOVED
+}
+
+model User {
+  id            String       @id @default(cuid())
+  name          String?
+  email         String       @unique
+  emailVerified DateTime?
+  image         String?
+  passwordHash  String?
+  accounts      Account[]
+  sessions      Session[]
+  memberships   Membership[]
+  auditEvents   AuditEvent[]
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+model Organization {
+  id          String       @id @default(cuid())
+  name        String
+  slug        String       @unique
+  memberships Membership[]
+  contracts   Contract[]
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+}
+
+model Membership {
+  id             String         @id @default(cuid())
+  userId         String
+  organizationId String
+  role           MembershipRole @default(MEMBER)
+  user           User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  @@unique([userId, organizationId])
+}
+
+model Contract {
+  id             String         @id @default(cuid())
+  organizationId String
+  name           String
+  code           String
+  description    String?
+  status         ContractStatus @default(ACTIVE)
+  slug           String
+  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  entityTypes    EntityType[]
+  auditEvents    AuditEvent[]
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  @@unique([organizationId, code])
+  @@unique([organizationId, slug])
+}
+
+model EntityType {
+  id          String         @id @default(cuid())
+  contractId  String
+  name        String
+  slug        String
+  description String?
+  icon        String?
+  isActive    Boolean        @default(true)
+  contract    Contract       @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  fields      EntityField[]
+  records     EntityRecord[]
+  auditEvents AuditEvent[]
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  @@unique([contractId, name])
+  @@unique([contractId, slug])
+}
+
+model EntityField {
+  id           String           @id @default(cuid())
+  entityTypeId String
+  name         String
+  key          String
+  description  String?
+  type         EntityFieldType
+  required     Boolean          @default(false)
+  isUnique     Boolean          @default(false) @map("unique")
+  searchable   Boolean          @default(false)
+  multiple     Boolean          @default(false)
+  sortOrder    Int              @default(0)
+  config       Json?
+  isActive     Boolean          @default(true)
+  entityType   EntityType       @relation(fields: [entityTypeId], references: [id], onDelete: Cascade)
+  options      FieldOption[]
+  values       EntityValue[]
+  relations    EntityRelation[]
+  auditChanges AuditChange[]
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  @@unique([entityTypeId, key])
+}
+
+model FieldOption {
+  id            String      @id @default(cuid())
+  entityFieldId String
+  label         String
+  value         String
+  sortOrder     Int         @default(0)
+  isActive      Boolean     @default(true)
+  entityField   EntityField @relation(fields: [entityFieldId], references: [id], onDelete: Cascade)
+
+  @@unique([entityFieldId, value])
+}
+
+model EntityRecord {
+  id                String             @id @default(cuid())
+  entityTypeId      String
+  status            EntityRecordStatus @default(ACTIVE)
+  displayName       String
+  entityType        EntityType         @relation(fields: [entityTypeId], references: [id], onDelete: Cascade)
+  values            EntityValue[]
+  outgoingRelations EntityRelation[]   @relation("SourceRecordRelations")
+  incomingRelations EntityRelation[]   @relation("TargetRecordRelations")
+  auditEvents       AuditEvent[]
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  archivedAt        DateTime?
+
+  @@index([entityTypeId, status])
+}
+
+model EntityValue {
+  id             String       @id @default(cuid())
+  entityRecordId String
+  entityFieldId  String
+  textValue      String?
+  integerValue   Int?
+  decimalValue   Decimal?     @db.Decimal(20, 6)
+  booleanValue   Boolean?
+  dateValue      DateTime?
+  jsonValue      Json?
+  entityRecord   EntityRecord @relation(fields: [entityRecordId], references: [id], onDelete: Cascade)
+  entityField    EntityField  @relation(fields: [entityFieldId], references: [id], onDelete: Cascade)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@unique([entityRecordId, entityFieldId])
+  @@index([entityFieldId, textValue])
+  @@index([entityFieldId, integerValue])
+  @@index([entityFieldId, decimalValue])
+  @@index([entityFieldId, booleanValue])
+  @@index([entityFieldId, dateValue])
+}
+
+model EntityRelation {
+  id             String       @id @default(cuid())
+  sourceRecordId String
+  sourceFieldId  String
+  targetRecordId String
+  sourceRecord   EntityRecord @relation("SourceRecordRelations", fields: [sourceRecordId], references: [id], onDelete: Cascade)
+  sourceField    EntityField  @relation(fields: [sourceFieldId], references: [id], onDelete: Cascade)
+  targetRecord   EntityRecord @relation("TargetRecordRelations", fields: [targetRecordId], references: [id], onDelete: Restrict)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@unique([sourceRecordId, sourceFieldId, targetRecordId])
+  @@index([sourceFieldId])
+  @@index([targetRecordId])
+}
+
+model AuditEvent {
+  id             String        @id @default(cuid())
+  contractId     String
+  entityTypeId   String?
+  entityRecordId String?
+  actorUserId    String?
+  action         AuditAction
+  summary        String
+  metadata       Json?
+  contract       Contract      @relation(fields: [contractId], references: [id], onDelete: Restrict)
+  entityType     EntityType?   @relation(fields: [entityTypeId], references: [id], onDelete: SetNull)
+  entityRecord   EntityRecord? @relation(fields: [entityRecordId], references: [id], onDelete: SetNull)
+  actorUser      User?         @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+  changes        AuditChange[]
+  createdAt      DateTime      @default(now())
+
+  @@index([contractId, createdAt])
+  @@index([entityRecordId, createdAt])
+}
+
+model AuditChange {
+  id            String       @id @default(cuid())
+  auditEventId  String
+  entityFieldId String?
+  fieldName     String
+  oldValue      Json?
+  newValue      Json?
+  auditEvent    AuditEvent   @relation(fields: [auditEventId], references: [id], onDelete: Cascade)
+  entityField   EntityField? @relation(fields: [entityFieldId], references: [id], onDelete: SetNull)
+}
