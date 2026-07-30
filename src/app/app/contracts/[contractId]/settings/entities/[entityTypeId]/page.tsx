@@ -1,41 +1,52 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
+import type React from "react";
+import { type EntityFieldType } from "@prisma/client";
 
 import { auth } from "@/auth";
 import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Separator } from "@/components/ui/separator";
 import {
-  getAuthorizedEntityType,
-  getContractEntityTypes,
-  keyify,
-} from "@/lib/entity-config";
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { getAuthorizedEntityType, getContractEntityTypes } from "@/lib/entity-config";
+import { parseFieldConfig } from "@/lib/field-validation";
 import {
-  configurableValidationMatrix,
-  parseFieldConfig,
-  primaryFieldTypes,
-  type ParsedFieldConfig,
-} from "@/lib/field-validation";
-import { getRelationConfig } from "@/lib/entity-records";
+  buildFieldEditorHref,
+  getFieldEditorMode,
+  type FieldEditorMode,
+} from "@/lib/field-editor-navigation";
+import { getFieldEditorSummary } from "@/lib/field-editor-ux";
+import {
+  filterFieldList,
+  getFieldBehaviorBadges,
+  getFieldTypeLabel,
+  getFieldUseBadges,
+  hasLimitedSupport,
+  type FieldUseFilter,
+} from "@/lib/field-list-ux";
 
 import {
-  createEntityFieldAction,
-  createFieldOptionAction,
+  createEntityFieldEditorAction,
   reorderEntityFieldAction,
-  toggleEntityFieldAction,
-  toggleFieldOptionAction,
-  updateEntityFieldAction,
+  toggleEntityFieldFromListAction,
+  updateEntityFieldEditorAction,
   updateEntityTypeAction,
-  updateFieldOptionAction,
 } from "../actions";
 import { EntityTypeForm } from "../entity-type-form";
 import { FormError } from "../form-error";
+import { FieldEditorFormSheet } from "./field-editor-form";
+import { FieldToggleForm } from "./field-toggle-form";
 
 const fieldTypes = [
   "TEXT",
@@ -56,482 +67,28 @@ const fieldTypes = [
   "RELATION",
 ] as const;
 
-const optionTypes = new Set(["SELECT", "MULTISELECT"]);
-const multipleTypes = new Set(["MULTISELECT", "FILE", "IMAGE", "RELATION"]);
-
-function FieldControls({
-  defaultValues,
-  entityTypes,
-}: {
-  defaultValues?: {
-    name?: string;
-    key?: string;
-    description?: string | null;
-    type?: (typeof fieldTypes)[number];
-    required?: boolean;
-    isUnique?: boolean;
-    searchable?: boolean;
-    multiple?: boolean;
-    isActive?: boolean;
-    config?: unknown;
-    options?: Array<{ label: string; value: string; isActive: boolean }>;
+type FieldWithUsage = Parameters<typeof getFieldBehaviorBadges>[0] & {
+  _count?: {
+    values: number;
+    relations: number;
   };
-  entityTypes: Array<{ id: string; name: string }>;
-}) {
-  const relationConfig = getRelationConfig(defaultValues?.config);
-  const fieldType = defaultValues?.type ?? "TEXT";
-  const fieldConfig = parseFieldConfig(defaultValues?.config);
-
-  return (
-    <div className="grid gap-3">
-      <div className="grid gap-3 md:grid-cols-2">
-        <label className="grid gap-2 text-sm font-medium">
-          Nombre
-          <input
-            className="h-10 rounded-md border border-input bg-background px-3 text-sm outline-none ring-ring focus-visible:ring-2"
-            defaultValue={defaultValues?.name ?? ""}
-            name="name"
-            required
-          />
-        </label>
-        <label className="grid gap-2 text-sm font-medium">
-          Key
-          <input
-            className="h-10 rounded-md border border-input bg-background px-3 text-sm outline-none ring-ring focus-visible:ring-2"
-            defaultValue={defaultValues?.key ?? keyify(defaultValues?.name ?? "")}
-            name="key"
-            required
-          />
-        </label>
-      </div>
-
-      <label className="grid gap-2 text-sm font-medium">
-        Descripción
-        <textarea
-          className="min-h-20 rounded-md border border-input bg-background px-3 py-2 text-sm outline-none ring-ring focus-visible:ring-2"
-          defaultValue={defaultValues?.description ?? ""}
-          name="description"
-        />
-      </label>
-
-      <div className="grid gap-3 md:grid-cols-3">
-        <label className="grid gap-2 text-sm font-medium">
-          Tipo
-          <select
-            className="h-10 rounded-md border border-input bg-background px-3 text-sm"
-            defaultValue={defaultValues?.type ?? "TEXT"}
-            name="type"
-          >
-            {fieldTypes.map((type) => (
-              <option key={type} value={type}>
-                {type}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="grid gap-2 text-sm font-medium">
-          Entidad relacionada
-          <select
-            className="h-10 rounded-md border border-input bg-background px-3 text-sm"
-            defaultValue={relationConfig.targetEntityTypeId ?? ""}
-            name="targetEntityTypeId"
-          >
-            <option value="">Solo para RELATION</option>
-            {entityTypes.map((entityType) => (
-              <option key={entityType.id} value={entityType.id}>
-                {entityType.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="grid gap-2 text-sm font-medium">
-          Tipo de relación
-          <select
-            className="h-10 rounded-md border border-input bg-background px-3 text-sm"
-            defaultValue={relationConfig.relationKind ?? "ONE"}
-            name="relationKind"
-          >
-            <option value="ONE">ONE</option>
-            <option value="MANY">MANY</option>
-          </select>
-        </label>
-      </div>
-
-      <div className="grid gap-2 text-sm md:grid-cols-5">
-        <label className="flex items-center gap-2">
-          <input
-            className="h-4 w-4"
-            defaultChecked={defaultValues?.required ?? false}
-            name="required"
-            type="checkbox"
-          />
-          Required
-        </label>
-        <label className="flex items-center gap-2">
-          <input
-            className="h-4 w-4"
-            defaultChecked={defaultValues?.isUnique ?? false}
-            name="isUnique"
-            type="checkbox"
-          />
-          Unique
-        </label>
-        <label className="flex items-center gap-2">
-          <input
-            className="h-4 w-4"
-            defaultChecked={defaultValues?.searchable ?? false}
-            name="searchable"
-            type="checkbox"
-          />
-          Searchable
-        </label>
-        <label className="flex items-center gap-2">
-          <input
-            className="h-4 w-4"
-            defaultChecked={defaultValues?.multiple ?? false}
-            name="multiple"
-            type="checkbox"
-          />
-          Multiple
-        </label>
-        <label className="flex items-center gap-2">
-          <input
-            className="h-4 w-4"
-            defaultChecked={defaultValues?.isActive ?? true}
-            name="isActive"
-            type="checkbox"
-          />
-          Activo
-        </label>
-      </div>
-      <FieldDisplayControls config={fieldConfig} type={fieldType} />
-      <FieldValidationControls
-        config={fieldConfig}
-        options={defaultValues?.options ?? []}
-        type={fieldType}
-      />
-      <p className="text-xs text-muted-foreground">
-        Multiple solo es válido para {Array.from(multipleTypes).join(", ")}.
-      </p>
-    </div>
-  );
-}
-
-function FieldDisplayControls({
-  config,
-  type,
-}: {
-  config: ParsedFieldConfig;
-  type: (typeof fieldTypes)[number];
-}) {
-  const supportsPrimary = primaryFieldTypes.has(type);
-  const showInList = config.display.showInList ?? false;
-
-  return (
-    <div className="grid gap-3 rounded-md border border-border p-4">
-      <div>
-        <h3 className="text-sm font-semibold">Presentación</h3>
-        <p className="text-xs text-muted-foreground">
-          Controla cómo este campo participa en listados y en la identidad visible del registro.
-        </p>
-      </div>
-
-      <div className="grid gap-3 md:grid-cols-3">
-        {supportsPrimary ? (
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              className="h-4 w-4"
-              defaultChecked={config.display.primary ?? false}
-              name="displayPrimary"
-              type="checkbox"
-            />
-            Campo principal
-          </label>
-        ) : null}
-
-        <label className="flex items-center gap-2 text-sm">
-          <input
-            className="h-4 w-4"
-            defaultChecked={(config.display.primary ?? false) || showInList}
-            name="displayShowInList"
-            type="checkbox"
-          />
-          Mostrar en listado
-        </label>
-
-        <label className="grid gap-2 text-sm font-medium">
-          Orden en listado
-          <input
-            className="h-10 rounded-md border border-input bg-background px-3 text-sm"
-            defaultValue={config.display.listOrder ?? ""}
-            min={0}
-            name="displayListOrder"
-            placeholder="Usa el orden del campo"
-            type="number"
-          />
-        </label>
-      </div>
-
-      {supportsPrimary ? (
-        <p className="text-xs text-muted-foreground">
-          El campo principal identifica el registro en listados, relaciones y actividad.
-        </p>
-      ) : (
-        <p className="text-xs text-muted-foreground">
-          Este tipo puede mostrarse como columna, pero no puede identificar el registro.
-        </p>
-      )}
-    </div>
-  );
-}
-
-function FieldValidationControls({
-  config,
-  options,
-  type,
-}: {
-  config: ParsedFieldConfig;
-  options: Array<{ label: string; value: string; isActive: boolean }>;
-  type: (typeof fieldTypes)[number];
-}) {
-  const supported = new Set(configurableValidationMatrix[type]);
-  const defaultValue = config.defaultValue;
-
-  return (
-    <div className="grid gap-3 rounded-md border border-border p-4">
-      <div>
-        <h3 className="text-sm font-semibold">Validaciones</h3>
-        <p className="text-xs text-muted-foreground">
-          Se aplican siempre en el servidor al crear o editar registros.
-        </p>
-      </div>
-
-      {supported.has("required") ? (
-        <label className="flex items-center gap-2 text-sm">
-          <input
-            className="h-4 w-4"
-            defaultChecked={config.validation.required ?? false}
-            name="validationRequired"
-            type="checkbox"
-          />
-          Obligatorio
-          <span className="text-xs text-muted-foreground">
-            Rechaza valores vacíos; false y 0 son válidos.
-          </span>
-        </label>
-      ) : null}
-
-      {supported.has("minLength") || supported.has("maxLength") ? (
-        <div className="grid gap-3 md:grid-cols-2">
-          {supported.has("minLength") ? (
-            <label className="grid gap-2 text-sm font-medium">
-              Longitud mínima
-              <input
-                className="h-10 rounded-md border border-input bg-background px-3 text-sm"
-                defaultValue={config.validation.minLength ?? ""}
-                min={0}
-                name="validationMinLength"
-                type="number"
-              />
-            </label>
-          ) : null}
-          {supported.has("maxLength") ? (
-            <label className="grid gap-2 text-sm font-medium">
-              Longitud máxima
-              <input
-                className="h-10 rounded-md border border-input bg-background px-3 text-sm"
-                defaultValue={config.validation.maxLength ?? ""}
-                min={0}
-                name="validationMaxLength"
-                type="number"
-              />
-            </label>
-          ) : null}
-        </div>
-      ) : null}
-
-      {supported.has("minimum") || supported.has("maximum") ? (
-        <div className="grid gap-3 md:grid-cols-2">
-          {supported.has("minimum") ? (
-            <label className="grid gap-2 text-sm font-medium">
-              Valor mínimo
-              <input
-                className="h-10 rounded-md border border-input bg-background px-3 text-sm"
-                defaultValue={config.validation.minimum ?? ""}
-                name="validationMinimum"
-                step="any"
-                type="number"
-              />
-            </label>
-          ) : null}
-          {supported.has("maximum") ? (
-            <label className="grid gap-2 text-sm font-medium">
-              Valor máximo
-              <input
-                className="h-10 rounded-md border border-input bg-background px-3 text-sm"
-                defaultValue={config.validation.maximum ?? ""}
-                name="validationMaximum"
-                step="any"
-                type="number"
-              />
-            </label>
-          ) : null}
-        </div>
-      ) : null}
-
-      {supported.has("regex") ? (
-        <div className="grid gap-3 md:grid-cols-2">
-          <label className="grid gap-2 text-sm font-medium">
-            Patrón
-            <input
-              className="h-10 rounded-md border border-input bg-background px-3 text-sm"
-              defaultValue={config.validation.regex?.pattern ?? ""}
-              name="validationRegexPattern"
-              placeholder="^[A-Z0-9-]+$"
-            />
-          </label>
-          <label className="grid gap-2 text-sm font-medium">
-            Mensaje del patrón
-            <input
-              className="h-10 rounded-md border border-input bg-background px-3 text-sm"
-              defaultValue={config.validation.regex?.message ?? ""}
-              name="validationRegexMessage"
-              placeholder="Use solo mayúsculas, números y guiones"
-            />
-          </label>
-        </div>
-      ) : null}
-
-      {supported.has("defaultValue") ? (
-        <DefaultValueControl
-          defaultValue={defaultValue}
-          options={options.filter((option) => option.isActive)}
-          type={type}
-        />
-      ) : null}
-    </div>
-  );
-}
-
-function DefaultValueControl({
-  defaultValue,
-  options,
-  type,
-}: {
-  defaultValue?: unknown;
-  options: Array<{ label: string; value: string }>;
-  type: (typeof fieldTypes)[number];
-}) {
-  if (type === "BOOLEAN") {
-    return (
-      <label className="grid gap-2 text-sm font-medium">
-        Valor predeterminado
-        <select
-          className="h-10 rounded-md border border-input bg-background px-3 text-sm"
-          defaultValue={typeof defaultValue === "boolean" ? String(defaultValue) : ""}
-          name="validationDefaultValue"
-        >
-          <option value="">Sin valor</option>
-          <option value="true">Sí</option>
-          <option value="false">No</option>
-        </select>
-      </label>
-    );
-  }
-
-  if (type === "SELECT") {
-    return (
-      <label className="grid gap-2 text-sm font-medium">
-        Valor predeterminado
-        <select
-          className="h-10 rounded-md border border-input bg-background px-3 text-sm"
-          defaultValue={typeof defaultValue === "string" ? defaultValue : ""}
-          name="validationDefaultValue"
-        >
-          <option value="">Sin valor</option>
-          {options.map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label}
-            </option>
-          ))}
-        </select>
-      </label>
-    );
-  }
-
-  if (type === "MULTISELECT") {
-    const selected = new Set(Array.isArray(defaultValue) ? defaultValue.map(String) : []);
-
-    return (
-      <fieldset className="grid gap-2">
-        <legend className="text-sm font-medium">Valores predeterminados</legend>
-        <div className="grid gap-2 rounded-md border border-border p-3">
-          {options.length > 0 ? (
-            options.map((option) => (
-              <label className="flex items-center gap-2 text-sm" key={option.value}>
-                <input
-                  className="h-4 w-4"
-                  defaultChecked={selected.has(option.value)}
-                  name="validationDefaultValue"
-                  type="checkbox"
-                  value={option.value}
-                />
-                {option.label}
-              </label>
-            ))
-          ) : (
-            <span className="text-xs text-muted-foreground">
-              Crea opciones activas antes de configurar valores predeterminados.
-            </span>
-          )}
-        </div>
-      </fieldset>
-    );
-  }
-
-  return (
-    <label className="grid gap-2 text-sm font-medium">
-      Valor predeterminado
-      <input
-        className="h-10 rounded-md border border-input bg-background px-3 text-sm"
-        defaultValue={formatDefaultValue(defaultValue, type)}
-        name="validationDefaultValue"
-        step={type === "INTEGER" ? "1" : "any"}
-        type={type === "DATE" ? "date" : type === "DATETIME" ? "datetime-local" : type === "INTEGER" || type === "DECIMAL" || type === "MONEY" ? "number" : "text"}
-      />
-      <span className="text-xs text-muted-foreground">
-        Solo se aplica al crear registros cuando el campo queda vacío.
-      </span>
-    </label>
-  );
-}
-
-function formatDefaultValue(value: unknown, type: (typeof fieldTypes)[number]) {
-  if (typeof value !== "string" && typeof value !== "number") {
-    return "";
-  }
-
-  if ((type === "DATE" || type === "DATETIME") && typeof value === "string") {
-    const date = new Date(value);
-
-    if (Number.isNaN(date.getTime())) {
-      return "";
-    }
-
-    return type === "DATETIME"
-      ? date.toISOString().slice(0, 16)
-      : date.toISOString().slice(0, 10);
-  }
-
-  return String(value);
-}
+};
 
 export default async function EntityTypeDetailPage({
   params,
   searchParams,
 }: {
   params: Promise<{ contractId: string; entityTypeId: string }>;
-  searchParams: Promise<{ error?: string }>;
+  searchParams: Promise<{
+    error?: string;
+    fieldQ?: string;
+    fieldType?: string;
+    fieldState?: string;
+    fieldUse?: string;
+    createField?: string;
+    editField?: string;
+    notice?: string;
+  }>;
 }) {
   const session = await auth();
 
@@ -556,7 +113,44 @@ export default async function EntityTypeDetailPage({
     id: item.id,
     name: item.name,
   }));
-  const { error } = await searchParams;
+  const { error, fieldQ, fieldType, fieldState, fieldUse, createField, editField, notice } =
+    await searchParams;
+  const basePath = `/app/contracts/${contractId}/settings/entities/${entityType.id}`;
+  const currentParams = {
+    fieldQ,
+    fieldType,
+    fieldState,
+    fieldUse,
+    createField,
+    editField,
+    notice,
+  };
+  const editorMode = getFieldEditorMode({ createField, editField });
+  const closeEditorHref = buildFieldEditorHref({
+    basePath,
+    currentParams,
+    mode: { kind: "closed" },
+  });
+  const createEditorHref = buildFieldEditorHref({
+    basePath,
+    currentParams,
+    mode: { kind: "create" },
+  });
+  const fieldFilters: {
+    query?: string;
+    type: EntityFieldType | "ALL";
+    state: "ACTIVE" | "INACTIVE" | "ALL";
+    use: FieldUseFilter;
+  } = {
+    query: fieldQ,
+    type: parseFieldTypeFilter(fieldType),
+    state: parseFieldStateFilter(fieldState),
+    use: parseFieldUseFilter(fieldUse),
+  };
+  const visibleFields = filterFieldList({
+    fields: entityType.fields,
+    ...fieldFilters,
+  });
 
   return (
     <div className="grid max-w-5xl gap-6">
@@ -575,6 +169,13 @@ export default async function EntityTypeDetailPage({
       </header>
 
       <FormError message={error} />
+      {notice ? (
+        <Card>
+          <CardContent className="pt-6">
+            <p className="text-sm text-muted-foreground">{notice}</p>
+          </CardContent>
+        </Card>
+      ) : null}
 
       <Card>
         <CardHeader>
@@ -589,243 +190,444 @@ export default async function EntityTypeDetailPage({
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Crear campo</CardTitle>
-          <CardDescription>
-            Define campos para este tipo de entidad. No se crean registros todavía.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form
-            action={createEntityFieldAction.bind(null, contractId, entityType.id)}
-            className="grid gap-4"
-          >
-            <FieldControls entityTypes={entityTypeOptions} />
-            <Button type="submit">Crear campo</Button>
-          </form>
-        </CardContent>
-      </Card>
-
       <section className="grid gap-4">
+        <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+          <div>
+            <h2 className="text-lg font-semibold">Campos</h2>
+            <p className="text-sm text-muted-foreground">
+              {entityType.fields.length} campo{entityType.fields.length === 1 ? "" : "s"} configurado{entityType.fields.length === 1 ? "" : "s"}.
+            </p>
+          </div>
+          <Button asChild>
+            <Link href={createEditorHref}>Agregar campo</Link>
+          </Button>
+        </div>
+
         {entityType.fields.length > 0 ? (
-          entityType.fields.map((field, index) => (
-            <Card className={field.isActive ? "" : "opacity-70"} key={field.id}>
-              <CardHeader>
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <CardTitle>{field.name}</CardTitle>
-                    <CardDescription>
-                      {field.key} · {field.type} ·{" "}
-                      {field.isActive ? "Activo" : "Inactivo"}
-                    </CardDescription>
-                  </div>
-                  <div className="flex gap-2">
-                    <form
-                      action={reorderEntityFieldAction.bind(
-                        null,
-                        contractId,
-                        entityType.id,
-                        field.id,
-                        "up",
-                      )}
-                    >
-                      <Button
-                        disabled={index === 0}
-                        size="sm"
-                        type="submit"
-                        variant="outline"
-                      >
-                        Subir
-                      </Button>
-                    </form>
-                    <form
-                      action={reorderEntityFieldAction.bind(
-                        null,
-                        contractId,
-                        entityType.id,
-                        field.id,
-                        "down",
-                      )}
-                    >
-                      <Button
-                        disabled={index === entityType.fields.length - 1}
-                        size="sm"
-                        type="submit"
-                        variant="outline"
-                      >
-                        Bajar
-                      </Button>
-                    </form>
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent className="grid gap-5">
-                <form
-                  action={updateEntityFieldAction.bind(
-                    null,
-                    contractId,
-                    entityType.id,
-                    field.id,
-                  )}
-                  className="grid gap-4"
-                >
-                  <FieldControls
-                    defaultValues={{
-                      name: field.name,
-                      key: field.key,
-                      description: field.description,
-                      type: field.type,
-                      required: field.required,
-                      isUnique: field.isUnique,
-                      searchable: field.searchable,
-                      multiple: field.multiple,
-                      isActive: field.isActive,
-                      config: field.config,
-                      options: field.options,
-                    }}
-                    entityTypes={entityTypeOptions}
-                  />
-                  <div className="flex flex-wrap gap-2">
-                    <Button size="sm" type="submit">
-                      Guardar campo
-                    </Button>
-                  </div>
-                </form>
-                <form
-                  action={toggleEntityFieldAction.bind(
-                    null,
-                    contractId,
-                    entityType.id,
-                    field.id,
-                    !field.isActive,
-                  )}
-                >
-                  <Button size="sm" type="submit" variant="ghost">
-                    {field.isActive ? "Desactivar campo" : "Activar campo"}
-                  </Button>
-                </form>
+          <>
+            <FieldFilters
+              contractId={contractId}
+              entityTypeId={entityType.id}
+              filters={fieldFilters}
+            />
+            <div className="grid gap-3" aria-live="polite">
+              {visibleFields.length > 0 ? (
+                visibleFields.map((field) => {
+                  const originalIndex = entityType.fields.findIndex((item) => item.id === field.id);
 
-                {optionTypes.has(field.type) ? (
-                  <>
-                    <Separator />
-                    <div className="grid gap-3">
-                      <h3 className="text-sm font-semibold">Opciones</h3>
-                      <form
-                        action={createFieldOptionAction.bind(
-                          null,
-                          contractId,
-                          entityType.id,
-                          field.id,
-                        )}
-                        className="grid gap-3 md:grid-cols-[1fr_1fr_100px_auto_auto]"
-                      >
-                        <input
-                          className="h-10 rounded-md border border-input bg-background px-3 text-sm"
-                          name="label"
-                          placeholder="Label"
-                          required
-                        />
-                        <input
-                          className="h-10 rounded-md border border-input bg-background px-3 text-sm"
-                          name="value"
-                          placeholder="value"
-                          required
-                        />
-                        <input
-                          className="h-10 rounded-md border border-input bg-background px-3 text-sm"
-                          min={0}
-                          name="sortOrder"
-                          type="number"
-                          defaultValue={field.options.length + 1}
-                        />
-                        <label className="flex items-center gap-2 text-sm">
-                          <input
-                            className="h-4 w-4"
-                            defaultChecked
-                            name="isActive"
-                            type="checkbox"
-                          />
-                          Activa
-                        </label>
-                        <Button type="submit">Agregar</Button>
-                      </form>
-
-                      {field.options.map((option) => (
-                        <form
-                          action={updateFieldOptionAction.bind(
-                            null,
-                            contractId,
-                            entityType.id,
-                            field.id,
-                            option.id,
-                          )}
-                          className="grid gap-3 rounded-md border border-border p-3 md:grid-cols-[1fr_1fr_100px_auto_auto_auto]"
-                          key={option.id}
-                        >
-                          <input
-                            className="h-10 rounded-md border border-input bg-background px-3 text-sm"
-                            defaultValue={option.label}
-                            name="label"
-                            required
-                          />
-                          <input
-                            className="h-10 rounded-md border border-input bg-background px-3 text-sm"
-                            defaultValue={option.value}
-                            name="value"
-                            required
-                          />
-                          <input
-                            className="h-10 rounded-md border border-input bg-background px-3 text-sm"
-                            defaultValue={option.sortOrder}
-                            min={0}
-                            name="sortOrder"
-                            type="number"
-                          />
-                          <label className="flex items-center gap-2 text-sm">
-                            <input
-                              className="h-4 w-4"
-                              defaultChecked={option.isActive}
-                              name="isActive"
-                              type="checkbox"
-                            />
-                            Activa
-                          </label>
-                          <Button type="submit" variant="outline">
-                            Guardar
-                          </Button>
-                          <Button
-                            formAction={toggleFieldOptionAction.bind(
-                              null,
-                              contractId,
-                              entityType.id,
-                              field.id,
-                              option.id,
-                              !option.isActive,
-                            )}
-                            type="submit"
-                            variant="ghost"
-                          >
-                            {option.isActive ? "Desactivar" : "Activar"}
-                          </Button>
-                        </form>
-                      ))}
-                    </div>
-                  </>
-                ) : null}
-              </CardContent>
-            </Card>
-          ))
+                  return (
+                    <FieldListItem
+                      contractId={contractId}
+                      entityTypeId={entityType.id}
+                      entityTypes={entityTypeOptions}
+                      field={field}
+                      index={originalIndex}
+                      isLast={originalIndex === entityType.fields.length - 1}
+                      key={field.id}
+                      openHref={buildFieldEditorHref({
+                        basePath,
+                        currentParams,
+                        mode: { kind: "edit", fieldId: field.id },
+                      })}
+                    />
+                  );
+                })
+              ) : (
+                <Card>
+                  <CardContent className="pt-6">
+                    <p className="text-sm font-medium">No hay campos para estos filtros.</p>
+                    <p className="text-sm text-muted-foreground">
+                      Ajusta la búsqueda o cambia los filtros para ver más campos.
+                    </p>
+                  </CardContent>
+                </Card>
+              )}
+            </div>
+          </>
         ) : (
-          <Card>
-            <CardContent className="pt-6">
-              <p className="text-sm text-muted-foreground">
-                Todavía no hay campos configurados.
-              </p>
-            </CardContent>
-          </Card>
+          <EmptyFieldState />
         )}
       </section>
+
+      <FieldEditorOverlay
+        closeHref={closeEditorHref}
+        contractId={contractId}
+        currentParams={currentParams}
+        editorMode={editorMode}
+        entityName={entityType.name}
+        entityTypeId={entityType.id}
+        entityTypes={entityTypeOptions}
+        fields={entityType.fields}
+      />
     </div>
   );
+}
+
+function FieldFilters({
+  contractId,
+  entityTypeId,
+  filters,
+}: {
+  contractId: string;
+  entityTypeId: string;
+  filters: {
+    query?: string;
+    type: EntityFieldType | "ALL";
+    state: "ACTIVE" | "INACTIVE" | "ALL";
+    use: FieldUseFilter;
+  };
+}) {
+  return (
+    <Card>
+      <CardContent className="pt-6">
+        <form
+          action={`/app/contracts/${contractId}/settings/entities/${entityTypeId}`}
+          className="grid gap-3 md:grid-cols-[1fr_180px_160px_180px_auto]"
+          method="get"
+        >
+          <input
+            className="h-10 rounded-md border border-input bg-background px-3 text-sm outline-none ring-ring focus-visible:ring-2"
+            defaultValue={filters.query ?? ""}
+            name="fieldQ"
+            placeholder="Buscar por nombre, identificador o descripción"
+          />
+          <select
+            className="h-10 rounded-md border border-input bg-background px-3 text-sm"
+            defaultValue={filters.type}
+            name="fieldType"
+          >
+            <option value="ALL">Todos los tipos</option>
+            {fieldTypes.map((type) => (
+              <option key={type} value={type}>
+                {getFieldTypeLabel(type)}
+              </option>
+            ))}
+          </select>
+          <select
+            className="h-10 rounded-md border border-input bg-background px-3 text-sm"
+            defaultValue={filters.state}
+            name="fieldState"
+          >
+            <option value="ALL">Todos los estados</option>
+            <option value="ACTIVE">Activos</option>
+            <option value="INACTIVE">Inactivos</option>
+          </select>
+          <select
+            className="h-10 rounded-md border border-input bg-background px-3 text-sm"
+            defaultValue={filters.use}
+            name="fieldUse"
+          >
+            <option value="ALL">Todos los usos</option>
+            <option value="PRIMARY">Principal</option>
+            <option value="LIST">En listado</option>
+            <option value="SEARCH">En búsquedas</option>
+            <option value="VALIDATIONS">Con validaciones</option>
+            <option value="RELATION">Relación</option>
+            <option value="OPTIONS">Con opciones</option>
+          </select>
+          <Button type="submit" variant="outline">
+            Filtrar
+          </Button>
+        </form>
+      </CardContent>
+    </Card>
+  );
+}
+
+function FieldListItem({
+  contractId,
+  entityTypeId,
+  entityTypes,
+  field,
+  index,
+  isLast,
+  openHref,
+}: {
+  contractId: string;
+  entityTypeId: string;
+  entityTypes: Array<{ id: string; name: string }>;
+  field: (typeof fieldTypes)[number] extends never ? never : FieldWithUsage;
+  index: number;
+  isLast: boolean;
+  openHref: string;
+}) {
+  const behaviorBadges = getFieldBehaviorBadges(field);
+  const useBadges = getFieldUseBadges(field, entityTypes);
+  const isPrimary = parseFieldConfig(field.config).display.primary === true;
+  const toggleReturnTo = openHref.replace(/[?&]editField=[^&]+/, "");
+
+  return (
+    <Card className={field.isActive ? "" : "opacity-70"}>
+      <CardContent className="grid gap-4 pt-6">
+        <div className="grid gap-4 md:grid-cols-[1fr_auto] md:items-start">
+          <div className="grid gap-3">
+            <div className="grid gap-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="text-base font-semibold">{field.name}</h3>
+                <Badge variant={field.isActive ? "default" : "muted"}>
+                  {field.isActive ? "Activo" : "Inactivo"}
+                </Badge>
+                {hasLimitedSupport(field.type) ? (
+                  <Badge variant="muted">Soporte limitado</Badge>
+                ) : null}
+              </div>
+              <p className="text-sm text-muted-foreground">
+                {getFieldTypeLabel(field.type)} · {field.key}
+              </p>
+              {field.description ? (
+                <p className="text-sm text-muted-foreground">{field.description}</p>
+              ) : null}
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              {behaviorBadges.map((badge) => (
+                <Badge key={badge}>{badge}</Badge>
+              ))}
+              {useBadges.map((badge) => (
+                <Badge key={badge} variant="outline">
+                  {badge}
+                </Badge>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex flex-wrap gap-2 md:justify-end">
+            <Button asChild size="sm" variant="outline">
+              <Link href={openHref}>Editar</Link>
+            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button aria-label={`Más acciones para ${field.name}`} size="sm" variant="outline">
+                  Acciones
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuLabel>Orden</DropdownMenuLabel>
+                <DropdownMenuItem onSelect={(event) => event.preventDefault()}>
+                  <form
+                    action={reorderEntityFieldAction.bind(
+                      null,
+                      contractId,
+                      entityTypeId,
+                      field.id,
+                      "up",
+                    )}
+                  >
+                    <button className="w-full text-left disabled:opacity-50" disabled={index === 0} type="submit">
+                      Subir
+                    </button>
+                  </form>
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                  <form
+                    action={reorderEntityFieldAction.bind(
+                      null,
+                      contractId,
+                      entityTypeId,
+                      field.id,
+                      "down",
+                    )}
+                  >
+                    <button className="w-full text-left disabled:opacity-50" disabled={isLast} type="submit">
+                      Bajar
+                    </button>
+                  </form>
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem asChild>
+                  <FieldToggleForm
+                    action={toggleEntityFieldFromListAction.bind(
+                      null,
+                      contractId,
+                      entityTypeId,
+                      field.id,
+                      !field.isActive,
+                    )}
+                    isActive={field.isActive}
+                    isPrimary={isPrimary}
+                    returnTo={toggleReturnTo}
+                  />
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        </div>
+
+      </CardContent>
+    </Card>
+  );
+}
+
+function FieldEditorOverlay({
+  closeHref,
+  contractId,
+  currentParams,
+  editorMode,
+  entityName,
+  entityTypeId,
+  entityTypes,
+  fields,
+}: {
+  closeHref: string;
+  contractId: string;
+  currentParams: Record<string, string | undefined>;
+  editorMode: FieldEditorMode;
+  entityName: string;
+  entityTypeId: string;
+  entityTypes: Array<{ id: string; name: string }>;
+  fields: FieldWithUsage[];
+}) {
+  if (editorMode.kind === "closed") {
+    return null;
+  }
+
+  if (editorMode.kind === "create") {
+    const returnTo = buildFieldEditorHref({
+      basePath: `/app/contracts/${contractId}/settings/entities/${entityTypeId}`,
+      currentParams,
+      mode: editorMode,
+    });
+
+    return (
+      <FieldEditorFormSheet
+        action={createEntityFieldEditorAction.bind(null, contractId, entityTypeId)}
+        closeHref={closeHref}
+        description="Define la información que podrán contener los registros de esta entidad."
+        entityName={entityName}
+        entityTypes={entityTypes}
+        fieldCount={fields.length}
+        formId="create-field-form"
+        hasPrimary={fields.some((field) => parseFieldConfig(field.config).display.primary)}
+        mode="create"
+        returnTo={returnTo}
+        successTo={closeHref}
+        summary="Nuevo campo"
+        title="Agregar campo"
+      />
+    );
+  }
+
+  const field = fields.find((item) => item.id === editorMode.fieldId);
+
+  if (!field) {
+    return null;
+  }
+
+  const returnTo = buildFieldEditorHref({
+    basePath: `/app/contracts/${contractId}/settings/entities/${entityTypeId}`,
+    currentParams,
+    mode: editorMode,
+  });
+  const fieldConfig = parseFieldConfig(field.config);
+  const hasValues = (field._count?.values ?? 0) > 0 || (field._count?.relations ?? 0) > 0;
+
+  return (
+    <FieldEditorFormSheet
+      action={updateEntityFieldEditorAction.bind(
+        null,
+        contractId,
+        entityTypeId,
+        field.id,
+      )}
+      closeHref={closeHref}
+      description="Actualiza cómo se comporta este campo en formularios, listados y registros."
+      defaultValues={{
+        name: field.name,
+        key: field.key,
+        description: field.description,
+        type: field.type,
+        required: field.required,
+        isUnique: field.isUnique,
+        searchable: field.searchable,
+        multiple: field.multiple,
+        isActive: field.isActive,
+        targetEntityTypeId: fieldConfig.targetEntityTypeId,
+        relationKind: fieldConfig.relationKind,
+        validation: fieldConfig.validation,
+        defaultValue: fieldConfig.defaultValue,
+        display: fieldConfig.display,
+        options: field.options.map((option) => ({
+          id: option.id,
+          label: option.label,
+          value: option.value,
+          sortOrder: option.sortOrder,
+          isActive: option.isActive,
+          hasValues,
+        })),
+        hasValues,
+      }}
+      entityName={entityName}
+      entityTypes={entityTypes}
+      fieldCount={fields.length}
+      formId="edit-field-form"
+      hasPrimary={fields.some((item) => parseFieldConfig(item.config).display.primary)}
+      mode="edit"
+      returnTo={returnTo}
+      successTo={closeHref}
+      summary={`${field.name} · ${getFieldEditorSummary(field)}`}
+      title="Editar campo"
+    />
+  );
+}
+
+function EmptyFieldState() {
+  return (
+    <Card>
+      <CardContent className="grid gap-3 pt-6">
+        <h3 className="text-base font-semibold">Aún no hay campos</h3>
+        <p className="text-sm text-muted-foreground">
+          Agrega el primer campo para comenzar a definir la información de esta entidad.
+        </p>
+        <p className="text-sm text-muted-foreground">
+          Usa el botón Agregar campo para crear una configuración inicial.
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
+function Badge({
+  children,
+  variant = "default",
+}: {
+  children: React.ReactNode;
+  variant?: "default" | "muted" | "outline";
+}) {
+  const className =
+    variant === "outline"
+      ? "border-border bg-background text-muted-foreground"
+      : variant === "muted"
+        ? "border-border bg-muted text-muted-foreground"
+        : "border-transparent bg-secondary text-secondary-foreground";
+
+  return (
+    <span className={`rounded-full border px-2 py-0.5 text-xs font-medium ${className}`}>
+      {children}
+    </span>
+  );
+}
+
+function parseFieldTypeFilter(value?: string): EntityFieldType | "ALL" {
+  return fieldTypes.includes(value as (typeof fieldTypes)[number])
+    ? (value as EntityFieldType)
+    : "ALL";
+}
+
+function parseFieldStateFilter(value?: string): "ACTIVE" | "INACTIVE" | "ALL" {
+  return value === "ACTIVE" || value === "INACTIVE" ? value : "ALL";
+}
+
+function parseFieldUseFilter(value?: string): FieldUseFilter {
+  if (
+    value === "PRIMARY" ||
+    value === "LIST" ||
+    value === "SEARCH" ||
+    value === "VALIDATIONS" ||
+    value === "RELATION" ||
+    value === "OPTIONS"
+  ) {
+    return value;
+  }
+
+  return "ALL";
 }

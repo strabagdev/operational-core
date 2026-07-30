@@ -122,6 +122,18 @@ Existing records are not recalculated in bulk. They keep their current `displayN
 
 The technical `EntityRecord.status` is not a normal domain field. List screens show it as a contextual badge for inactive/archived records or filters that include non-active records, so a dynamic field named `Estado` can appear without competing with a fixed technical status column.
 
+Field settings screens summarize fields with compact rows and badges before exposing the full edit form. Use the list filters to find fields by name, type, state, or usage. Create/edit forms are intentionally collapsed until the drawer-based editor planned for the next UX package.
+
+Field creation and editing open in a right-side Sheet controlled by `createField=1` and `editField=<fieldId>`. Closing the Sheet preserves list filters and removes only the editor parameter. The Sheet uses `@radix-ui/react-dialog` through the local `src/components/ui/sheet.tsx` primitive for focus trap, Escape, scroll lock, overlay, and focus restoration.
+
+The field editor is a client form with progressive type-specific sections. `SELECT` and `MULTISELECT` fields can be created with options in one submit, and `RELATION` fields can be created with target entity and cardinality in the same submit. Editor Server Actions return structured field errors on failure and redirect with inline notices on success.
+
+Field editor redirects must use internal `/app/` paths only. Use `safeAppRedirectPath` for hidden `returnTo` and `successTo` values so absolute URLs, protocol-relative URLs, and non-app routes cannot become open redirects.
+
+The final PCORE-008.2 acceptance pass is documented in `docs/PCORE-008.2D-field-configuration-acceptance.md`. Manual mutating acceptance requires a local/test PostgreSQL database or disposable contract; do not run those flows against shared Railway demo data.
+
+As of the acceptance pass, Next.js is pinned to `16.2.12`. `npm audit` still reports findings in Next's bundled `postcss`/`sharp` and ESLint's minimatch chain; the available automated fixes require breaking or incoherent major changes and are tracked as dependency debt.
+
 ## Running The App
 
 Start the development server:

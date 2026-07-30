@@ -1,16 +1,18 @@
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
 
-import { getAuthorizedContract } from "@/lib/contracts";
+import { getAuthorizedContract } from "./contracts";
 import {
   buildMergedFieldConfig,
   buildMergedFieldDisplayConfig,
   parseFieldConfig,
   type FieldDisplayConfig,
+  type FieldErrorMap,
   type FieldValidationRules,
-} from "@/lib/field-validation";
-import { keyify, slugify } from "@/lib/format";
-import { prisma } from "@/lib/prisma";
+} from "./field-validation";
+import { validateOptionDrafts, type FieldOptionDraft } from "./field-editor-state";
+import { keyify, slugify } from "./format";
+import { prisma } from "./prisma";
 
 const slugRegex = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const keyRegex = /^[a-z][a-z0-9_]*$/;
@@ -119,6 +121,16 @@ export const fieldOptionSchema = z.object({
 
 export { keyify, slugify };
 
+export class FieldEditorInputError extends Error {
+  fieldErrors: FieldErrorMap;
+
+  constructor(message: string, fieldErrors: FieldErrorMap) {
+    super(message);
+    this.name = "FieldEditorInputError";
+    this.fieldErrors = fieldErrors;
+  }
+}
+
 export function formBoolean(formData: FormData, key: string) {
   return formData.get(key) === "on";
 }
@@ -163,6 +175,48 @@ export function getFieldOptionInput(formData: FormData) {
     sortOrder: formData.get("sortOrder") || 0,
     isActive: formBoolean(formData, "isActive"),
   });
+}
+
+export function getEntityFieldEditorInput(formData: FormData) {
+  const field = getEntityFieldInput(formData);
+  const options = getFieldOptionRowsInput(formData);
+
+  if (optionFieldTypes.has(field.type)) {
+    const validated = validateOptionDrafts(options);
+
+    if (!validated.success) {
+      throw new FieldEditorInputError(
+        "Revisa las opciones antes de guardar.",
+        validated.fieldErrors,
+      );
+    }
+
+    return { field, options: validated.validOptions };
+  }
+
+  return { field, options: [] };
+}
+
+function getFieldOptionRowsInput(formData: FormData): FieldOptionDraft[] {
+  const rowKeys = formData
+    .getAll("optionRowKey")
+    .map((value) => String(value).trim())
+    .filter(Boolean);
+
+  if (rowKeys.length > 100) {
+    throw new FieldEditorInputError("Revisa las opciones antes de guardar.", {
+      options: ["Puedes guardar hasta 100 opciones por envío."],
+    });
+  }
+
+  return rowKeys.map((rowKey, index) => ({
+      id: optionalString(formData.get(`optionId:${rowKey}`)),
+      label: String(formData.get(`optionLabel:${rowKey}`) ?? "").trim(),
+      value: String(formData.get(`optionValue:${rowKey}`) ?? "").trim().toLowerCase(),
+      sortOrder:
+        optionalInteger(formData.get(`optionSortOrder:${rowKey}`)) ?? index + 1,
+      isActive: formBoolean(formData, `optionActive:${rowKey}`),
+    }));
 }
 
 function getFieldValidationInput(formData: FormData): FieldValidationRules {
@@ -284,6 +338,10 @@ export function friendlyActionError(error: unknown) {
     return "Revisa las validaciones marcadas en el formulario.";
   }
 
+  if (error instanceof Error && error.name === "FieldEditorInputError") {
+    return error.message;
+  }
+
   return "No se pudo completar la operación.";
 }
 
@@ -330,6 +388,12 @@ export async function getAuthorizedEntityType(
         include: {
           options: {
             orderBy: [{ sortOrder: "asc" }, { label: "asc" }],
+          },
+          _count: {
+            select: {
+              values: true,
+              relations: true,
+            },
           },
         },
         orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
@@ -453,6 +517,69 @@ export async function createEntityField(
   });
 }
 
+export async function createEntityFieldWithOptions(
+  contractId: string,
+  entityTypeId: string,
+  userId: string,
+  input: z.infer<typeof entityFieldSchema>,
+  options: FieldOptionDraft[],
+) {
+  const authorized = await getAuthorizedEntityType(contractId, entityTypeId, userId);
+
+  if (!authorized) {
+    return null;
+  }
+
+  const highestField = await prisma.entityField.findFirst({
+    where: { entityTypeId: authorized.entityType.id },
+    orderBy: { sortOrder: "desc" },
+    select: { sortOrder: true },
+  });
+  await validateRelationTarget(authorized.contract.id, input);
+  validatePrimaryInput(input);
+
+  return prisma.$transaction(async (tx) => {
+    if (input.display.primary) {
+      await unsetPrimaryFields(tx, authorized.entityType.fields);
+    }
+
+    const field = await tx.entityField.create({
+      data: {
+        entityTypeId: authorized.entityType.id,
+        name: input.name,
+        key: input.key,
+        description: input.description || null,
+        type: input.type,
+        required: input.validation.required ?? input.required,
+        isUnique: input.isUnique,
+        searchable: input.searchable,
+        multiple: input.multiple,
+        sortOrder: (highestField?.sortOrder ?? 0) + 1,
+        config: buildFieldConfig(
+          input,
+          undefined,
+          options.map((option) => option.value),
+        ),
+        isActive: input.isActive,
+      },
+    });
+
+    if (optionFieldTypes.has(input.type)) {
+      await tx.fieldOption.createMany({
+        data: options.map((option, index) => ({
+          entityFieldId: field.id,
+          label: option.label,
+          value: option.value,
+          sortOrder: option.sortOrder || index + 1,
+          isActive: option.isActive,
+        })),
+      });
+    }
+
+    return field;
+  });
+}
+
 export async function updateEntityField(
   contractId: string,
   entityTypeId: string,
@@ -474,6 +601,7 @@ export async function updateEntityField(
 
   await validateRelationTarget(authorized.contract.id, input);
   validatePrimaryInput(input);
+  await validateTypeChange(field, input.type);
 
   return prisma.$transaction(async (tx) => {
     if (input.display.primary) {
@@ -498,6 +626,88 @@ export async function updateEntityField(
         isActive: input.isActive,
       },
     });
+  });
+}
+
+export async function updateEntityFieldWithOptions(
+  contractId: string,
+  entityTypeId: string,
+  fieldId: string,
+  userId: string,
+  input: z.infer<typeof entityFieldSchema>,
+  options: FieldOptionDraft[],
+) {
+  const authorized = await getAuthorizedEntityType(contractId, entityTypeId, userId);
+
+  if (!authorized) {
+    return null;
+  }
+
+  const field = authorized.entityType.fields.find((item) => item.id === fieldId);
+
+  if (!field) {
+    return null;
+  }
+
+  await validateRelationTarget(authorized.contract.id, input);
+  validatePrimaryInput(input);
+  await validateTypeChange(field, input.type);
+  await validateOptionValueChanges(field, options);
+
+  return prisma.$transaction(async (tx) => {
+    if (input.display.primary) {
+      await unsetPrimaryFields(
+        tx,
+        authorized.entityType.fields.filter((item) => item.id !== field.id),
+      );
+    }
+
+    const optionValues = optionFieldTypes.has(input.type)
+      ? options.map((option) => option.value)
+      : field.options.map((option) => option.value);
+    const updated = await tx.entityField.update({
+      where: { id: field.id },
+      data: {
+        name: input.name,
+        key: input.key,
+        description: input.description || null,
+        type: input.type,
+        required: input.validation.required ?? input.required,
+        isUnique: input.isUnique,
+        searchable: input.searchable,
+        multiple: input.multiple,
+        config: buildFieldConfig(input, field.config, optionValues),
+        isActive: input.isActive,
+      },
+    });
+
+    if (optionFieldTypes.has(input.type)) {
+      for (const [index, option] of options.entries()) {
+        if (option.id) {
+          await tx.fieldOption.update({
+            where: { id: option.id },
+            data: {
+              label: option.label,
+              value: option.value,
+              sortOrder: option.sortOrder || index + 1,
+              isActive: option.isActive,
+            },
+          });
+        } else {
+          await tx.fieldOption.create({
+            data: {
+              entityFieldId: field.id,
+              label: option.label,
+              value: option.value,
+              sortOrder: option.sortOrder || index + 1,
+              isActive: option.isActive,
+            },
+          });
+        }
+      }
+    }
+
+    return updated;
   });
 }
 
@@ -733,5 +943,60 @@ async function validateRelationTarget(
     );
     error.name = "UserFacingError";
     throw error;
+  }
+}
+
+async function validateTypeChange(
+  field: { id: string; type: z.infer<typeof entityFieldSchema>["type"] },
+  nextType: z.infer<typeof entityFieldSchema>["type"],
+) {
+  if (field.type === nextType) {
+    return;
+  }
+
+  const [valueCount, relationCount] = await Promise.all([
+    prisma.entityValue.count({ where: { entityFieldId: field.id } }),
+    prisma.entityRelation.count({ where: { sourceFieldId: field.id } }),
+  ]);
+
+  if (valueCount > 0 || relationCount > 0) {
+    throw userError("No puedes cambiar el tipo porque este campo ya contiene información.");
+  }
+}
+
+async function validateOptionValueChanges(
+  field: {
+    id: string;
+    options: Array<{ id: string; value: string }>;
+  },
+  options: FieldOptionDraft[],
+) {
+  const existing = new Map(field.options.map((option) => [option.id, option]));
+  const missingOption = options.find((option) => option.id && !existing.has(option.id));
+
+  if (missingOption) {
+    throw userError("Una opción no pertenece a este campo.");
+  }
+
+  const changedValue = options.some((option) => {
+    if (!option.id) {
+      return false;
+    }
+
+    return existing.get(option.id)?.value !== option.value;
+  });
+
+  if (!changedValue) {
+    return;
+  }
+
+  const valueCount = await prisma.entityValue.count({
+    where: { entityFieldId: field.id },
+  });
+
+  if (valueCount > 0) {
+    throw userError(
+      "No puedes cambiar el valor interno de opciones que ya tienen información registrada.",
+    );
   }
 }
