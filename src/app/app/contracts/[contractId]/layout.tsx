@@ -2,34 +2,11 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { Activity, Settings, TableProperties, UserRound } from "lucide-react";
 
-import { auth, signOut } from "@/auth";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { auth } from "@/auth";
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { getAuthorizedContract } from "@/lib/contracts";
 
-async function logoutAction() {
-  "use server";
-
-  await signOut({ redirectTo: "/login" });
-}
-
-function getInitials(name?: string | null, email?: string | null) {
-  const source = name || email || "User";
-  const parts = source.split(/[.@\s_-]+/).filter(Boolean);
-
-  return parts
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase())
-    .join("");
-}
+import { UserMenu } from "./user-menu";
 
 export default async function ContractLayout({
   children,
@@ -106,40 +83,11 @@ export default async function ContractLayout({
             </div>
           </div>
 
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button aria-label="Abrir menú de usuario" size="icon" variant="ghost">
-                <Avatar>
-                  <AvatarImage alt={session.user.name ?? "Usuario"} src={session.user.image ?? ""} />
-                  <AvatarFallback>
-                    {getInitials(session.user.name, session.user.email)}
-                  </AvatarFallback>
-                </Avatar>
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuLabel>
-                <div className="grid gap-1">
-                  <span>{session.user.name ?? "Usuario"}</span>
-                  <span className="text-xs font-normal text-muted-foreground">
-                    {session.user.email}
-                  </span>
-                </div>
-              </DropdownMenuLabel>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem asChild>
-                <Link href="/app">Cambiar contrato</Link>
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem asChild>
-                <form action={logoutAction}>
-                  <button className="w-full text-left" type="submit">
-                    Cerrar sesión
-                  </button>
-                </form>
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <UserMenu
+            email={session.user.email}
+            image={session.user.image}
+            name={session.user.name}
+          />
         </header>
 
         <div className="border-b border-border px-4 py-3 md:hidden">

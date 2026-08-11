@@ -93,6 +93,8 @@ export class FieldValidationError extends Error {
 
 const textValidationTypes = new Set<EntityFieldType>(["TEXT", "TEXTAREA"]);
 const numericValidationTypes = new Set<EntityFieldType>(["INTEGER", "DECIMAL", "MONEY"]);
+const int4Min = -2147483648;
+const int4Max = 2147483647;
 const defaultValueTypes = new Set<EntityFieldType>([
   "TEXT",
   "TEXTAREA",
@@ -520,7 +522,7 @@ export function validateRecordValues({
       fieldErrors,
     });
 
-    if (!isEmptySerializedValue(value) || field.type === "BOOLEAN") {
+    if (!isEmptySerializedValue(value)) {
       values.push(value);
     }
   }
@@ -623,7 +625,19 @@ export function normalizeRawFieldValue(
       if (!/^-?\d+$/.test(rawValue)) {
         throw new FieldValidationError({ [field.id]: ["Debe ser un número entero."] });
       }
-      return { fieldId: field.id, integerValue: Number.parseInt(rawValue, 10) };
+      {
+        const integerValue = Number.parseInt(rawValue, 10);
+
+        if (integerValue < int4Min || integerValue > int4Max) {
+          throw new FieldValidationError({
+            [field.id]: [
+              `Debe estar entre ${int4Min} y ${int4Max}.`,
+            ],
+          });
+        }
+
+        return { fieldId: field.id, integerValue };
+      }
     case "DECIMAL":
     case "MONEY":
       if (!rawValue) return { fieldId: field.id, decimalValue: null };
@@ -632,7 +646,15 @@ export function normalizeRawFieldValue(
       }
       return { fieldId: field.id, decimalValue: new Prisma.Decimal(rawValue) };
     case "BOOLEAN":
-      return { fieldId: field.id, booleanValue: rawValues.includes("on") };
+      if (rawValues.length === 0) return { fieldId: field.id, booleanValue: null };
+      return {
+        fieldId: field.id,
+        booleanValue: rawValues.some((value) => {
+          const normalized = String(value).trim().toLowerCase();
+
+          return normalized === "on" || normalized === "true" || normalized === "1";
+        }),
+      };
     case "DATE": {
       if (!rawValue) return { fieldId: field.id, dateValue: null };
       const date = dateOnlyToUtcDate(rawValue);

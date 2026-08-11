@@ -200,11 +200,16 @@ function DynamicField({
   }
 
   if (field.type === "BOOLEAN") {
+    const submittedBoolean = submittedValues
+      ? submittedValues.some((item) => item === "on" || item === "true" || item === "1")
+      : undefined;
+
     return (
       <label className="flex items-center gap-2 text-sm font-medium">
+        <input name={name} type="hidden" value="false" />
         <input
           className="h-4 w-4"
-          defaultChecked={submittedValues ? submittedValues.length > 0 : (value?.booleanValue ?? defaultValue === true)}
+          defaultChecked={submittedBoolean ?? (value?.booleanValue ?? defaultValue === true)}
           name={name}
           type="checkbox"
         />

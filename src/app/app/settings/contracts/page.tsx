@@ -17,7 +17,10 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { getContractAdministration } from "@/lib/contract-admin";
-import { contractStatusLabels } from "@/lib/contract-status";
+import {
+  contractStatusLabels,
+  parseContractAdministrationStatus,
+} from "@/lib/contract-status";
 import {
   archiveContractAction,
   createContractAction,
@@ -57,7 +60,7 @@ export default async function ContractAdministrationPage({
 
   const params = await searchParams;
   const basePath = "/app/settings/contracts";
-  const status = parseContractStatus(params.status);
+  const status = parseContractAdministrationStatus(params.status);
   const data = await getContractAdministration({
     userId: session.user.id,
     query: params.q,
@@ -67,13 +70,16 @@ export default async function ContractAdministrationPage({
     archiveContract: undefined,
     createContract: undefined,
     deleteContract: undefined,
+    error: undefined,
     editContract: undefined,
   });
   const createHref = buildContractsHref(basePath, params, {
     archiveContract: undefined,
     createContract: "1",
     deleteContract: undefined,
+    error: undefined,
     editContract: undefined,
+    notice: undefined,
   });
   const activeModal = getActiveContractAdminModal(params);
   const createOpen = activeModal.type === "create";
@@ -179,7 +185,9 @@ export default async function ContractAdministrationPage({
                             archiveContract: undefined,
                             createContract: undefined,
                             deleteContract: undefined,
+                            error: undefined,
                             editContract: contract.id,
+                            notice: undefined,
                           })}
                         >
                           Editar
@@ -201,7 +209,9 @@ export default async function ContractAdministrationPage({
                               archiveContract: contract.id,
                               createContract: undefined,
                               deleteContract: undefined,
+                              error: undefined,
                               editContract: undefined,
+                              notice: undefined,
                             })}
                           >
                             Archivar
@@ -216,7 +226,9 @@ export default async function ContractAdministrationPage({
                               archiveContract: undefined,
                               createContract: undefined,
                               deleteContract: contract.id,
+                              error: undefined,
                               editContract: undefined,
+                              notice: undefined,
                             })}
                           >
                             Eliminar contrato
@@ -261,7 +273,11 @@ export default async function ContractAdministrationPage({
             organizationId: editingContract.organizationId,
           }}
           organizations={data.organizations}
-          returnTo={buildContractsHref(basePath, params, { editContract: editingContract.id })}
+          returnTo={buildContractsHref(basePath, params, {
+            error: undefined,
+            editContract: editingContract.id,
+            notice: undefined,
+          })}
           successTo={closeHref}
         />
       ) : null}
@@ -275,7 +291,9 @@ export default async function ContractAdministrationPage({
             archiveContract: archivingContract.id,
             createContract: undefined,
             deleteContract: undefined,
+            error: undefined,
             editContract: undefined,
+            notice: undefined,
           })}
           successTo={buildContractsHref(basePath, params, {
             archiveContract: undefined,
@@ -283,6 +301,7 @@ export default async function ContractAdministrationPage({
             deleteContract: undefined,
             editContract: undefined,
             error: undefined,
+            notice: undefined,
           })}
         />
       ) : null}
@@ -300,7 +319,9 @@ export default async function ContractAdministrationPage({
             archiveContract: undefined,
             createContract: undefined,
             deleteContract: deletingContract.id,
+            error: undefined,
             editContract: undefined,
+            notice: undefined,
           })}
           successTo={buildContractsHref(basePath, params, {
             archiveContract: undefined,
@@ -308,6 +329,7 @@ export default async function ContractAdministrationPage({
             deleteContract: undefined,
             editContract: undefined,
             error: undefined,
+            notice: undefined,
           })}
         />
       ) : null}
@@ -328,12 +350,4 @@ function StatusBadge({ status }: { status: ContractStatus }) {
       {contractStatusLabels[status]}
     </span>
   );
-}
-
-function parseContractStatus(value?: string): ContractStatus | "ALL" {
-  if (value === "ACTIVE" || value === "INACTIVE" || value === "ARCHIVED") {
-    return value;
-  }
-
-  return "ACTIVE";
 }

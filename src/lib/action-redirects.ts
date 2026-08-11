@@ -27,6 +27,7 @@ export function withActionMessage(
 ) {
   const url = new URL(path, "https://operational-core.local");
 
+  url.searchParams.delete(key === "error" ? "notice" : "error");
   url.searchParams.set(key, message);
 
   return `${url.pathname}${url.search}`;

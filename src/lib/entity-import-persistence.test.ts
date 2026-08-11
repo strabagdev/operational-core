@@ -123,6 +123,21 @@ beforeEach(() => {
 });
 
 describe("entity import persistence", () => {
+  it("does not import when the entity type is outside the authorized contract", async () => {
+    mocks.getAuthorizedRecordEntityType.mockResolvedValueOnce(null);
+
+    await expect(
+      importEntityRecords({
+        contractId: "contract_1",
+        entityTypeId: "foreign_entity",
+        file: await workbookFile(1),
+        userId: "user_1",
+      }),
+    ).resolves.toBeNull();
+
+    expect(transaction).not.toHaveBeenCalled();
+  });
+
   it("imports 414 valid rows with batched writes inside one transaction", async () => {
     const currentTx = tx();
     transaction.mockImplementation(async (callback) => callback(currentTx as never));

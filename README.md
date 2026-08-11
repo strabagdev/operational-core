@@ -14,9 +14,15 @@ The MVP is closed for controlled real use. It includes:
 - configurable entities;
 - configurable fields;
 - configurable validations;
+- SELECT and MULTISELECT option fields;
+- configurable MONEY fields;
+- DATE fields with calendar-date semantics;
 - presentation and field ordering;
 - operational records;
 - record relations;
+- record search;
+- pagination with 25, 50, and 100 row page sizes;
+- multi-selection and bulk record deletion;
 - transactional audit history;
 - Excel template generation;
 - all-or-nothing Excel import.

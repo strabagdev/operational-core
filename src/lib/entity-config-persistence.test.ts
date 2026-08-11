@@ -5,6 +5,7 @@ import {
   getAuthorizedEntityType,
   updateEntityFieldWithOptions,
 } from "./entity-config";
+import { supportedEntityFieldTypes } from "./field-editor-state";
 import { prisma } from "./prisma";
 
 vi.mock("./contracts", () => ({
@@ -23,6 +24,7 @@ vi.mock("./contracts", () => ({
 vi.mock("./prisma", () => ({
   prisma: {
     entityType: {
+      count: vi.fn(),
       findFirst: vi.fn(),
     },
     entityField: {
@@ -33,6 +35,7 @@ vi.mock("./prisma", () => ({
 }));
 
 const entityTypeFindFirst = vi.mocked(prisma.entityType.findFirst);
+const entityTypeCount = vi.mocked(prisma.entityType.count);
 const entityFieldFindFirst = vi.mocked(prisma.entityField.findFirst);
 const transaction = vi.mocked(prisma.$transaction);
 
@@ -98,6 +101,7 @@ function tx() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  entityTypeCount.mockResolvedValue(1);
   entityTypeFindFirst.mockResolvedValue({
     id: "entity_1",
     contractId: "contract_1",
@@ -161,6 +165,82 @@ describe("entity field required persistence", () => {
         }),
       }),
     );
+  });
+});
+
+describe("entity field type persistence", () => {
+  it("persists every supported field type on create", async () => {
+    for (const type of supportedEntityFieldTypes) {
+      const currentTx = tx();
+      transaction.mockImplementationOnce(async (callback) => callback(currentTx as never));
+
+      await createEntityFieldWithOptions(
+        "contract_1",
+        "entity_1",
+        "user_1",
+        input(false, {
+          type,
+          name: `Campo ${type}`,
+          key: `campo_${type.toLowerCase()}`,
+          multiple: type === "MULTISELECT" || type === "RELATION",
+          targetEntityTypeId: type === "RELATION" ? "entity_target" : undefined,
+          relationKind: type === "RELATION" ? "MANY" : undefined,
+        }),
+        type === "SELECT" || type === "MULTISELECT"
+          ? [{ label: "Activo", value: "activo", sortOrder: 1, isActive: true }]
+          : [],
+      );
+
+      expect(currentTx.entityField.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ type }),
+        }),
+      );
+    }
+  });
+
+  it("preserves every supported field type on edit", async () => {
+    for (const type of supportedEntityFieldTypes) {
+      entityTypeFindFirst.mockResolvedValueOnce({
+        id: "entity_1",
+        contractId: "contract_1",
+        fields: [
+          field({
+            type,
+            multiple: type === "MULTISELECT" || type === "RELATION",
+            options: type === "SELECT" || type === "MULTISELECT"
+              ? [{ id: "opt_activo", label: "Activo", value: "activo", sortOrder: 1, isActive: true }]
+              : [],
+          }),
+        ],
+      } as never);
+      const currentTx = tx();
+      transaction.mockImplementationOnce(async (callback) => callback(currentTx as never));
+
+      await updateEntityFieldWithOptions(
+        "contract_1",
+        "entity_1",
+        "field_1",
+        "user_1",
+        input(false, {
+          type,
+          name: `Campo ${type}`,
+          key: `campo_${type.toLowerCase()}`,
+          multiple: type === "MULTISELECT" || type === "RELATION",
+          targetEntityTypeId: type === "RELATION" ? "entity_target" : undefined,
+          relationKind: type === "RELATION" ? "MANY" : undefined,
+        }),
+        type === "SELECT" || type === "MULTISELECT"
+          ? [{ id: "opt_activo", label: "Activo", value: "activo", sortOrder: 1, isActive: true }]
+          : [],
+      );
+
+      expect(currentTx.entityField.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ type }),
+        }),
+      );
+    }
   });
 });
 
@@ -354,6 +434,44 @@ describe("entity field option persistence", () => {
 
     expect(currentTx.fieldOption.deleteMany).not.toHaveBeenCalled();
     expect(currentTx.fieldOption.delete).not.toHaveBeenCalled();
+  });
+
+  it("rejects persisted option ids that do not belong to the authorized field", async () => {
+    entityTypeFindFirst.mockResolvedValue({
+      id: "entity_1",
+      contractId: "contract_1",
+      fields: [
+        field({
+          type: "SELECT",
+          options: [
+            { id: "opt_activo", label: "Activo", value: "activo", sortOrder: 1, isActive: true },
+          ],
+        }),
+      ],
+    } as never);
+    const currentTx = tx();
+    transaction.mockImplementation(async (callback) => callback(currentTx as never));
+
+    await expect(
+      updateEntityFieldWithOptions(
+        "contract_1",
+        "entity_1",
+        "field_1",
+        "user_1",
+        input(false, { type: "SELECT", name: "Estado", key: "estado" }),
+        [
+          {
+            id: "opt_other_field",
+            label: "Ajena",
+            value: "ajena",
+            sortOrder: 1,
+            isActive: true,
+          },
+        ],
+      ),
+    ).rejects.toThrow("Una opción no pertenece a este campo.");
+
+    expect(transaction).not.toHaveBeenCalled();
   });
 
   it("persists option reorder and deactivation on edit", async () => {

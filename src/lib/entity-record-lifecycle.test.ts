@@ -6,6 +6,7 @@ import {
   createEntityRecord,
   getEntityRecords,
   getRelationOptions,
+  validateRelationValues,
 } from "./entity-records";
 import { prisma } from "./prisma";
 
@@ -133,6 +134,38 @@ describe("entity records without technical status", () => {
     const findManyArgs = entityRecordFindMany.mock.calls[0]?.[0];
 
     expect(findManyArgs?.where).not.toHaveProperty("status");
+  });
+
+  it("rejects relation target records outside the configured entity type or contract", async () => {
+    const relationField = field("owner", {
+      type: "RELATION",
+      config: {
+        targetEntityTypeId: "target_entity",
+        relationKind: "ONE",
+      },
+    });
+    const formData = new FormData();
+    formData.append("field_owner", "foreign_record");
+    entityRecordCount.mockResolvedValueOnce(0);
+
+    await expect(
+      validateRelationValues({
+        contractId: "contract_1",
+        entityTypeId: "entity_1",
+        fields: [relationField],
+        formData,
+      }),
+    ).rejects.toThrow("owner contiene registros relacionados no válidos.");
+
+    expect(entityRecordCount).toHaveBeenCalledWith({
+      where: {
+        id: { in: ["foreign_record"] },
+        entityType: {
+          id: "target_entity",
+          contractId: "contract_1",
+        },
+      },
+    });
   });
 });
 

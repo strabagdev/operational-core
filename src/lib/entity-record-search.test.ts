@@ -183,6 +183,9 @@ describe("entity record server-side search", () => {
         OR: expect.any(Array),
       }),
     });
+    expect(entityRecordFindMany.mock.calls[0]?.[0]?.where).toEqual(
+      entityRecordCount.mock.calls[0]?.[0]?.where,
+    );
     expect(entityRecordFindMany).toHaveBeenCalledWith(
       expect.objectContaining({
         skip: 50,
@@ -192,6 +195,22 @@ describe("entity record server-side search", () => {
             where: { entityFieldId: { in: ["rut"] } },
           }),
         },
+      }),
+    );
+  });
+
+  it("does not load audit history in normal record listings", async () => {
+    await getEntityRecords({
+      contractId: "contract_1",
+      entityTypeId: "entity_1",
+      userId: "user_1",
+    });
+
+    expect(entityRecordFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        include: expect.not.objectContaining({
+          auditEvents: expect.anything(),
+        }),
       }),
     );
   });

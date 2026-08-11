@@ -378,4 +378,21 @@ describe("contract administration", () => {
       expect.arrayContaining([expect.objectContaining({ id: "contract_1" })]),
     );
   });
+
+  it("does not constrain status when listing all contracts", async () => {
+    organizationFindMany.mockResolvedValueOnce([organization()] as never);
+    contractFindMany.mockResolvedValueOnce([
+      contract({ id: "active_contract", status: "ACTIVE" }),
+      contract({ id: "inactive_contract", status: "INACTIVE" }),
+      contract({ id: "archived_contract", status: "ARCHIVED" }),
+    ] as never);
+
+    await getContractAdministration({ userId: "user_1", status: "ALL" });
+
+    expect(contractFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.not.objectContaining({ status: expect.anything() }),
+      }),
+    );
+  });
 });

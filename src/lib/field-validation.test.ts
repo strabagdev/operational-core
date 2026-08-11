@@ -84,7 +84,7 @@ describe("field validation", () => {
 
     expect(() => validateRecordValues({
       fields: [field({ config: required, type: "BOOLEAN" })],
-      formData: formData([]),
+      formData: formData([["field_field_1", "false"]]),
       mode: "edit",
     })).not.toThrow();
 
@@ -93,6 +93,20 @@ describe("field validation", () => {
       formData: formData([["field_field_1", "0"]]),
       mode: "edit",
     })).not.toThrow();
+  });
+
+  it("keeps an absent optional boolean empty while preserving explicit false", () => {
+    expect(validateRecordValues({
+      fields: [field({ type: "BOOLEAN" })],
+      formData: formData([]),
+      mode: "create",
+    })).toEqual([]);
+
+    expect(validateRecordValues({
+      fields: [field({ type: "BOOLEAN" })],
+      formData: formData([["field_field_1", "false"]]),
+      mode: "create",
+    })[0]).toMatchObject({ fieldId: "field_1", booleanValue: false });
   });
 
   it("validates minLength and maxLength", () => {
@@ -160,6 +174,18 @@ describe("field validation", () => {
   it("rejects integer decimals and accepts decimal decimals", () => {
     expect(() => normalizeRawFieldValue(field({ type: "INTEGER" }), ["1.5"])).toThrow(FieldValidationError);
     expect(normalizeRawFieldValue(field({ type: "DECIMAL" }), ["1.5"]).decimalValue?.toString()).toBe("1.5");
+  });
+
+  it("rejects integers outside the PostgreSQL INT4 range before Prisma", () => {
+    expect(normalizeRawFieldValue(field({ type: "INTEGER" }), ["2147483647"]).integerValue).toBe(2147483647);
+    expect(normalizeRawFieldValue(field({ type: "INTEGER" }), ["-2147483648"]).integerValue).toBe(-2147483648);
+
+    expectFieldError(
+      () => normalizeRawFieldValue(field({ type: "INTEGER" }), ["5269808713"]),
+    );
+    expectFieldError(
+      () => normalizeRawFieldValue(field({ type: "INTEGER" }), ["2147483648"]),
+    );
   });
 
   it("stores MONEY as Decimal and accepts values larger than INT4", () => {

@@ -42,6 +42,27 @@ describe("contract administration navigation", () => {
     );
   });
 
+  it("opens modal modes without carrying stale action messages", () => {
+    const href = buildContractsHref(
+      "/app/settings/contracts",
+      {
+        q: "demo",
+        status: "ALL",
+        error: "Error anterior",
+        notice: "Notice anterior",
+      },
+      {
+        deleteContract: "contract_1",
+        error: undefined,
+        notice: undefined,
+      },
+    );
+
+    expect(href).toBe(
+      "/app/settings/contracts?q=demo&status=ALL&deleteContract=contract_1",
+    );
+  });
+
   it("opens archive mode while closing edit and delete modes", () => {
     const href = buildContractsHref(
       "/app/settings/contracts",

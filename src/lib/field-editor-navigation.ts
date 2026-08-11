@@ -36,6 +36,10 @@ export function buildFieldEditorHref({
       continue;
     }
 
+    if (key === "notice" && mode.kind !== "closed") {
+      continue;
+    }
+
     params.set(key, value);
   }
 

@@ -156,4 +156,29 @@ describe("record form options", () => {
     expect(html).toContain("CLP");
     expect(html).not.toContain("$5.269.808.713");
   });
+
+  it("submits explicit false for unchecked boolean fields", () => {
+    const html = renderToStaticMarkup(
+      <RecordForm
+        action={async () => undefined}
+        fields={[
+          {
+            id: "field_active",
+            name: "Activo",
+            description: null,
+            type: "BOOLEAN",
+            required: false,
+            config: null,
+            options: [],
+          },
+        ]}
+        relationOptions={{}}
+        submitLabel="Crear registro"
+      />,
+    );
+
+    expect(html).toContain('type="hidden" name="field_field_active" value="false"');
+    expect(html).toContain('type="checkbox"');
+    expect(html).not.toContain('checked=""');
+  });
 });

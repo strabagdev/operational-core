@@ -21,4 +21,26 @@ describe("action redirects", () => {
       "/app/contracts/1?fieldQ=rut&notice=Campo+creado",
     );
   });
+
+  it("keeps action error and notice messages mutually exclusive", () => {
+    expect(
+      withActionMessage(
+        "/app/settings/contracts?status=ARCHIVED&error=Error+anterior",
+        "notice",
+        "Contrato archivado.",
+      ),
+    ).toBe(
+      "/app/settings/contracts?status=ARCHIVED&notice=Contrato+archivado.",
+    );
+
+    expect(
+      withActionMessage(
+        "/app/settings/contracts?status=ARCHIVED&notice=Mensaje+anterior",
+        "error",
+        "La confirmación no coincide.",
+      ),
+    ).toBe(
+      "/app/settings/contracts?status=ARCHIVED&error=La+confirmaci%C3%B3n+no+coincide.",
+    );
+  });
 });

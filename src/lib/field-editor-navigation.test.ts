@@ -53,13 +53,24 @@ describe("field editor navigation", () => {
       basePath: "/settings/entities/entity",
       currentParams,
       mode: { kind: "edit", fieldId: "field_1" },
-    })).toBe("/settings/entities/entity?fieldQ=rut&fieldType=TEXT&fieldState=ACTIVE&fieldUse=SEARCH&notice=Campo+creado&tab=fields&editField=field_1");
+    })).toBe("/settings/entities/entity?fieldQ=rut&fieldType=TEXT&fieldState=ACTIVE&fieldUse=SEARCH&tab=fields&editField=field_1");
 
     expect(buildFieldEditorHref({
       basePath: "/settings/entities/entity",
       currentParams,
       mode: { kind: "closed" },
     })).toBe("/settings/entities/entity?fieldQ=rut&fieldType=TEXT&fieldState=ACTIVE&fieldUse=SEARCH&notice=Campo+creado&tab=fields");
+  });
+
+  it("opens create mode without carrying stale action notices", () => {
+    expect(buildFieldEditorHref({
+      basePath: "/settings/entities/entity",
+      currentParams: {
+        fieldQ: "estado",
+        notice: "Campo creado correctamente.",
+      },
+      mode: { kind: "create" },
+    })).toBe("/settings/entities/entity?fieldQ=estado&createField=1");
   });
 });
 

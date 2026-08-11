@@ -14,6 +14,7 @@ import {
   templateFileName,
   validateImportRows,
 } from "./entity-import";
+import { fieldInputName, validateRecordValues } from "./field-validation";
 
 type ImportTestField = Parameters<typeof getImportableFields>[0][number];
 
@@ -52,6 +53,18 @@ async function workbookFile(headers: string[], rows: unknown[][] = [], name = "p
   return new File([buffer], name, {
     type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   });
+}
+
+function toComparableValues(values: ReturnType<typeof validateRecordValues>) {
+  return values.map((value) => ({
+    fieldId: value.fieldId,
+    textValue: value.textValue ?? null,
+    integerValue: value.integerValue ?? null,
+    decimalValue: value.decimalValue?.toString() ?? null,
+    booleanValue: value.booleanValue ?? null,
+    dateValue: value.dateValue?.toISOString() ?? null,
+    jsonValue: value.jsonValue ?? null,
+  }));
 }
 
 describe("entity import template", () => {
@@ -258,6 +271,55 @@ describe("entity import structure and values", () => {
     );
   });
 
+  it("normalizes manual input and Excel rows to equivalent EntityValue payloads", async () => {
+    const fields = [
+      field({ id: "text", name: "Texto", type: "TEXT" }),
+      field({ id: "int", name: "Entero", type: "INTEGER" }),
+      field({ id: "dec", name: "Decimal", type: "DECIMAL" }),
+      field({ id: "money", name: "Monto", type: "MONEY", config: { money: { currency: "UF" } } }),
+      field({ id: "bool", name: "Booleano", type: "BOOLEAN" }),
+      field({ id: "date", name: "Fecha", type: "DATE" }),
+      field({
+        id: "select",
+        name: "Estado",
+        type: "SELECT",
+        options: [{ id: "o1", label: "Aprobado", value: "aprobado", sortOrder: 1, isActive: true }],
+      }),
+      field({
+        id: "multi",
+        name: "Estados",
+        type: "MULTISELECT",
+        options: [
+          { id: "o2", label: "Aprobado", value: "aprobado", sortOrder: 1, isActive: true },
+          { id: "o3", label: "Pendiente", value: "pendiente", sortOrder: 2, isActive: true },
+        ],
+      }),
+    ];
+    const manualFormData = new FormData();
+
+    manualFormData.set(fieldInputName("text"), "Texto demo");
+    manualFormData.set(fieldInputName("int"), "2147483647");
+    manualFormData.set(fieldInputName("dec"), "10.5");
+    manualFormData.set(fieldInputName("money"), "5269808713");
+    manualFormData.set(fieldInputName("bool"), "true");
+    manualFormData.set(fieldInputName("date"), "2026-01-21");
+    manualFormData.set(fieldInputName("select"), "aprobado");
+    manualFormData.append(fieldInputName("multi"), "aprobado");
+    manualFormData.append(fieldInputName("multi"), "pendiente");
+
+    const excelRows = await parseExcelRows({
+      fields,
+      file: await workbookFile(
+        fields.map((item) => item.name),
+        [["Texto demo", 2147483647, 10.5, 5269808713, "true", "2026-01-21", "Aprobado", "Aprobado; Pendiente"]],
+      ),
+    });
+    const manualValues = validateRecordValues({ fields, formData: manualFormData, mode: "create" });
+    const excelValues = (await validateImportRows({ fields, rows: excelRows })).validRows[0].values;
+
+    expect(toComparableValues(excelValues)).toEqual(toComparableValues(manualValues));
+  });
+
   it("imports Excel DATE cells as calendar dates without timezone drift", async () => {
     const fields = [field({ id: "date", name: "Fecha", type: "DATE" })];
     const rows = await parseExcelRows({
@@ -282,6 +344,47 @@ describe("entity import structure and values", () => {
 
     expect(result.errors).toEqual([]);
     expect(result.validRows[0].values[0].decimalValue?.toString()).toBe("5269808713");
+  });
+
+  it("applies the same INT4 range validation for Excel integer cells", async () => {
+    const fields = [field({ id: "int", name: "Entero", type: "INTEGER" })];
+    const rows = await parseExcelRows({
+      fields,
+      file: await workbookFile(["Entero"], [[2147483647], [-2147483648], [2147483648], [5269808713], [1.5]]),
+    });
+    const result = await validateImportRows({ fields, rows });
+
+    expect(result.validRows).toHaveLength(2);
+    expect(result.errors).toEqual([
+      {
+        row: 4,
+        field: "Entero",
+        message: "Debe estar entre -2147483648 y 2147483647.",
+      },
+      {
+        row: 5,
+        field: "Entero",
+        message: "Debe estar entre -2147483648 y 2147483647.",
+      },
+      {
+        row: 6,
+        field: "Entero",
+        message: "Debe ser un número entero.",
+      },
+    ]);
+  });
+
+  it("keeps blank optional Excel booleans empty instead of importing false", async () => {
+    const fields = [field({ id: "bool", name: "Booleano", type: "BOOLEAN" })];
+    const rows = await parseExcelRows({
+      fields,
+      file: await workbookFile(["Booleano"], [[""], ["No"], ["Sí"]]),
+    });
+    const result = await validateImportRows({ fields, rows });
+
+    expect(result.errors).toEqual([]);
+    expect(result.validRows).toHaveLength(2);
+    expect(result.validRows.map((row) => row.values[0].booleanValue)).toEqual([false, true]);
   });
 
   it("reports validation errors and blocks valid rows for that file row", async () => {

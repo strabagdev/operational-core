@@ -115,17 +115,25 @@ export default async function EntityRecordsPage({
 
       <Card>
         <CardContent className="pt-6">
-          <form className="grid gap-3 md:grid-cols-[1fr_auto]" method="get">
+          <form className="grid gap-3 md:grid-cols-[1fr_160px_auto]" method="get">
             <input
               className="h-10 rounded-md border border-input bg-background px-3 text-sm outline-none ring-ring focus-visible:ring-2"
               defaultValue={q ?? ""}
               name="q"
               placeholder="Buscar"
             />
+            <select
+              className="h-10 rounded-md border border-input bg-background px-3 text-sm"
+              defaultValue={data.pagination.pageSize}
+              name="pageSize"
+            >
+              <option value="25">25 por página</option>
+              <option value="50">50 por página</option>
+              <option value="100">100 por página</option>
+            </select>
             <Button type="submit" variant="outline">
               Filtrar
             </Button>
-            <input name="pageSize" type="hidden" value={data.pagination.pageSize} />
           </form>
         </CardContent>
       </Card>
