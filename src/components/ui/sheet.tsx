@@ -37,22 +37,36 @@ function SheetContent({
       <SheetOverlay />
       <DialogPrimitive.Content
         className={cn(
-          "fixed inset-y-0 right-0 z-50 flex h-full w-full flex-col border-l border-border bg-background shadow-xl outline-none sm:max-w-[600px]",
+          "fixed inset-y-0 right-0 z-50 flex h-full w-full min-w-0 flex-col overflow-hidden border-l border-border bg-background shadow-xl outline-none sm:max-w-[600px]",
           className,
         )}
         {...props}
       >
         {children}
-        <Button
-          aria-label="Cerrar"
-          className="absolute right-4 top-4"
-          onClick={onCloseClick}
-          size="icon"
-          type="button"
-          variant="ghost"
-        >
-          <X className="h-4 w-4" />
-        </Button>
+        {onCloseClick ? (
+          <Button
+            aria-label="Cerrar"
+            className="absolute right-4 top-4"
+            onClick={onCloseClick}
+            size="icon"
+            type="button"
+            variant="ghost"
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        ) : (
+          <DialogPrimitive.Close asChild>
+            <Button
+              aria-label="Cerrar"
+              className="absolute right-4 top-4"
+              size="icon"
+              type="button"
+              variant="ghost"
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          </DialogPrimitive.Close>
+        )}
       </DialogPrimitive.Content>
     </SheetPortal>
   );
@@ -64,7 +78,7 @@ function SheetHeader({
 }: React.ComponentProps<"div">) {
   return (
     <div
-      className={cn("grid gap-2 border-b border-border p-5 pr-14", className)}
+      className={cn("shrink-0 grid gap-2 border-b border-border p-5 pr-14", className)}
       {...props}
     />
   );
@@ -76,7 +90,7 @@ function SheetFooter({
 }: React.ComponentProps<"div">) {
   return (
     <div
-      className={cn("border-t border-border bg-background p-5", className)}
+      className={cn("shrink-0 border-t border-border bg-background p-5", className)}
       {...props}
     />
   );

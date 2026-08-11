@@ -1,6 +1,15 @@
 import { Prisma, type EntityFieldType } from "@prisma/client";
 import { z } from "zod";
 
+import { dateOnlyToUtcDate } from "./date-only";
+import { orderEntityFields } from "./entity-field-order";
+import {
+  DEFAULT_MONEY_CURRENCY,
+  getMoneyConfig,
+  parseMoneyCurrency,
+  type MoneyConfig,
+} from "./money";
+
 export type FieldErrorMap = Record<string, string[]>;
 
 export type FieldOptionLike = {
@@ -69,6 +78,7 @@ export type ParsedFieldConfig = RelationConfig & {
   validation: FieldValidationRules;
   defaultValue?: Prisma.JsonValue;
   display: FieldDisplayConfig;
+  money: MoneyConfig;
 };
 
 export class FieldValidationError extends Error {
@@ -156,17 +166,22 @@ const fieldConfigSchema = z.object({
       listOrder: z.number().int().min(0).optional(),
     })
     .default({}),
+  money: z
+    .object({
+      currency: z.string().optional(),
+    })
+    .default({}),
 });
 
 export function parseFieldConfig(config: unknown): ParsedFieldConfig {
   if (!config || typeof config !== "object" || Array.isArray(config)) {
-    return { validation: {}, display: {} };
+    return { validation: {}, display: {}, money: { currency: DEFAULT_MONEY_CURRENCY } };
   }
 
   const parsed = fieldConfigSchema.safeParse(config);
 
   if (!parsed.success) {
-    return { validation: {}, display: {} };
+    return { validation: {}, display: {}, money: { currency: DEFAULT_MONEY_CURRENCY } };
   }
 
   return {
@@ -175,6 +190,9 @@ export function parseFieldConfig(config: unknown): ParsedFieldConfig {
     validation: parsed.data.validation,
     defaultValue: toJsonValue(parsed.data.defaultValue),
     display: parsed.data.display,
+    money: {
+      currency: parseMoneyCurrency(parsed.data.money.currency),
+    },
   };
 }
 
@@ -183,16 +201,19 @@ export function parseFieldDisplayConfig(config: unknown): FieldDisplayConfig {
 }
 
 export function getPrimaryDisplayField<T extends DisplayField>(fields: T[]) {
+  const orderedFields = orderEntityFields(fields);
+
   return (
-    fields.find((field) => parseFieldConfig(field.config).display.primary) ??
-    fields.find((field) => field.type === "TEXT" && field.required) ??
-    fields.find((field) => field.type === "TEXT")
+    orderedFields.find((field) => parseFieldConfig(field.config).display.primary) ??
+    orderedFields.find((field) => field.type === "TEXT" && field.required) ??
+    orderedFields.find((field) => field.type === "TEXT")
   );
 }
 
 export function getRecordListFields<T extends DisplayField>(fields: T[]) {
-  const primaryField = getPrimaryDisplayField(fields);
-  const configuredFields = fields.filter((field) => {
+  const orderedFields = orderEntityFields(fields);
+  const primaryField = getPrimaryDisplayField(orderedFields);
+  const configuredFields = orderedFields.filter((field) => {
     const display = parseFieldConfig(field.config).display;
 
     return display.showInList === true && field.id !== primaryField?.id;
@@ -200,17 +221,9 @@ export function getRecordListFields<T extends DisplayField>(fields: T[]) {
   const fieldsToShow =
     configuredFields.length > 0
       ? configuredFields
-      : fields.filter((field) => field.searchable && field.id !== primaryField?.id);
+      : orderedFields.filter((field) => field.searchable && field.id !== primaryField?.id);
 
-  return [...fieldsToShow].sort((left, right) => {
-    const leftDisplay = parseFieldConfig(left.config).display;
-    const rightDisplay = parseFieldConfig(right.config).display;
-
-    return (
-      (leftDisplay.listOrder ?? left.sortOrder) - (rightDisplay.listOrder ?? right.sortOrder) ||
-      left.name.localeCompare(right.name)
-    );
-  });
+  return orderEntityFields(fieldsToShow);
 }
 
 export function getRecordDisplayName(fields: DisplayField[], values: SerializedFieldValue[]) {
@@ -255,6 +268,7 @@ export function buildMergedFieldConfig({
   validation,
   defaultValue,
   display,
+  money,
   optionValues = [],
 }: {
   existingConfig?: unknown;
@@ -263,6 +277,7 @@ export function buildMergedFieldConfig({
   validation: FieldValidationRules;
   defaultValue?: unknown;
   display?: FieldDisplayConfig;
+  money?: MoneyConfig;
   optionValues?: string[];
 }) {
   const base =
@@ -301,6 +316,15 @@ export function buildMergedFieldConfig({
     nextConfig.display = cleanDisplay;
   } else {
     delete nextConfig.display;
+  }
+
+  if (type === "MONEY") {
+    nextConfig.money = {
+      ...getMoneyConfig(base),
+      currency: money?.currency ?? getMoneyConfig(base).currency,
+    };
+  } else {
+    delete nextConfig.money;
   }
 
   if (
@@ -384,8 +408,8 @@ export function validateFieldConfiguration({
 }) {
   const clean: FieldValidationRules = {};
 
-  if (validation.required) {
-    clean.required = true;
+  if (validation.required !== undefined) {
+    clean.required = validation.required;
   }
 
   if (validation.minLength !== undefined) {
@@ -567,7 +591,9 @@ export function normalizeFieldInput({
   const config = parseFieldConfig(field.config);
 
   if (applyDefault && shouldApplyDefault(field, rawValues, config.defaultValue)) {
-    return normalizeDefaultValue(field.type, config.defaultValue, activeOptionValues(field)) ?? {
+    const defaultValue = normalizeDefaultValue(field.type, config.defaultValue, activeOptionValues(field));
+
+    return defaultValue ? { ...defaultValue, fieldId: field.id } : {
       fieldId: field.id,
     };
   }
@@ -607,7 +633,16 @@ export function normalizeRawFieldValue(
       return { fieldId: field.id, decimalValue: new Prisma.Decimal(rawValue) };
     case "BOOLEAN":
       return { fieldId: field.id, booleanValue: rawValues.includes("on") };
-    case "DATE":
+    case "DATE": {
+      if (!rawValue) return { fieldId: field.id, dateValue: null };
+      const date = dateOnlyToUtcDate(rawValue);
+
+      if (!date) {
+        throw new FieldValidationError({ [field.id]: [`${field.name} debe ser una fecha válida.`] });
+      }
+
+      return { fieldId: field.id, dateValue: date };
+    }
     case "DATETIME":
       if (!rawValue) return { fieldId: field.id, dateValue: null };
       return { fieldId: field.id, dateValue: parseDateValue(rawValue, field.name) };

@@ -34,6 +34,11 @@ type AuditableRelation = {
 };
 
 export const auditActionLabels: Record<AuditAction, string> = {
+  CONTRACT_CREATED: "Contrato creado",
+  CONTRACT_UPDATED: "Contrato actualizado",
+  CONTRACT_STATUS_CHANGED: "Estado de contrato actualizado",
+  CONTRACT_ARCHIVED: "Contrato archivado",
+  CONTRACT_RESTORED: "Contrato restaurado",
   RECORD_CREATED: "Registro creado",
   RECORD_UPDATED: "Registro actualizado",
   RECORD_STATUS_CHANGED: "Estado actualizado",

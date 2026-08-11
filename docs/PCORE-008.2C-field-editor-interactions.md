@@ -108,7 +108,7 @@ Client ids are never trusted as authorization proof.
 PCORE-008.2D added final hardening:
 
 - `returnTo` and `successTo` now reject external/protocol-relative paths;
-- option payloads are capped at 100 rows per submit;
+- option payloads are capped at 500 rows per submit;
 - editor payload tests cover simple fields, option fields, relation payloads, duplicate options, and payload size;
 - Next.js was patched to `16.2.12`;
 - npm audit debt and the lack of a safe mutable database are documented in `docs/PCORE-008.2D-field-configuration-acceptance.md`.

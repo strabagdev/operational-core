@@ -77,7 +77,7 @@ Server actions still require authenticated users through `requireAuthenticatedUs
 
 `returnTo` and `successTo` are now sanitized by `safeAppRedirectPath`, allowing only internal `/app/` paths and rejecting absolute URLs, protocol-relative URLs, and non-app paths.
 
-Option payloads are capped at 100 rows per submit.
+Option payloads are capped at 500 rows per submit.
 
 ## Dependency Audit
 

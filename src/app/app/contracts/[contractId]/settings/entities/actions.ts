@@ -12,6 +12,7 @@ import {
   createEntityField,
   createEntityType,
   createFieldOption,
+  deleteUnusedFieldOption,
   FieldEditorInputError,
   friendlyActionError,
   getEntityFieldEditorInput,
@@ -299,11 +300,20 @@ export async function reorderEntityFieldAction(
   entityTypeId: string,
   fieldId: string,
   direction: "up" | "down",
+  formData: FormData,
 ) {
   const userId = await requireUserId();
+  const fallbackPath = entityTypePath(contractId, entityTypeId);
+  const returnTo = redirectPath(formData, "returnTo", fallbackPath);
 
-  await reorderEntityFields(contractId, entityTypeId, fieldId, userId, direction);
+  try {
+    await reorderEntityFields(contractId, entityTypeId, fieldId, userId, direction);
+  } catch (error) {
+    redirect(withMessage(returnTo, "error", friendlyActionError(error)));
+  }
+
   revalidatePath(entityTypePath(contractId, entityTypeId));
+  redirect(withMessage(returnTo, "notice", "Orden actualizado."));
 }
 
 export async function createFieldOptionAction(
@@ -388,6 +398,41 @@ export async function toggleFieldOptionAction(
     isActive,
   );
   revalidatePath(entityTypePath(contractId, entityTypeId));
+}
+
+export async function deleteFieldOptionAction(
+  contractId: string,
+  entityTypeId: string,
+  fieldId: string,
+  optionId: string,
+): Promise<{ success: boolean; message: string }> {
+  const userId = await requireUserId();
+
+  try {
+    const deleted = await deleteUnusedFieldOption(
+      contractId,
+      entityTypeId,
+      fieldId,
+      optionId,
+      userId,
+    );
+
+    if (!deleted) {
+      return { success: false, message: "No se encontró la opción." };
+    }
+  } catch (error) {
+    return {
+      success: false,
+      message:
+        friendlyActionError(error) === "No se pudo completar la operación."
+          ? "No puedes eliminar esta opción porque está siendo utilizada."
+          : friendlyActionError(error),
+    };
+  }
+
+  revalidatePath(entityTypePath(contractId, entityTypeId));
+
+  return { success: true, message: "Opción eliminada." };
 }
 
 function fieldEditorErrorState(

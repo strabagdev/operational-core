@@ -1,6 +1,5 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import type React from "react";
 import { type EntityFieldType } from "@prisma/client";
 
 import { auth } from "@/auth";
@@ -12,32 +11,27 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { getAuthorizedEntityType, getContractEntityTypes } from "@/lib/entity-config";
+  getAuthorizedEntityType,
+  getContractEntityTypes,
+  getFieldOptionUsage,
+} from "@/lib/entity-config";
 import { parseFieldConfig } from "@/lib/field-validation";
 import {
   buildFieldEditorHref,
   getFieldEditorMode,
   type FieldEditorMode,
 } from "@/lib/field-editor-navigation";
+import { supportedEntityFieldTypes } from "@/lib/field-editor-state";
 import { getFieldEditorSummary } from "@/lib/field-editor-ux";
 import {
   filterFieldList,
-  getFieldBehaviorBadges,
   getFieldTypeLabel,
-  getFieldUseBadges,
-  hasLimitedSupport,
   type FieldUseFilter,
 } from "@/lib/field-list-ux";
 
 import {
   createEntityFieldEditorAction,
+  deleteFieldOptionAction,
   reorderEntityFieldAction,
   toggleEntityFieldFromListAction,
   updateEntityFieldEditorAction,
@@ -46,33 +40,7 @@ import {
 import { EntityTypeForm } from "../entity-type-form";
 import { FormError } from "../form-error";
 import { FieldEditorFormSheet } from "./field-editor-form";
-import { FieldToggleForm } from "./field-toggle-form";
-
-const fieldTypes = [
-  "TEXT",
-  "TEXTAREA",
-  "INTEGER",
-  "DECIMAL",
-  "MONEY",
-  "BOOLEAN",
-  "DATE",
-  "DATETIME",
-  "SELECT",
-  "MULTISELECT",
-  "EMAIL",
-  "PHONE",
-  "URL",
-  "FILE",
-  "IMAGE",
-  "RELATION",
-] as const;
-
-type FieldWithUsage = Parameters<typeof getFieldBehaviorBadges>[0] & {
-  _count?: {
-    values: number;
-    relations: number;
-  };
-};
+import { FieldListItem, type FieldWithUsage } from "./field-list-item";
 
 export default async function EntityTypeDetailPage({
   params,
@@ -197,6 +165,9 @@ export default async function EntityTypeDetailPage({
             <p className="text-sm text-muted-foreground">
               {entityType.fields.length} campo{entityType.fields.length === 1 ? "" : "s"} configurado{entityType.fields.length === 1 ? "" : "s"}.
             </p>
+            <p className="text-sm text-muted-foreground">
+              El orden de los campos se utiliza en formularios, listados y plantillas Excel.
+            </p>
           </div>
           <Button asChild>
             <Link href={createEditorHref}>Agregar campo</Link>
@@ -229,6 +200,9 @@ export default async function EntityTypeDetailPage({
                         currentParams,
                         mode: { kind: "edit", fieldId: field.id },
                       })}
+                      reorderAction={reorderEntityFieldAction}
+                      returnTo={closeEditorHref}
+                      toggleAction={toggleEntityFieldFromListAction}
                     />
                   );
                 })
@@ -297,7 +271,7 @@ function FieldFilters({
             name="fieldType"
           >
             <option value="ALL">Todos los tipos</option>
-            {fieldTypes.map((type) => (
+            {supportedEntityFieldTypes.map((type) => (
               <option key={type} value={type}>
                 {getFieldTypeLabel(type)}
               </option>
@@ -334,131 +308,7 @@ function FieldFilters({
   );
 }
 
-function FieldListItem({
-  contractId,
-  entityTypeId,
-  entityTypes,
-  field,
-  index,
-  isLast,
-  openHref,
-}: {
-  contractId: string;
-  entityTypeId: string;
-  entityTypes: Array<{ id: string; name: string }>;
-  field: (typeof fieldTypes)[number] extends never ? never : FieldWithUsage;
-  index: number;
-  isLast: boolean;
-  openHref: string;
-}) {
-  const behaviorBadges = getFieldBehaviorBadges(field);
-  const useBadges = getFieldUseBadges(field, entityTypes);
-  const isPrimary = parseFieldConfig(field.config).display.primary === true;
-  const toggleReturnTo = openHref.replace(/[?&]editField=[^&]+/, "");
-
-  return (
-    <Card className={field.isActive ? "" : "opacity-70"}>
-      <CardContent className="grid gap-4 pt-6">
-        <div className="grid gap-4 md:grid-cols-[1fr_auto] md:items-start">
-          <div className="grid gap-3">
-            <div className="grid gap-1">
-              <div className="flex flex-wrap items-center gap-2">
-                <h3 className="text-base font-semibold">{field.name}</h3>
-                <Badge variant={field.isActive ? "default" : "muted"}>
-                  {field.isActive ? "Activo" : "Inactivo"}
-                </Badge>
-                {hasLimitedSupport(field.type) ? (
-                  <Badge variant="muted">Soporte limitado</Badge>
-                ) : null}
-              </div>
-              <p className="text-sm text-muted-foreground">
-                {getFieldTypeLabel(field.type)} · {field.key}
-              </p>
-              {field.description ? (
-                <p className="text-sm text-muted-foreground">{field.description}</p>
-              ) : null}
-            </div>
-
-            <div className="flex flex-wrap gap-2">
-              {behaviorBadges.map((badge) => (
-                <Badge key={badge}>{badge}</Badge>
-              ))}
-              {useBadges.map((badge) => (
-                <Badge key={badge} variant="outline">
-                  {badge}
-                </Badge>
-              ))}
-            </div>
-          </div>
-
-          <div className="flex flex-wrap gap-2 md:justify-end">
-            <Button asChild size="sm" variant="outline">
-              <Link href={openHref}>Editar</Link>
-            </Button>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button aria-label={`Más acciones para ${field.name}`} size="sm" variant="outline">
-                  Acciones
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuLabel>Orden</DropdownMenuLabel>
-                <DropdownMenuItem onSelect={(event) => event.preventDefault()}>
-                  <form
-                    action={reorderEntityFieldAction.bind(
-                      null,
-                      contractId,
-                      entityTypeId,
-                      field.id,
-                      "up",
-                    )}
-                  >
-                    <button className="w-full text-left disabled:opacity-50" disabled={index === 0} type="submit">
-                      Subir
-                    </button>
-                  </form>
-                </DropdownMenuItem>
-                <DropdownMenuItem asChild>
-                  <form
-                    action={reorderEntityFieldAction.bind(
-                      null,
-                      contractId,
-                      entityTypeId,
-                      field.id,
-                      "down",
-                    )}
-                  >
-                    <button className="w-full text-left disabled:opacity-50" disabled={isLast} type="submit">
-                      Bajar
-                    </button>
-                  </form>
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem asChild>
-                  <FieldToggleForm
-                    action={toggleEntityFieldFromListAction.bind(
-                      null,
-                      contractId,
-                      entityTypeId,
-                      field.id,
-                      !field.isActive,
-                    )}
-                    isActive={field.isActive}
-                    isPrimary={isPrimary}
-                    returnTo={toggleReturnTo}
-                  />
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-        </div>
-
-      </CardContent>
-    </Card>
-  );
-}
-
-function FieldEditorOverlay({
+async function FieldEditorOverlay({
   closeHref,
   contractId,
   currentParams,
@@ -490,6 +340,7 @@ function FieldEditorOverlay({
 
     return (
       <FieldEditorFormSheet
+        key="create-field"
         action={createEntityFieldEditorAction.bind(null, contractId, entityTypeId)}
         closeHref={closeHref}
         description="Define la información que podrán contener los registros de esta entidad."
@@ -520,9 +371,18 @@ function FieldEditorOverlay({
   });
   const fieldConfig = parseFieldConfig(field.config);
   const hasValues = (field._count?.values ?? 0) > 0 || (field._count?.relations ?? 0) > 0;
+  const optionUsages = new Map(
+    await Promise.all(
+      field.options.map(async (option) => [
+        option.id,
+        (await getFieldOptionUsage(option.id)) ?? { isUsed: false, usageCount: 0 },
+      ] as const),
+    ),
+  );
 
   return (
     <FieldEditorFormSheet
+      key={`edit-field-${field.id}-${field.options.map((option) => `${option.id}:${option.value}:${option.sortOrder}:${option.isActive}`).join("|")}`}
       action={updateEntityFieldEditorAction.bind(
         null,
         contractId,
@@ -531,6 +391,7 @@ function FieldEditorOverlay({
       )}
       closeHref={closeHref}
       description="Actualiza cómo se comporta este campo en formularios, listados y registros."
+      deleteOptionAction={deleteFieldOptionAction}
       defaultValues={{
         name: field.name,
         key: field.key,
@@ -546,13 +407,15 @@ function FieldEditorOverlay({
         validation: fieldConfig.validation,
         defaultValue: fieldConfig.defaultValue,
         display: fieldConfig.display,
+        money: fieldConfig.money,
         options: field.options.map((option) => ({
           id: option.id,
           label: option.label,
           value: option.value,
           sortOrder: option.sortOrder,
           isActive: option.isActive,
-          hasValues,
+          hasValues: (optionUsages.get(option.id)?.usageCount ?? 0) > 0,
+          usageCount: optionUsages.get(option.id)?.usageCount ?? 0,
         })),
         hasValues,
       }}
@@ -562,6 +425,7 @@ function FieldEditorOverlay({
       formId="edit-field-form"
       hasPrimary={fields.some((item) => parseFieldConfig(item.config).display.primary)}
       mode="edit"
+      optionActionContext={{ contractId, entityTypeId, fieldId: field.id }}
       returnTo={returnTo}
       successTo={closeHref}
       summary={`${field.name} · ${getFieldEditorSummary(field)}`}
@@ -586,29 +450,8 @@ function EmptyFieldState() {
   );
 }
 
-function Badge({
-  children,
-  variant = "default",
-}: {
-  children: React.ReactNode;
-  variant?: "default" | "muted" | "outline";
-}) {
-  const className =
-    variant === "outline"
-      ? "border-border bg-background text-muted-foreground"
-      : variant === "muted"
-        ? "border-border bg-muted text-muted-foreground"
-        : "border-transparent bg-secondary text-secondary-foreground";
-
-  return (
-    <span className={`rounded-full border px-2 py-0.5 text-xs font-medium ${className}`}>
-      {children}
-    </span>
-  );
-}
-
 function parseFieldTypeFilter(value?: string): EntityFieldType | "ALL" {
-  return fieldTypes.includes(value as (typeof fieldTypes)[number])
+  return supportedEntityFieldTypes.includes(value as EntityFieldType)
     ? (value as EntityFieldType)
     : "ALL";
 }

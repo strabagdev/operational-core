@@ -24,7 +24,9 @@ Record presentation is stored inside `EntityField.config.display`:
 
 - `primary`: marks the field used to calculate the persisted `EntityRecord.displayName`;
 - `showInList`: marks a dynamic field as a visible record-list column;
-- `listOrder`: optionally orders list columns, falling back to `EntityField.sortOrder`.
+- `listOrder`: legacy compatibility data only; official field order is `EntityField.sortOrder`.
+
+`EntityField.sortOrder` is the single official order for field configuration, record forms, record-list dynamic columns, Excel templates, and Excel imports. `display.listOrder` must not create a different order.
 
 Only one active field should be primary for each `EntityType`. The server unmarks any previous primary field when a new one is saved. If no primary field is configured, records keep the legacy display-name fallback: first required `TEXT`, then first `TEXT`, then `Registro sin nombre`.
 
@@ -39,13 +41,66 @@ Validation is centralized in the server-side dynamic field validation layer. Ser
 
 ## Dynamic Records
 
-`EntityRecord` stores the operational record identity, status, display name, timestamps, and archive timestamp.
+`EntityRecord` stores the operational record identity, display name, and timestamps. It has no technical status, archive state, or soft-delete flag.
 
 `EntityRecord.displayName` remains the common visible identity used by lists, relation selectors, breadcrumbs, activity, and audit summaries. List screens use it as the first column and do not repeat the primary field among dynamic columns.
+
+Business states are modeled with dynamic fields owned by the entity, usually `SELECT` or `MULTISELECT`. For example, a Persona can define Estado = Vigente / Finiquitado, and an Equipo can define Estado = Operativo / Mantención / Fuera de servicio. Operational Core does not impose that semantic on every record.
 
 `EntityValue` stores dynamic values using typed columns. Relations are not stored in `EntityValue`.
 
 Supported value columns are text, integer, decimal, boolean, date, and JSON. `MULTISELECT` uses JSON. `FILE` and `IMAGE` are not implemented beyond disabled form placeholders.
+
+`MONEY` represents a monetary value or financial unit. Its canonical value is numeric and is stored in the same decimal value channel used for numeric precision; symbols, currency labels, and unit suffixes are presentation only. The presentation currency/unit is defined by `EntityField.config.money.currency`, currently `CLP`, `USD`, `EUR`, or `UF`, with `CLP` as the fallback for existing fields without money config.
+
+Changing `config.money.currency` does not convert existing values. It only changes how those numeric values are interpreted and displayed. Future APIs must expose the numeric value as data and the currency/unit through the field definition, not only a formatted string. Keep this rule separate from `INTEGER` and `DECIMAL`: they may share infrastructure, but `MONEY` has currency/unit presentation semantics.
+
+## Semántica de fechas
+
+### DATE
+
+`DATE` representa una fecha de calendario, no un instante temporal.
+
+Reglas:
+
+- No aplica conversión de zona horaria.
+- Debe conservar exactamente año, mes y día ingresados.
+- Internamente debe normalizarse como `YYYY-MM-DD` cuando corresponda.
+- La presentación puede usar `DD-MM-YYYY`.
+- No usar `new Date("YYYY-MM-DD")` para presentación si eso introduce conversión UTC/local.
+- Listados, detalle, formularios, Excel, API futura y cualquier otra interfaz deben respetar esta semántica.
+
+Ejemplo:
+
+Entrada:
+
+```text
+2026-01-21
+```
+
+Debe seguir representando:
+
+```text
+2026-01-21
+```
+
+independientemente de que el usuario esté en UTC-4, UTC, UTC+10, etc.
+
+### DATETIME
+
+`DATETIME` representa fecha y hora.
+
+Reglas:
+
+- Mantiene una semántica temporal distinta de DATE.
+- Puede involucrar timezone según el contexto.
+- No reutilizar helpers de DATE si eso elimina o altera información horaria.
+
+### Principio arquitectónico
+
+Nunca tratar DATE y DATETIME como equivalentes.
+
+La infraestructura común puede compartirse, pero su semántica debe permanecer separada.
 
 ## Relations
 
@@ -66,12 +121,14 @@ Server-side validation ensures source and target records belong to the same cont
 
 Record mutations and audit writes run in the same Prisma transaction where applicable.
 
+Historical audit actions such as `RECORD_STATUS_CHANGED` and `RECORD_ARCHIVED` may remain in the `AuditAction` enum for legacy events, but new EntityRecord mutations no longer generate technical status audit events.
+
 ## Application Boundaries
 
 The current Core does not implement:
 
 - workflows or approvals;
-- business process states beyond `ACTIVE`, `INACTIVE`, and `ARCHIVED`;
+- business process states; model them as dynamic entity fields instead;
 - granular permissions;
 - public APIs;
 - real file storage;

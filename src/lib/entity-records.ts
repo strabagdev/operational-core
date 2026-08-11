@@ -1,4 +1,4 @@
-import { Prisma, type EntityField, type EntityRecordStatus } from "@prisma/client";
+import { Prisma, type EntityField } from "@prisma/client";
 
 import {
   buildRelationChanges,
@@ -6,6 +6,8 @@ import {
   createAuditEvent,
 } from "@/lib/audit";
 import { getAuthorizedContract } from "@/lib/contracts";
+import { formatDateOnly } from "@/lib/date-only";
+import { orderEntityFields } from "@/lib/entity-field-order";
 import {
   FieldValidationError,
   getRelationConfig,
@@ -19,6 +21,7 @@ import {
   type RelationInput,
   type SerializedFieldValue,
 } from "@/lib/field-validation";
+import { formatMoneyValue, getMoneyConfig } from "@/lib/money";
 import { prisma } from "@/lib/prisma";
 
 type FieldWithOptions = EntityField & {
@@ -32,12 +35,6 @@ type FieldWithOptions = EntityField & {
 };
 
 type ValueInput = SerializedFieldValue;
-
-export const recordStatusLabels: Record<EntityRecordStatus, string> = {
-  ACTIVE: "Activo",
-  INACTIVE: "Inactivo",
-  ARCHIVED: "Archivado",
-};
 
 export async function getRecordEntityTypes(contractId: string, userId: string) {
   const contract = await getAuthorizedContract(contractId, userId);
@@ -58,9 +55,6 @@ export async function getRecordEntityTypes(contractId: string, userId: string) {
         },
       },
       records: {
-        where: {
-          status: "ACTIVE",
-        },
         select: {
           id: true,
         },
@@ -94,11 +88,10 @@ export async function getAuthorizedRecordEntityType(
         where: { isActive: true },
         include: {
           options: {
-            where: { isActive: true },
             orderBy: [{ sortOrder: "asc" }, { label: "asc" }],
           },
         },
-        orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+        orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }, { id: "asc" }],
       },
     },
   });
@@ -113,15 +106,17 @@ export async function getAuthorizedRecordEntityType(
 export async function getEntityRecords({
   contractId,
   entityTypeId,
+  page = 1,
+  pageSize = 50,
   userId,
   query,
-  status,
 }: {
   contractId: string;
   entityTypeId: string;
+  page?: number;
+  pageSize?: number;
   userId: string;
   query?: string;
-  status?: EntityRecordStatus | "ALL";
 }) {
   const authorized = await getAuthorizedRecordEntityType(
     contractId,
@@ -133,48 +128,142 @@ export async function getEntityRecords({
     return null;
   }
 
+  const orderedFields = orderEntityFields(authorized.entityType.fields);
+  const listFieldIds = new Set(getRecordListFields(orderedFields).map((field) => field.id));
+  const normalizedPage = Math.max(1, page);
+  const normalizedPageSize = clampPageSize(pageSize);
+  const neededValueFieldIds = Array.from(listFieldIds);
+  const recordWhere = buildEntityRecordSearchWhere({
+    entityTypeId: authorized.entityType.id,
+    fields: orderedFields,
+    query,
+  });
+  const totalRecords = await prisma.entityRecord.count({ where: recordWhere });
   const records = await prisma.entityRecord.findMany({
-    where: {
-      entityTypeId: authorized.entityType.id,
-      ...(status && status !== "ALL" ? { status } : {}),
-    },
+    where: recordWhere,
     include: {
       values: {
-        include: {
-          entityField: true,
+        where:
+          neededValueFieldIds.length > 0
+            ? { entityFieldId: { in: neededValueFieldIds } }
+            : undefined,
+        select: {
+          entityFieldId: true,
+          textValue: true,
+          integerValue: true,
+          decimalValue: true,
+          booleanValue: true,
+          dateValue: true,
+          jsonValue: true,
         },
       },
     },
     orderBy: { updatedAt: "desc" },
+    skip: (normalizedPage - 1) * normalizedPageSize,
+    take: normalizedPageSize,
   });
-
-  const searchableFieldIds = new Set(
-    authorized.entityType.fields
-      .filter((field) => field.searchable)
-      .map((field) => field.id),
-  );
-  const normalizedQuery = query?.trim().toLowerCase();
-  const filteredRecords = normalizedQuery
-    ? records.filter((record) => {
-        if (record.displayName.toLowerCase().includes(normalizedQuery)) {
-          return true;
-        }
-
-        return record.values.some((value) => {
-          if (!searchableFieldIds.has(value.entityFieldId)) {
-            return false;
-          }
-
-          return deserializeEntityValue(value)
-            .toLowerCase()
-            .includes(normalizedQuery);
-        });
-      })
-    : records;
 
   return {
     ...authorized,
-    records: filteredRecords,
+    entityType: {
+      ...authorized.entityType,
+      fields: orderedFields,
+    },
+    pagination: {
+      page: normalizedPage,
+      pageSize: normalizedPageSize,
+      totalRecords,
+      totalPages: Math.max(1, Math.ceil(totalRecords / normalizedPageSize)),
+    },
+    records,
+  };
+}
+
+const searchableTextFieldTypes = new Set([
+  "TEXT",
+  "TEXTAREA",
+  "EMAIL",
+  "PHONE",
+  "URL",
+]);
+
+export function buildEntityRecordSearchWhere({
+  entityTypeId,
+  fields,
+  query,
+}: {
+  entityTypeId: string;
+  fields: FieldWithOptions[];
+  query?: string;
+}): Prisma.EntityRecordWhereInput {
+  const normalizedQuery = query?.trim();
+  const baseWhere: Prisma.EntityRecordWhereInput = {
+    entityTypeId,
+  };
+
+  if (!normalizedQuery) {
+    return baseWhere;
+  }
+
+  const textFieldIds = fields
+    .filter(
+      (field) =>
+        field.entityTypeId === entityTypeId &&
+        field.searchable &&
+        searchableTextFieldTypes.has(field.type),
+    )
+    .map((field) => field.id);
+  const selectValueSearches = fields
+    .filter(
+      (field) =>
+        field.entityTypeId === entityTypeId &&
+        field.searchable &&
+        field.type === "SELECT",
+    )
+    .map((field) => ({
+      fieldId: field.id,
+      values: field.options
+        .filter((option) => optionMatchesSearch(option, normalizedQuery))
+        .map((option) => option.value),
+    }))
+    .filter((item) => item.values.length > 0);
+  const orConditions: Prisma.EntityRecordWhereInput[] = [
+    {
+      displayName: {
+        contains: normalizedQuery,
+        mode: "insensitive",
+      },
+    },
+  ];
+
+  if (textFieldIds.length > 0) {
+    orConditions.push({
+      values: {
+        some: {
+          entityFieldId: { in: textFieldIds },
+          textValue: {
+            contains: normalizedQuery,
+            mode: "insensitive",
+          },
+        },
+      },
+    });
+  }
+
+  for (const search of selectValueSearches) {
+    orConditions.push({
+      values: {
+        some: {
+          entityFieldId: search.fieldId,
+          textValue: { in: search.values },
+        },
+      },
+    });
+  }
+
+  return {
+    ...baseWhere,
+    OR: orConditions,
   };
 }
 
@@ -202,7 +291,13 @@ export async function getAuthorizedEntityRecord(
     include: {
       values: {
         include: {
-          entityField: true,
+          entityField: {
+            include: {
+              options: {
+                orderBy: [{ sortOrder: "asc" }, { label: "asc" }],
+              },
+            },
+          },
         },
       },
       outgoingRelations: true,
@@ -260,7 +355,6 @@ export async function createEntityRecord(
     const record = await tx.entityRecord.create({
       data: {
         entityTypeId: authorized.entityType.id,
-        status: "ACTIVE",
         displayName,
       },
     });
@@ -331,7 +425,6 @@ export async function updateEntityRecord(
     sourceRecordId: authorized.record.id,
   });
   const displayName = getRecordDisplayName(authorized.entityType.fields, values);
-  const status = parseRecordStatus(formData.get("status"));
   const valueChanges = buildValueChanges({
     fields: authorized.entityType.fields,
     oldValues: authorized.record.values,
@@ -343,12 +436,10 @@ export async function updateEntityRecord(
     oldRelations: authorized.record.outgoingRelations,
     newRelations: relations,
   });
-  const statusChanged = authorized.record.status !== status;
   const hasChanges =
     valueChanges.length > 0 ||
     relationChanges.added.length > 0 ||
-    relationChanges.removed.length > 0 ||
-    statusChanged;
+    relationChanges.removed.length > 0;
 
   if (!hasChanges) {
     return authorized.record;
@@ -380,8 +471,6 @@ export async function updateEntityRecord(
       where: { id: authorized.record.id },
       data: {
         displayName,
-        status,
-        archivedAt: status === "ARCHIVED" ? (authorized.record.archivedAt ?? new Date()) : null,
       },
     });
 
@@ -398,28 +487,6 @@ export async function updateEntityRecord(
           entityTypeName: authorized.entityType.name,
         },
         changes: valueChanges,
-      });
-    }
-
-    if (statusChanged) {
-      await createAuditEvent(tx, {
-        contractId: authorized.contract.id,
-        entityTypeId: authorized.entityType.id,
-        entityRecordId: authorized.record.id,
-        actorUserId: userId,
-        action: "RECORD_STATUS_CHANGED",
-        summary: `Cambió el estado de ${authorized.entityType.name} ${updatedRecord.displayName}`,
-        metadata: {
-          displayName: updatedRecord.displayName,
-          entityTypeName: authorized.entityType.name,
-        },
-        changes: [
-          {
-            fieldName: "Estado del registro",
-            oldValue: authorized.record.status,
-            newValue: status,
-          },
-        ],
       });
     }
 
@@ -459,112 +526,98 @@ export async function updateEntityRecord(
   });
 }
 
-export async function archiveEntityRecord(
+export async function deleteEntityRecordsPermanently(
   contractId: string,
   entityTypeId: string,
-  recordId: string,
+  recordIds: string[],
   userId: string,
+  confirmationText: string,
 ) {
-  const authorized = await getAuthorizedEntityRecord(
-    contractId,
-    entityTypeId,
-    recordId,
-    userId,
-  );
+  const ids = uniqueRecordIds(recordIds);
+  const expectedConfirmation = deleteRecordsConfirmationText(ids.length);
+
+  if (ids.length === 0) {
+    throw userError("Selecciona al menos un registro.");
+  }
+
+  if (confirmationText.trim() !== expectedConfirmation) {
+    throw userError("La confirmación no coincide.");
+  }
+
+  const authorized = await getAuthorizedRecordEntityType(contractId, entityTypeId, userId);
 
   if (!authorized) {
     return null;
   }
 
-  if (authorized.record.status === "ARCHIVED") {
-    return authorized.record;
-  }
-
   return prisma.$transaction(async (tx) => {
-    const record = await tx.entityRecord.update({
-      where: { id: authorized.record.id },
-      data: {
-        status: "ARCHIVED",
-        archivedAt: new Date(),
-      },
-    });
-
-    await createAuditEvent(tx, {
-      contractId: authorized.contract.id,
-      entityTypeId: authorized.entityType.id,
-      entityRecordId: authorized.record.id,
-      actorUserId: userId,
-      action: "RECORD_ARCHIVED",
-      summary: `Archivó ${authorized.entityType.name} ${authorized.record.displayName}`,
-      metadata: {
-        displayName: authorized.record.displayName,
-        entityTypeName: authorized.entityType.name,
-      },
-      changes: [
-        {
-          fieldName: "Estado del registro",
-          oldValue: authorized.record.status,
-          newValue: "ARCHIVED",
+    const records = await tx.entityRecord.findMany({
+      where: {
+        id: { in: ids },
+        entityTypeId: authorized.entityType.id,
+        entityType: {
+          contractId: authorized.contract.id,
         },
-      ],
+      },
+      select: { id: true },
     });
 
-    return record;
+    assertAllRecordsAuthorized(ids, records.map((record) => record.id));
+
+    await tx.auditChange.deleteMany({
+      where: {
+        auditEvent: {
+          entityRecordId: { in: ids },
+          contractId: authorized.contract.id,
+        },
+      },
+    });
+    await tx.auditEvent.deleteMany({
+      where: {
+        entityRecordId: { in: ids },
+        contractId: authorized.contract.id,
+      },
+    });
+    await tx.entityRelation.deleteMany({
+      where: {
+        OR: [
+          { sourceRecordId: { in: ids } },
+          { targetRecordId: { in: ids } },
+        ],
+      },
+    });
+    await tx.entityValue.deleteMany({
+      where: { entityRecordId: { in: ids } },
+    });
+    const deleted = await tx.entityRecord.deleteMany({
+      where: {
+        id: { in: ids },
+        entityTypeId: authorized.entityType.id,
+      },
+    });
+
+    if (deleted.count !== ids.length) {
+      throw userError("No se pudieron eliminar todos los registros seleccionados.");
+    }
+
+    return { count: deleted.count };
   });
 }
 
-export async function restoreEntityRecord(
-  contractId: string,
-  entityTypeId: string,
-  recordId: string,
-  userId: string,
-) {
-  const authorized = await getAuthorizedEntityRecord(
-    contractId,
-    entityTypeId,
-    recordId,
-    userId,
+export function deleteRecordsConfirmationText(count: number) {
+  return `ELIMINAR ${count} REGISTROS`;
+}
+
+function uniqueRecordIds(recordIds: string[]) {
+  return Array.from(
+    new Set(recordIds.map((recordId) => recordId.trim()).filter(Boolean)),
   );
+}
 
-  if (!authorized) {
-    return null;
+function assertAllRecordsAuthorized(requestedIds: string[], foundIds: string[]) {
+  if (foundIds.length !== requestedIds.length) {
+    throw userError("Uno o más registros seleccionados no pertenecen a este contexto.");
   }
-
-  if (authorized.record.status === "ACTIVE") {
-    return authorized.record;
-  }
-
-  return prisma.$transaction(async (tx) => {
-    const record = await tx.entityRecord.update({
-      where: { id: authorized.record.id },
-      data: {
-        status: "ACTIVE",
-        archivedAt: null,
-      },
-    });
-
-    await createAuditEvent(tx, {
-      contractId: authorized.contract.id,
-      entityTypeId: authorized.entityType.id,
-      entityRecordId: authorized.record.id,
-      actorUserId: userId,
-      action: "RECORD_STATUS_CHANGED",
-      summary: `Restauró ${authorized.entityType.name} ${authorized.record.displayName}`,
-      metadata: {
-        displayName: authorized.record.displayName,
-        entityTypeName: authorized.entityType.name,
-      },
-      changes: [
-        {
-          fieldName: "Estado del registro",
-          oldValue: authorized.record.status,
-          newValue: "ACTIVE",
-        },
-      ],
-    });
-
-    return record;
-  });
 }
 
 export async function validateEntityValues({
@@ -616,7 +669,6 @@ export async function getRelationOptions(
     Array<{
       id: string;
       displayName: string;
-      status: EntityRecordStatus;
       entityTypeName: string;
     }>
   > = {};
@@ -631,7 +683,6 @@ export async function getRelationOptions(
 
     const options = await prisma.entityRecord.findMany({
       where: {
-        status: { not: "ARCHIVED" },
         entityType: {
           id: config.targetEntityTypeId,
           contractId: authorized.contract.id,
@@ -650,7 +701,6 @@ export async function getRelationOptions(
     optionsByFieldId[field.id] = options.map((record) => ({
       id: record.id,
       displayName: record.displayName,
-      status: record.status,
       entityTypeName: record.entityType.name,
     }));
   }
@@ -704,7 +754,6 @@ export async function validateRelationValues({
       const targetCount = await prisma.entityRecord.count({
         where: {
           id: { in: targetRecordIds },
-          status: { not: "ARCHIVED" },
           entityType: {
             id: config.targetEntityTypeId,
             contractId,
@@ -863,8 +912,32 @@ export function deserializeEntityValue(value: {
   booleanValue: boolean | null;
   dateValue: Date | null;
   jsonValue: Prisma.JsonValue | null;
-  entityField?: { type: string };
+  entityField?: {
+    type: string;
+    config?: Prisma.JsonValue | null;
+    options?: Array<{ label: string; value: string }>;
+  };
 }) {
+  if (value.entityField?.type === "SELECT" && value.textValue) {
+    return (
+      value.entityField.options?.find((option) => option.value === value.textValue)?.label ??
+      value.textValue
+    );
+  }
+
+  if (value.entityField?.type === "MULTISELECT" && Array.isArray(value.jsonValue)) {
+    return value.jsonValue
+      .map((item) => {
+        const optionValue = String(item);
+
+        return (
+          value.entityField?.options?.find((option) => option.value === optionValue)?.label ??
+          optionValue
+        );
+      })
+      .join(", ");
+  }
+
   if (value.textValue) {
     return value.textValue;
   }
@@ -874,6 +947,13 @@ export function deserializeEntityValue(value: {
   }
 
   if (value.decimalValue !== null) {
+    if (value.entityField?.type === "MONEY") {
+      return formatMoneyValue(
+        value.decimalValue,
+        getMoneyConfig(value.entityField.config).currency,
+      );
+    }
+
     return value.decimalValue.toString();
   }
 
@@ -882,6 +962,10 @@ export function deserializeEntityValue(value: {
   }
 
   if (value.dateValue) {
+    if (value.entityField?.type === "DATE") {
+      return formatDateOnly(value.dateValue);
+    }
+
     return value.dateValue.toLocaleDateString("es-CL");
   }
 
@@ -911,12 +995,24 @@ export function getExistingFormValue(
   return values.find((value) => value.entityFieldId === fieldId);
 }
 
-function parseRecordStatus(value: FormDataEntryValue | null): EntityRecordStatus {
-  if (value === "INACTIVE" || value === "ARCHIVED") {
-    return value;
+function clampPageSize(pageSize: number) {
+  if (pageSize === 25 || pageSize === 50 || pageSize === 100) {
+    return pageSize;
   }
 
-  return "ACTIVE";
+  return 50;
+}
+
+function optionMatchesSearch(
+  option: { label: string; value: string },
+  query: string,
+) {
+  const normalizedQuery = query.toLowerCase();
+
+  return (
+    option.label.toLowerCase().includes(normalizedQuery) ||
+    option.value.toLowerCase().includes(normalizedQuery)
+  );
 }
 
 async function validateUniqueValue(
@@ -931,7 +1027,6 @@ async function validateUniqueValue(
       entityRecord: {
         entityTypeId,
         ...(recordId ? { id: { not: recordId } } : {}),
-        status: { not: "ARCHIVED" },
       },
       ...uniqueValueWhere(value),
     },

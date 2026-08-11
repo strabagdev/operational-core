@@ -14,6 +14,7 @@ enum MembershipRole {
 
 enum ContractStatus {
   ACTIVE
+  INACTIVE
   ARCHIVED
 }
 
@@ -36,13 +37,12 @@ enum EntityFieldType {
   RELATION
 }
 
-enum EntityRecordStatus {
-  ACTIVE
-  INACTIVE
-  ARCHIVED
-}
-
 enum AuditAction {
+  CONTRACT_CREATED
+  CONTRACT_UPDATED
+  CONTRACT_STATUS_CHANGED
+  CONTRACT_ARCHIVED
+  CONTRACT_RESTORED
   RECORD_CREATED
   RECORD_UPDATED
   RECORD_STATUS_CHANGED
@@ -199,20 +199,16 @@ model FieldOption {
 }
 
 model EntityRecord {
-  id                String             @id @default(cuid())
+  id                String           @id @default(cuid())
   entityTypeId      String
-  status            EntityRecordStatus @default(ACTIVE)
   displayName       String
-  entityType        EntityType         @relation(fields: [entityTypeId], references: [id], onDelete: Cascade)
+  entityType        EntityType       @relation(fields: [entityTypeId], references: [id], onDelete: Cascade)
   values            EntityValue[]
-  outgoingRelations EntityRelation[]   @relation("SourceRecordRelations")
-  incomingRelations EntityRelation[]   @relation("TargetRecordRelations")
+  outgoingRelations EntityRelation[] @relation("SourceRecordRelations")
+  incomingRelations EntityRelation[] @relation("TargetRecordRelations")
   auditEvents       AuditEvent[]
-  createdAt         DateTime           @default(now())
-  updatedAt         DateTime           @updatedAt
-  archivedAt        DateTime?
-
-  @@index([entityTypeId, status])
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
 }
 
 model EntityValue {

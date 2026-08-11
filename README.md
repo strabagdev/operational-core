@@ -4,6 +4,23 @@ Operational Core is a Next.js application for structured operational data. It st
 
 It is not an ERP and does not implement workflows, approvals, notifications, granular permissions, or process engines.
 
+## Operational Core MVP
+
+The MVP is closed for controlled real use. It includes:
+
+- authentication;
+- multi-company isolation;
+- contract administration;
+- configurable entities;
+- configurable fields;
+- configurable validations;
+- presentation and field ordering;
+- operational records;
+- record relations;
+- transactional audit history;
+- Excel template generation;
+- all-or-nothing Excel import.
+
 ## Stack
 
 - Next.js 16

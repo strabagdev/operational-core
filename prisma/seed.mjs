@@ -443,15 +443,12 @@ async function upsertRecord(entityTypeId, displayName, valuesByKey) {
         where: { id: existing.id },
         data: {
           displayName,
-          status: "ACTIVE",
-          archivedAt: null,
         },
       })
     : await prisma.entityRecord.create({
         data: {
           entityTypeId,
           displayName,
-          status: "ACTIVE",
         },
       });
 

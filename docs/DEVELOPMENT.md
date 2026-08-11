@@ -106,8 +106,7 @@ Record-list presentation rules also live in `EntityField.config`, separate from 
   "validation": {},
   "display": {
     "primary": true,
-    "showInList": true,
-    "listOrder": 10
+    "showInList": true
   }
 }
 ```
@@ -116,17 +115,17 @@ Record-list presentation rules also live in `EntityField.config`, separate from 
 
 Compatible primary field types are `TEXT`, `EMAIL`, `PHONE`, `URL`, `INTEGER`, and `SELECT`. `SELECT` primary fields use the option label for `displayName`.
 
-`display.showInList` controls dynamic list columns. It is intentionally separate from `searchable`, which only controls text search. `display.listOrder` is optional; when missing, the field `sortOrder` is used.
+`display.showInList` controls dynamic list columns. It is intentionally separate from `searchable`, which only controls text search. `EntityField.sortOrder` is the single official order across configuration, record forms, record-list dynamic columns, Excel templates, and Excel imports. Existing `display.listOrder` values are preserved as legacy compatibility data but are not used for ordering.
 
 Existing records are not recalculated in bulk. They keep their current `displayName` until they are edited or recreated by seed/demo data. If no primary field is configured, the legacy fallback remains: first required `TEXT`, then first `TEXT`, then `Registro sin nombre`.
 
-The technical `EntityRecord.status` is not a normal domain field. List screens show it as a contextual badge for inactive/archived records or filters that include non-active records, so a dynamic field named `Estado` can appear without competing with a fixed technical status column.
+`EntityRecord` does not have a technical status. A record exists until it is permanently deleted. Business states such as Vigente, Finiquitado, Operativo, or Vencido must be modeled with dynamic fields, usually `SELECT` fields owned by the `EntityType`.
 
 Field settings screens summarize fields with compact rows and badges before exposing the full edit form. Use the list filters to find fields by name, type, state, or usage. Create/edit forms are intentionally collapsed until the drawer-based editor planned for the next UX package.
 
 Field creation and editing open in a right-side Sheet controlled by `createField=1` and `editField=<fieldId>`. Closing the Sheet preserves list filters and removes only the editor parameter. The Sheet uses `@radix-ui/react-dialog` through the local `src/components/ui/sheet.tsx` primitive for focus trap, Escape, scroll lock, overlay, and focus restoration.
 
-The field editor is a client form with progressive type-specific sections. `SELECT` and `MULTISELECT` fields can be created with options in one submit, and `RELATION` fields can be created with target entity and cardinality in the same submit. Editor Server Actions return structured field errors on failure and redirect with inline notices on success.
+The field editor is a client form with progressive type-specific sections. `SELECT` and `MULTISELECT` fields can be created with up to 500 options in one submit, and `RELATION` fields can be created with target entity and cardinality in the same submit. The shared `MAX_FIELD_OPTIONS` constant keeps client and server limits aligned. Editor Server Actions return structured field errors on failure and redirect with inline notices on success.
 
 Field editor redirects must use internal `/app/` paths only. Use `safeAppRedirectPath` for hidden `returnTo` and `successTo` values so absolute URLs, protocol-relative URLs, and non-app routes cannot become open redirects.
 
@@ -190,6 +189,37 @@ Run unit tests:
 npm run test
 ```
 
+## Basic Excel Import
+
+PCORE-010 uses `exceljs` to generate and parse `.xlsx` templates for record imports.
+
+The record list for an entity type exposes:
+
+- `Descargar plantilla`, which streams a server-generated workbook;
+- `Importar Excel`, which opens a Sheet for upload, validation, and all-or-nothing import.
+
+Supported import field types are `TEXT`, `TEXTAREA`, `EMAIL`, `PHONE`, `URL`, `INTEGER`, `DECIMAL`, `MONEY`, `BOOLEAN`, `DATE`, `DATETIME`, `SELECT`, and `MULTISELECT`.
+
+`RELATION`, `FILE`, and `IMAGE` are excluded from the workbook. If an active excluded field is required, the basic import is blocked instead of creating invalid records.
+
+Use semicolons for `MULTISELECT` labels, for example:
+
+```text
+Seguridad; Operaciones; Mantención
+```
+
+Text dates should use `YYYY-MM-DD`; date-time values should use ISO-style text.
+
+`DATE` values are calendar dates, not instants. Keep date-only parsing and display aligned with the architecture rule in `docs/ARCHITECTURE.md`; use the shared helper in `src/lib/date-only.ts` instead of ad hoc timezone-sensitive formatting.
+
+See `docs/PCORE-010-basic-excel-import.md` for the detailed contract.
+
+## Contract Administration
+
+Contracts are managed from `/app/settings/contracts` by organization admins. The administration view lists active, inactive, archived, or all contracts; supports create/edit/archive/restore; and keeps archived contracts out of the normal operational selector.
+
+Archiving replaces deletion in this stage. Physical deletion is future debt and should only be considered for empty contracts or through an advanced administrative flow.
+
 ## Manual Verification
 
 Use browser or curl-based checks. Do not use Playwright for this project.
@@ -202,7 +232,7 @@ Verify:
 - contract summary at `/app/contracts/[contractId]`;
 - entity type and field configuration;
 - field options for select fields;
-- record list, creation, edition, and archive;
+- record list, creation, edition, search, pagination, and permanent deletion;
 - relation fields with `ONE` and `MANY`;
 - inverse relation display;
 - record audit history;

@@ -1,5 +1,6 @@
 import { type EntityFieldType } from "@prisma/client";
 
+import { fieldTypeDescriptions } from "./field-editor-state";
 import { getFieldBehaviorBadges, getFieldTypeLabel, type FieldListField } from "./field-list-ux";
 
 export type FieldEditorSection =
@@ -11,26 +12,7 @@ export type FieldEditorSection =
   | "relation";
 
 export function getFieldTypeDescription(type: EntityFieldType) {
-  const descriptions: Record<EntityFieldType, string> = {
-    TEXT: "Para nombres, códigos o textos breves.",
-    TEXTAREA: "Para observaciones o descripciones extensas.",
-    EMAIL: "Valida una dirección de correo.",
-    PHONE: "Para teléfonos de contacto.",
-    URL: "Para enlaces y sitios web.",
-    INTEGER: "Para cantidades sin decimales.",
-    DECIMAL: "Para números con decimales.",
-    MONEY: "Para valores monetarios.",
-    BOOLEAN: "Para respuestas de sí o no.",
-    DATE: "Para fechas sin hora.",
-    DATETIME: "Para fecha y hora.",
-    SELECT: "Permite elegir una opción predefinida.",
-    MULTISELECT: "Permite seleccionar varias opciones.",
-    RELATION: "Conecta este registro con registros de otra entidad.",
-    FILE: "Archivo con soporte limitado en esta etapa.",
-    IMAGE: "Imagen con soporte limitado en esta etapa.",
-  };
-
-  return descriptions[type];
+  return fieldTypeDescriptions[type];
 }
 
 export function getFieldEditorSections(type: EntityFieldType): FieldEditorSection[] {

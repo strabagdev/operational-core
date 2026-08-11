@@ -2,7 +2,7 @@
 
 ## Objective
 
-PCORE-008.1 formalizes how dynamic records are presented in lists without changing the persisted record model. It removes duplicated columns caused by mixing `EntityRecord.displayName`, technical status, and dynamic fields marked as searchable.
+PCORE-008.1 formalizes how dynamic records are presented in lists without changing the persisted record identity model. It removes duplicated columns caused by mixing `EntityRecord.displayName` and dynamic fields marked as searchable.
 
 ## Model
 
@@ -12,8 +12,7 @@ Presentation configuration is stored in `EntityField.config.display`:
 {
   "display": {
     "primary": true,
-    "showInList": true,
-    "listOrder": 10
+    "showInList": true
   }
 }
 ```
@@ -59,18 +58,11 @@ Primary displayName | dynamic fields with showInList | Updated | Actions
 
 The primary field is excluded from dynamic columns to avoid duplication. If no field has display configuration yet, the table temporarily falls back to searchable fields, excluding the primary field.
 
-`display.listOrder` controls visible-column order when present. Otherwise `EntityField.sortOrder` is used.
+`EntityField.sortOrder` controls visible-column order. Existing `display.listOrder` values are legacy compatibility data only and must not create a second order.
 
-## Technical Status
+## Record Status
 
-`EntityRecord.status` is technical metadata, not a dynamic domain field. It is shown as a contextual badge for inactive or archived records, or when the current filter includes non-active records. A dynamic field named `Estado` can still be shown as a normal domain column.
-
-Filters keep the same internal values while using clearer labels:
-
-- `Registros activos`
-- `Registros inactivos`
-- `Registros archivados`
-- `Todos los registros`
+`EntityRecord` has no technical status. A record exists until it is permanently deleted. Business states must be represented with dynamic fields owned by the `EntityType`, so a dynamic field named `Estado` appears as a normal domain column when configured with `showInList`.
 
 ## Compatibility
 

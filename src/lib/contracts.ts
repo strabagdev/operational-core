@@ -5,6 +5,7 @@ import { prisma } from "./prisma";
 export const getUserContracts = cache(async (userId: string) => {
   return prisma.contract.findMany({
     where: {
+      status: "ACTIVE",
       organization: {
         memberships: {
           some: {

@@ -13,11 +13,6 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { getUserContracts } from "@/lib/contracts";
 
-const statusLabels = {
-  ACTIVE: "Activo",
-  ARCHIVED: "Archivado",
-};
-
 export default async function AppPage() {
   const session = await auth();
 
@@ -30,21 +25,23 @@ export default async function AppPage() {
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-4xl flex-col gap-8 px-6 py-10">
       <header className="space-y-2">
-        <div>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
           <h1 className="text-2xl font-semibold">Operational Core</h1>
           <p className="text-sm text-muted-foreground">
             Selecciona un contrato para continuar.
           </p>
+          </div>
+          <Button asChild variant="outline">
+            <Link href="/app/settings/contracts">Administrar contratos</Link>
+          </Button>
         </div>
       </header>
 
       <section className="grid gap-3">
         {contracts.length > 0 ? (
-          contracts.map((contract) => {
-            const isArchived = contract.status === "ARCHIVED";
-
-            return (
-              <Card className={isArchived ? "opacity-60" : ""} key={contract.id}>
+          contracts.map((contract) => (
+              <Card key={contract.id}>
                 <CardHeader className="pb-4">
                   <div className="flex items-start justify-between gap-4">
                     <div className="space-y-1">
@@ -52,7 +49,7 @@ export default async function AppPage() {
                       <CardDescription>{contract.organization.name}</CardDescription>
                     </div>
                     <span className="rounded-md border border-border px-2 py-1 text-xs font-medium">
-                      {statusLabels[contract.status]}
+                      Activo
                     </span>
                   </div>
                 </CardHeader>
@@ -63,21 +60,14 @@ export default async function AppPage() {
                       {contract.code}
                     </span>
                   </div>
-                  {isArchived ? (
-                    <Button disabled variant="outline">
-                      No disponible
-                    </Button>
-                  ) : (
-                    <Button asChild>
-                      <Link href={`/app/contracts/${contract.id}`}>
-                        Abrir contrato
-                      </Link>
-                    </Button>
-                  )}
+                  <Button asChild>
+                    <Link href={`/app/contracts/${contract.id}`}>
+                      Abrir contrato
+                    </Link>
+                  </Button>
                 </CardContent>
               </Card>
-            );
-          })
+            ))
         ) : (
           <Card>
             <CardContent className="pt-6">

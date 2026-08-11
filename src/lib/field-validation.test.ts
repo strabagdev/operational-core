@@ -162,6 +162,15 @@ describe("field validation", () => {
     expect(normalizeRawFieldValue(field({ type: "DECIMAL" }), ["1.5"]).decimalValue?.toString()).toBe("1.5");
   });
 
+  it("stores MONEY as Decimal and accepts values larger than INT4", () => {
+    expect(
+      normalizeRawFieldValue(field({ type: "MONEY" }), ["5269808713"]).decimalValue?.toString(),
+    ).toBe("5269808713");
+    expect(
+      normalizeRawFieldValue(field({ type: "MONEY" }), ["1234.56"]).decimalValue?.toString(),
+    ).toBe("1234.56");
+  });
+
   it("rejects select option from another field and deduplicates multiselect", () => {
     expect(() => validateRecordValues({
       fields: [field({ options: [{ value: "a" }], type: "SELECT" })],
@@ -217,6 +226,20 @@ describe("field validation", () => {
     expect(config.relationKind).toBe("MANY");
     expect(config.validation.required).toBe(true);
   });
+
+  it("parses MONEY config with CLP fallback", () => {
+    expect(parseFieldConfig(null).money.currency).toBe("CLP");
+    expect(parseFieldConfig({ money: { currency: "UF" } }).money.currency).toBe("UF");
+    expect(
+      parseFieldConfig({
+        validation: { required: true },
+        money: { currency: "BTC" },
+      }),
+    ).toMatchObject({
+      validation: { required: true },
+      money: { currency: "CLP" },
+    });
+  });
 });
 
 describe("field display configuration", () => {
@@ -255,6 +278,115 @@ describe("field display configuration", () => {
     });
   });
 
+  it("merges required without dropping other validation, display, or custom config", () => {
+    const config = buildMergedFieldConfig({
+      existingConfig: {
+        validation: {
+          required: false,
+          minLength: 2,
+          maxLength: 20,
+          regex: { pattern: "^[A-Z]+$" },
+        },
+        display: { showInList: true },
+        custom: { keep: true },
+      },
+      type: "TEXT",
+      validation: {
+        required: true,
+        minLength: 2,
+        maxLength: 20,
+        regex: { pattern: "^[A-Z]+$" },
+      },
+      display: { showInList: true },
+    });
+
+    expect(config).toMatchObject({
+      validation: {
+        required: true,
+        minLength: 2,
+        maxLength: 20,
+        regex: { pattern: "^[A-Z]+$" },
+      },
+      display: { showInList: true },
+      custom: { keep: true },
+    });
+  });
+
+  it("merges MONEY currency without dropping validation, display, or unknown config", () => {
+    const config = buildMergedFieldConfig({
+      existingConfig: {
+        validation: { required: true },
+        display: { showInList: true },
+        custom: { keep: true },
+      },
+      type: "MONEY",
+      validation: { required: true, minimum: 0 },
+      display: { showInList: true },
+      money: { currency: "USD" },
+    });
+
+    expect(config).toMatchObject({
+      validation: { required: true, minimum: 0 },
+      display: { showInList: true },
+      money: { currency: "USD" },
+      custom: { keep: true },
+    });
+  });
+
+  it("changing MONEY currency does not convert stored values", () => {
+    const value = normalizeRawFieldValue(field({ type: "MONEY" }), ["5269808713"]);
+    const config = buildMergedFieldConfig({
+      existingConfig: { money: { currency: "CLP" } },
+      type: "MONEY",
+      validation: {},
+      money: { currency: "USD" },
+    });
+
+    expect(value.decimalValue?.toString()).toBe("5269808713");
+    expect(config).toMatchObject({ money: { currency: "USD" } });
+  });
+
+  it("merges required without dropping relation metadata", () => {
+    const config = buildMergedFieldConfig({
+      existingConfig: {
+        targetEntityTypeId: "entity_target",
+        relationKind: "MANY",
+        validation: { required: false },
+        custom: { keep: true },
+      },
+      type: "RELATION",
+      relation: {
+        targetEntityTypeId: "entity_target",
+        relationKind: "MANY",
+      },
+      validation: { required: true },
+    });
+
+    expect(config).toMatchObject({
+      targetEntityTypeId: "entity_target",
+      relationKind: "MANY",
+      validation: { required: true },
+      custom: { keep: true },
+    });
+  });
+
+  it("persists required false explicitly when merging config", () => {
+    const config = buildMergedFieldConfig({
+      existingConfig: {
+        validation: { required: true, minLength: 2 },
+        display: { showInList: true },
+      },
+      type: "TEXT",
+      validation: { required: false, minLength: 2 },
+      display: { showInList: true },
+    });
+
+    expect(config).toMatchObject({
+      validation: { required: false, minLength: 2 },
+      display: { showInList: true },
+    });
+  });
+
   it("uses primary field for displayName and select primary labels", () => {
     const fields = [
       recordField({ id: "name", config: { display: { primary: true } } }),
@@ -287,22 +419,25 @@ describe("field display configuration", () => {
     )).toBe("Fallback");
   });
 
-  it("excludes primary from visible list fields and keeps dynamic Estado visible", () => {
+  it("excludes primary from visible list fields and keeps official sortOrder", () => {
     const fields = [
       recordField({
         id: "name",
         name: "Nombre",
+        sortOrder: 1,
         config: { display: { primary: true, showInList: true, listOrder: 1 } },
       }),
       recordField({
         id: "state",
         name: "Estado",
         type: "SELECT",
+        sortOrder: 4,
         config: { display: { showInList: true, listOrder: 4 } },
       }),
       recordField({
         id: "rut",
         name: "RUT",
+        sortOrder: 2,
         config: { display: { showInList: true, listOrder: 2 } },
       }),
     ];
@@ -311,7 +446,7 @@ describe("field display configuration", () => {
     expect(getRecordListFields(fields).map((item) => item.name)).toEqual(["RUT", "Estado"]);
   });
 
-  it("falls back to searchable fields and orders by listOrder then sortOrder", () => {
+  it("falls back to searchable fields and ignores listOrder for ordering", () => {
     const fields = [
       recordField({ id: "name", config: { display: { primary: true } }, searchable: true }),
       recordField({ id: "rut", name: "RUT", searchable: true, sortOrder: 2 }),
@@ -339,7 +474,7 @@ describe("field display configuration", () => {
         sortOrder: 99,
         config: { display: { showInList: true, listOrder: 10 } },
       }),
-    ]).map((item) => item.name)).toEqual(["First", "Later"]);
+    ]).map((item) => item.name)).toEqual(["Later", "First"]);
   });
 });
 

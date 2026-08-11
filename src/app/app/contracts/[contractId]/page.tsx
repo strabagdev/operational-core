@@ -10,11 +10,7 @@ import {
 } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { getAuthorizedContract } from "@/lib/contracts";
-
-const statusLabels = {
-  ACTIVE: "Activo",
-  ARCHIVED: "Archivado",
-};
+import { contractStatusLabels } from "@/lib/contract-status";
 
 export default async function ContractSummaryPage({
   params,
@@ -54,7 +50,7 @@ export default async function ContractSummaryPage({
           <Separator />
           <div className="grid gap-1">
             <span className="text-muted-foreground">Estado</span>
-            <span className="font-medium">{statusLabels[contract.status]}</span>
+            <span className="font-medium">{contractStatusLabels[contract.status]}</span>
           </div>
         </CardContent>
       </Card>

@@ -10,16 +10,26 @@ import {
   type FieldErrorMap,
   type FieldValidationRules,
 } from "./field-validation";
-import { validateOptionDrafts, type FieldOptionDraft } from "./field-editor-state";
+import {
+  multipleFieldTypes,
+  FIELD_OPTIONS_PAYLOAD_NAME,
+  MAX_FIELD_OPTIONS,
+  MAX_FIELD_OPTIONS_MESSAGE,
+  optionFieldTypes,
+  parseFieldOptionsPayload,
+  supportedEntityFieldTypes,
+  validateOptionDrafts,
+  type FieldOptionDraft,
+} from "./field-editor-state";
 import { keyify, slugify } from "./format";
+import { getReorderedEntityFieldUpdates } from "./entity-field-order";
 import { prisma } from "./prisma";
+import { parseMoneyCurrency } from "./money";
 
 const slugRegex = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const keyRegex = /^[a-z][a-z0-9_]*$/;
 const relationKinds = ["ONE", "MANY"] as const;
-
-const multipleFieldTypes = new Set(["MULTISELECT", "FILE", "IMAGE", "RELATION"]);
-const optionFieldTypes = new Set(["SELECT", "MULTISELECT"]);
+type PrismaClientLike = typeof prisma | Prisma.TransactionClient;
 
 export const entityTypeSchema = z.object({
   name: z.string().trim().min(2, "El nombre debe tener al menos 2 caracteres."),
@@ -44,24 +54,7 @@ export const entityFieldSchema = z
       .min(2, "La key debe tener al menos 2 caracteres.")
       .regex(keyRegex, "Usa minúsculas, números y guion bajo; empieza con letra."),
     description: z.string().trim().optional(),
-    type: z.enum([
-      "TEXT",
-      "TEXTAREA",
-      "INTEGER",
-      "DECIMAL",
-      "MONEY",
-      "BOOLEAN",
-      "DATE",
-      "DATETIME",
-      "SELECT",
-      "MULTISELECT",
-      "EMAIL",
-      "PHONE",
-      "URL",
-      "FILE",
-      "IMAGE",
-      "RELATION",
-    ]),
+    type: z.enum(supportedEntityFieldTypes),
     required: z.boolean(),
     isUnique: z.boolean(),
     searchable: z.boolean(),
@@ -87,6 +80,9 @@ export const entityFieldSchema = z
       primary: z.boolean().optional(),
       showInList: z.boolean().optional(),
       listOrder: z.number().int().min(0).optional(),
+    }),
+    money: z.object({
+      currency: z.enum(["CLP", "USD", "EUR", "UF"]),
     }),
   })
   .superRefine((value, ctx) => {
@@ -131,8 +127,39 @@ export class FieldEditorInputError extends Error {
   }
 }
 
+export function parseFormBoolean(formData: FormData, key: string, defaultValue = false) {
+  const values = formData.getAll(key);
+
+  if (values.length === 0) {
+    return defaultValue;
+  }
+
+  for (const value of values.slice().reverse()) {
+    if (typeof value !== "string") {
+      continue;
+    }
+
+    const normalized = value.trim().toLowerCase();
+
+    if (normalized === "true" || normalized === "on" || normalized === "1") {
+      return true;
+    }
+
+    if (
+      normalized === "false" ||
+      normalized === "off" ||
+      normalized === "0" ||
+      normalized === ""
+    ) {
+      return false;
+    }
+  }
+
+  return defaultValue;
+}
+
 export function formBoolean(formData: FormData, key: string) {
-  return formData.get(key) === "on";
+  return parseFormBoolean(formData, key);
 }
 
 export function getEntityTypeInput(formData: FormData) {
@@ -141,7 +168,7 @@ export function getEntityTypeInput(formData: FormData) {
     slug: formData.get("slug"),
     description: formData.get("description") || undefined,
     icon: formData.get("icon") || undefined,
-    isActive: formBoolean(formData, "isActive"),
+    isActive: parseFormBoolean(formData, "isActive"),
   });
 }
 
@@ -155,16 +182,19 @@ export function getEntityFieldInput(formData: FormData) {
     key: formData.get("key"),
     description: formData.get("description") || undefined,
     type,
-    required: validation.required ?? formBoolean(formData, "required"),
-    isUnique: formBoolean(formData, "isUnique"),
-    searchable: formBoolean(formData, "searchable"),
-    multiple: formBoolean(formData, "multiple"),
-    isActive: formBoolean(formData, "isActive"),
+    required: validation.required ?? parseFormBoolean(formData, "required"),
+    isUnique: parseFormBoolean(formData, "isUnique"),
+    searchable: parseFormBoolean(formData, "searchable"),
+    multiple: parseFormBoolean(formData, "multiple"),
+    isActive: parseFormBoolean(formData, "isActive"),
     targetEntityTypeId: formData.get("targetEntityTypeId") || undefined,
     relationKind: formData.get("relationKind") || undefined,
     validation,
     defaultValue: getDefaultValueInput(formData, type),
     display,
+    money: {
+      currency: parseMoneyCurrency(formData.get("moneyCurrency")),
+    },
   });
 }
 
@@ -173,7 +203,7 @@ export function getFieldOptionInput(formData: FormData) {
     label: formData.get("label"),
     value: formData.get("value"),
     sortOrder: formData.get("sortOrder") || 0,
-    isActive: formBoolean(formData, "isActive"),
+    isActive: parseFormBoolean(formData, "isActive"),
   });
 }
 
@@ -198,14 +228,26 @@ export function getEntityFieldEditorInput(formData: FormData) {
 }
 
 function getFieldOptionRowsInput(formData: FormData): FieldOptionDraft[] {
+  const structuredPayload = parseFieldOptionsPayload(formData.get(FIELD_OPTIONS_PAYLOAD_NAME));
+
+  if (structuredPayload) {
+    if (structuredPayload.length > MAX_FIELD_OPTIONS) {
+      throw new FieldEditorInputError("Revisa las opciones antes de guardar.", {
+        options: [MAX_FIELD_OPTIONS_MESSAGE],
+      });
+    }
+
+    return structuredPayload;
+  }
+
   const rowKeys = formData
     .getAll("optionRowKey")
     .map((value) => String(value).trim())
     .filter(Boolean);
 
-  if (rowKeys.length > 100) {
+  if (rowKeys.length > MAX_FIELD_OPTIONS) {
     throw new FieldEditorInputError("Revisa las opciones antes de guardar.", {
-      options: ["Puedes guardar hasta 100 opciones por envío."],
+      options: [MAX_FIELD_OPTIONS_MESSAGE],
     });
   }
 
@@ -215,7 +257,7 @@ function getFieldOptionRowsInput(formData: FormData): FieldOptionDraft[] {
       value: String(formData.get(`optionValue:${rowKey}`) ?? "").trim().toLowerCase(),
       sortOrder:
         optionalInteger(formData.get(`optionSortOrder:${rowKey}`)) ?? index + 1,
-      isActive: formBoolean(formData, `optionActive:${rowKey}`),
+      isActive: parseFormBoolean(formData, `optionActive:${rowKey}`),
     }));
 }
 
@@ -224,7 +266,7 @@ function getFieldValidationInput(formData: FormData): FieldValidationRules {
   const regexMessage = optionalString(formData.get("validationRegexMessage"));
 
   return {
-    required: formBoolean(formData, "validationRequired"),
+    required: parseFormBoolean(formData, "required"),
     minLength: optionalInteger(formData.get("validationMinLength")),
     maxLength: optionalInteger(formData.get("validationMaxLength")),
     minimum: optionalNumber(formData.get("validationMinimum")),
@@ -259,9 +301,10 @@ function getDefaultValueInput(formData: FormData, type: string) {
 
 function getFieldDisplayInput(formData: FormData): FieldDisplayConfig {
   return {
-    primary: formBoolean(formData, "displayPrimary"),
+    primary: parseFormBoolean(formData, "displayPrimary"),
     showInList:
-      formBoolean(formData, "displayPrimary") || formBoolean(formData, "displayShowInList"),
+      parseFormBoolean(formData, "displayPrimary") ||
+      parseFormBoolean(formData, "displayShowInList"),
     listOrder: optionalInteger(formData.get("displayListOrder")),
   };
 }
@@ -387,7 +430,7 @@ export async function getAuthorizedEntityType(
       fields: {
         include: {
           options: {
-            orderBy: [{ sortOrder: "asc" }, { label: "asc" }],
+            orderBy: [{ sortOrder: "asc" }, { id: "asc" }],
           },
           _count: {
             select: {
@@ -396,7 +439,7 @@ export async function getAuthorizedEntityType(
             },
           },
         },
-        orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+        orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }, { id: "asc" }],
       },
     },
   });
@@ -748,27 +791,24 @@ export async function reorderEntityFields(
     return null;
   }
 
-  const fields = authorized.entityType.fields;
-  const index = fields.findIndex((field) => field.id === fieldId);
-  const swapIndex = direction === "up" ? index - 1 : index + 1;
+  const updates = getReorderedEntityFieldUpdates(
+    authorized.entityType.fields,
+    fieldId,
+    direction,
+  );
 
-  if (index < 0 || swapIndex < 0 || swapIndex >= fields.length) {
+  if (updates.length === 0) {
     return null;
   }
 
-  const current = fields[index];
-  const target = fields[swapIndex];
-
-  await prisma.$transaction([
-    prisma.entityField.update({
-      where: { id: current.id },
-      data: { sortOrder: target.sortOrder },
-    }),
-    prisma.entityField.update({
-      where: { id: target.id },
-      data: { sortOrder: current.sortOrder },
-    }),
-  ]);
+  await prisma.$transaction(
+    updates.map((update) =>
+      prisma.entityField.update({
+        where: { id: update.id },
+        data: { sortOrder: update.sortOrder },
+      }),
+    ),
+  );
 
   return true;
 }
@@ -842,6 +882,138 @@ export async function setFieldOptionActive(
   });
 }
 
+export async function getFieldOptionUsage(
+  optionId: string,
+  client: PrismaClientLike = prisma,
+) {
+  const option = await client.fieldOption.findUnique({
+    where: { id: optionId },
+    include: {
+      entityField: {
+        select: {
+          id: true,
+          type: true,
+        },
+      },
+    },
+  });
+
+  if (!option || !isOptionFieldType(option.entityField.type)) {
+    return null;
+  }
+
+  const usageCount = await getFieldOptionUsageCount(
+    client,
+    option.entityField.id,
+    option.entityField.type,
+    option.value,
+  );
+
+  return {
+    isUsed: usageCount > 0,
+    usageCount,
+  };
+}
+
+export async function deleteUnusedFieldOption(
+  contractId: string,
+  entityTypeId: string,
+  fieldId: string,
+  optionId: string,
+  userId: string,
+) {
+  const field = await getAuthorizedOptionField(contractId, entityTypeId, fieldId, userId);
+
+  if (!field?.options.some((option) => option.id === optionId)) {
+    return null;
+  }
+
+  return prisma.$transaction(
+    async (tx) => {
+      const option = await tx.fieldOption.findFirst({
+        where: {
+          id: optionId,
+          entityFieldId: field.id,
+          entityField: {
+            id: field.id,
+            entityTypeId,
+            entityType: {
+              contractId,
+            },
+            type: {
+              in: ["SELECT", "MULTISELECT"],
+            },
+          },
+        },
+        include: {
+          entityField: {
+            select: {
+              id: true,
+              type: true,
+            },
+          },
+        },
+      });
+
+      if (!option || !isOptionFieldType(option.entityField.type)) {
+        return null;
+      }
+
+      const usageCount = await getFieldOptionUsageCount(
+        tx,
+        option.entityField.id,
+        option.entityField.type,
+        option.value,
+      );
+
+      if (usageCount > 0) {
+        throw userError(
+          "No puedes eliminar esta opción porque está siendo utilizada por registros existentes. Puedes desactivarla para que deje de estar disponible en nuevos registros.",
+        );
+      }
+
+      await tx.fieldOption.delete({
+        where: { id: option.id },
+      });
+
+      return true;
+    },
+    { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+  );
+}
+
+async function getFieldOptionUsageCount(
+  client: PrismaClientLike,
+  entityFieldId: string,
+  type: "SELECT" | "MULTISELECT",
+  value: string,
+) {
+  if (type === "SELECT") {
+    return client.entityValue.count({
+      where: {
+        entityFieldId,
+        textValue: value,
+      },
+    });
+  }
+
+  const rows = await client.$queryRaw<Array<{ count: bigint | number }>>(
+    Prisma.sql`
+      SELECT COUNT(*)::bigint AS count
+      FROM "EntityValue"
+      WHERE "entityFieldId" = ${entityFieldId}
+        AND "jsonValue" @> CAST(${JSON.stringify([value])} AS jsonb)
+    `,
+  );
+  const count = rows[0]?.count ?? 0;
+
+  return typeof count === "bigint" ? Number(count) : count;
+}
+
+function isOptionFieldType(type: string): type is "SELECT" | "MULTISELECT" {
+  return type === "SELECT" || type === "MULTISELECT";
+}
+
 function buildFieldConfig(
   input: z.infer<typeof entityFieldSchema>,
   existingConfig?: unknown,
@@ -860,6 +1032,7 @@ function buildFieldConfig(
     validation: input.validation,
     defaultValue: input.defaultValue,
     display: input.display,
+    money: input.money,
     optionValues,
   });
 }

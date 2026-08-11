@@ -1,8 +1,10 @@
 import { type EntityFieldType, type Prisma } from "@prisma/client";
 
 import { Button } from "@/components/ui/button";
+import { dateOnlyInputValue } from "@/lib/date-only";
 import { parseFieldConfig } from "@/lib/field-validation";
 import { getExistingFormValue, getRelationConfig } from "@/lib/entity-records";
+import { getMoneyConfig } from "@/lib/money";
 
 type Field = {
   id: string;
@@ -14,6 +16,7 @@ type Field = {
   options: Array<{
     label: string;
     value: string;
+    isActive: boolean;
   }>;
 };
 
@@ -30,7 +33,6 @@ type ExistingValue = {
 type RelationOption = {
   id: string;
   displayName: string;
-  status: "ACTIVE" | "INACTIVE" | "ARCHIVED";
   entityTypeName: string;
 };
 
@@ -43,18 +45,18 @@ const unavailableTypes = new Set<EntityFieldType>(["FILE", "IMAGE"]);
 
 export function RecordForm({
   action,
+  formValues = {},
   fields,
   values = [],
-  status = "ACTIVE",
   submitLabel,
   relationOptions = {},
   relations = [],
   fieldErrors = {},
 }: {
   action: (formData: FormData) => void | Promise<void>;
+  formValues?: Record<string, string[]>;
   fields: Field[];
   values?: ExistingValue[];
-  status?: "ACTIVE" | "INACTIVE" | "ARCHIVED";
   submitLabel: string;
   relationOptions?: Record<string, RelationOption[]>;
   relations?: ExistingRelation[];
@@ -62,19 +64,6 @@ export function RecordForm({
 }) {
   return (
     <form action={action} className="grid gap-5">
-      <label className="grid gap-2 text-sm font-medium">
-        Estado
-        <select
-          className="h-10 rounded-md border border-input bg-background px-3 text-sm"
-          defaultValue={status}
-          name="status"
-        >
-          <option value="ACTIVE">Activo</option>
-          <option value="INACTIVE">Inactivo</option>
-          <option value="ARCHIVED">Archivado</option>
-        </select>
-      </label>
-
       {fields.length > 0 ? (
         fields.map((field) => (
           <DynamicField
@@ -83,6 +72,7 @@ export function RecordForm({
             relationOptions={relationOptions[field.id] ?? []}
             relations={relations}
             errors={fieldErrors[field.id] ?? []}
+            submittedValues={formValues[field.id]}
             value={getExistingFormValue(field.id, values)}
           />
         ))
@@ -104,12 +94,14 @@ function DynamicField({
   relationOptions,
   relations,
   errors,
+  submittedValues,
   value,
 }: {
   field: Field;
   relationOptions: RelationOption[];
   relations: ExistingRelation[];
   errors: string[];
+  submittedValues?: string[];
   value?: ExistingValue;
 }) {
   const name = `field_${field.id}`;
@@ -133,9 +125,10 @@ function DynamicField({
   if (field.type === "RELATION") {
     const relationConfig = getRelationConfig(field.config);
     const selected = new Set(
-      relations
-        .filter((relation) => relation.sourceFieldId === field.id)
-        .map((relation) => relation.targetRecordId),
+      submittedValues ??
+        relations
+          .filter((relation) => relation.sourceFieldId === field.id)
+          .map((relation) => relation.targetRecordId),
     );
 
     if (relationConfig.relationKind === "MANY") {
@@ -153,10 +146,7 @@ function DynamicField({
                     type="checkbox"
                     value={option.id}
                   />
-                  <span>
-                    {option.displayName}
-                    {option.status !== "ACTIVE" ? ` · ${option.status}` : ""}
-                  </span>
+                  <span>{option.displayName}</span>
                 </label>
               ))
             ) : (
@@ -184,7 +174,6 @@ function DynamicField({
           {relationOptions.map((option) => (
             <option key={option.id} value={option.id}>
               {option.displayName}
-              {option.status !== "ACTIVE" ? ` · ${option.status}` : ""}
             </option>
           ))}
         </select>
@@ -200,7 +189,7 @@ function DynamicField({
         {label}
         <textarea
           className="min-h-24 rounded-md border border-input bg-background px-3 py-2 text-sm outline-none ring-ring focus-visible:ring-2"
-          defaultValue={value?.textValue ?? formatDefaultValue(defaultValue, field.type)}
+          defaultValue={submittedValues?.[0] ?? value?.textValue ?? formatDefaultValue(defaultValue, field.type)}
           name={name}
           required={field.required}
         />
@@ -215,7 +204,7 @@ function DynamicField({
       <label className="flex items-center gap-2 text-sm font-medium">
         <input
           className="h-4 w-4"
-          defaultChecked={value?.booleanValue ?? defaultValue === true}
+          defaultChecked={submittedValues ? submittedValues.length > 0 : (value?.booleanValue ?? defaultValue === true)}
           name={name}
           type="checkbox"
         />
@@ -226,17 +215,22 @@ function DynamicField({
   }
 
   if (field.type === "SELECT") {
+    const selectedValue = submittedValues?.[0] ?? value?.textValue ?? formatDefaultValue(defaultValue, field.type);
+    const visibleOptions = field.options.filter(
+      (option) => option.isActive || option.value === selectedValue,
+    );
+
     return (
       <label className="grid gap-2 text-sm font-medium">
         {label}
         <select
           className="h-10 rounded-md border border-input bg-background px-3 text-sm"
-          defaultValue={value?.textValue ?? formatDefaultValue(defaultValue, field.type)}
+          defaultValue={selectedValue}
           name={name}
           required={field.required}
         >
           <option value="">Seleccionar</option>
-          {field.options.map((option) => (
+          {visibleOptions.map((option) => (
             <option key={option.value} value={option.value}>
               {option.label}
             </option>
@@ -250,18 +244,22 @@ function DynamicField({
 
   if (field.type === "MULTISELECT") {
     const selected = new Set(
-      Array.isArray(value?.jsonValue)
+      submittedValues ??
+      (Array.isArray(value?.jsonValue)
         ? value.jsonValue.map(String)
         : Array.isArray(defaultValue)
           ? defaultValue.map(String)
-          : [],
+          : []),
+    );
+    const visibleOptions = field.options.filter(
+      (option) => option.isActive || selected.has(option.value),
     );
 
     return (
       <fieldset className="grid gap-2">
         <legend className="text-sm font-medium">{label}</legend>
         <div className="grid gap-2 rounded-md border border-border p-3">
-          {field.options.map((option) => (
+          {visibleOptions.map((option) => (
             <label className="flex items-center gap-2 text-sm" key={option.value}>
               <input
                 className="h-4 w-4"
@@ -285,12 +283,17 @@ function DynamicField({
       {label}
       <input
         className="h-10 rounded-md border border-input bg-background px-3 text-sm outline-none ring-ring focus-visible:ring-2"
-        defaultValue={getInputValue(field.type, value, defaultValue)}
+        defaultValue={submittedValues?.[0] ?? getInputValue(field.type, value, defaultValue)}
         name={name}
         required={field.required}
         step={field.type === "INTEGER" ? "1" : "any"}
         type={getInputType(field.type)}
       />
+      {field.type === "MONEY" ? (
+        <span className="text-xs text-muted-foreground">
+          {getMoneyConfig(field.config).currency}
+        </span>
+      ) : null}
       <FieldDescription text={field.description} />
       <FieldErrors errors={errors} />
     </label>
@@ -365,7 +368,7 @@ function getInputValue(
       return value.dateValue.toISOString().slice(0, 16);
     }
 
-    return value.dateValue.toISOString().slice(0, 10);
+    return dateOnlyInputValue(value.dateValue);
   }
 
   return "";
@@ -376,16 +379,18 @@ function formatDefaultValue(value: unknown, type: EntityFieldType) {
     return "";
   }
 
-  if ((type === "DATE" || type === "DATETIME") && typeof value === "string") {
+  if (type === "DATE" && typeof value === "string") {
+    return dateOnlyInputValue(value);
+  }
+
+  if (type === "DATETIME" && typeof value === "string") {
     const date = new Date(value);
 
     if (Number.isNaN(date.getTime())) {
       return "";
     }
 
-    return type === "DATETIME"
-      ? date.toISOString().slice(0, 16)
-      : date.toISOString().slice(0, 10);
+    return date.toISOString().slice(0, 16);
   }
 
   return String(value);

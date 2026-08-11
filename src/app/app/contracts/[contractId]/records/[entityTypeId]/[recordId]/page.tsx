@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
+import type { Prisma } from "@prisma/client";
 
 import { auth } from "@/auth";
 import { Button } from "@/components/ui/button";
@@ -15,12 +16,16 @@ import {
   getRecordAuditHistory,
 } from "@/lib/audit";
 import {
+  deserializeEntityValue,
   getAuthorizedEntityRecord,
   getIncomingRecordRelations,
   getRecordRelations,
   getRelationOptions,
-  recordStatusLabels,
 } from "@/lib/entity-records";
+import {
+  entityRecordCancelEditPath,
+  entityRecordEditPath,
+} from "@/lib/entity-record-routes";
 
 import { updateEntityRecordAction } from "../../actions";
 import { RecordForm } from "../../record-form";
@@ -30,7 +35,13 @@ export default async function EntityRecordDetailPage({
   searchParams,
 }: {
   params: Promise<{ contractId: string; entityTypeId: string; recordId: string }>;
-  searchParams: Promise<{ error?: string; fieldErrors?: string }>;
+  searchParams: Promise<{
+    edit?: string;
+    error?: string;
+    fieldErrors?: string;
+    formValues?: string;
+    notice?: string;
+  }>;
 }) {
   const session = await auth();
 
@@ -80,24 +91,47 @@ export default async function EntityRecordDetailPage({
     notFound();
   }
 
-  const { error, fieldErrors } = await searchParams;
+  const { edit, error, fieldErrors, formValues, notice } = await searchParams;
   const parsedFieldErrors = parseFieldErrors(fieldErrors);
+  const parsedFormValues = parseFormValues(formValues);
+  const isEditing = edit === "1" || Boolean(error) || Object.keys(parsedFieldErrors).length > 0;
 
   return (
     <div className="grid max-w-3xl gap-6">
       <header className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold">{data.record.displayName}</h1>
-          <p className="text-sm text-muted-foreground">
-            Editar registro de {data.entityType.name}.
-          </p>
+          <p className="text-sm text-muted-foreground">{data.entityType.name}</p>
         </div>
-        <Button asChild variant="outline">
-          <Link href={`/app/contracts/${contractId}/records/${entityTypeId}`}>
-            Volver
-          </Link>
-        </Button>
+        <div className="flex flex-wrap justify-end gap-2">
+          <Button asChild variant="outline">
+            <Link href={`/app/contracts/${contractId}/records/${entityTypeId}`}>
+              Volver
+            </Link>
+          </Button>
+          {isEditing ? (
+            <Button asChild variant="outline">
+              <Link href={entityRecordCancelEditPath(contractId, entityTypeId, recordId)}>
+                Cancelar edición
+              </Link>
+            </Button>
+          ) : (
+            <Button asChild>
+              <Link href={entityRecordEditPath(contractId, entityTypeId, recordId)}>
+                Editar
+              </Link>
+            </Button>
+          )}
+        </div>
       </header>
+
+      {notice && !isEditing ? (
+        <Card>
+          <CardContent className="pt-6">
+            <p className="text-sm text-muted-foreground">{notice}</p>
+          </CardContent>
+        </Card>
+      ) : null}
 
       {error ? (
         <Card>
@@ -112,21 +146,28 @@ export default async function EntityRecordDetailPage({
           <CardTitle>Datos del registro</CardTitle>
         </CardHeader>
         <CardContent>
-          <RecordForm
-            action={updateEntityRecordAction.bind(
-              null,
-              contractId,
-              entityTypeId,
-              recordId,
-            )}
-            fieldErrors={parsedFieldErrors}
-            fields={data.entityType.fields}
-            relationOptions={relationOptions}
-            relations={data.record.outgoingRelations}
-            status={data.record.status}
-            submitLabel="Guardar registro"
-            values={data.record.values}
-          />
+          {isEditing ? (
+            <RecordForm
+              action={updateEntityRecordAction.bind(
+                null,
+                contractId,
+                entityTypeId,
+                recordId,
+              )}
+              fieldErrors={parsedFieldErrors}
+              fields={data.entityType.fields}
+              formValues={parsedFormValues}
+              relationOptions={relationOptions}
+              relations={data.record.outgoingRelations}
+              submitLabel="Guardar cambios"
+              values={data.record.values}
+            />
+          ) : (
+            <RecordReadView
+              fields={data.entityType.fields}
+              values={data.record.values}
+            />
+          )}
         </CardContent>
       </Card>
 
@@ -145,9 +186,6 @@ export default async function EntityRecordDetailPage({
                 >
                   {relation.targetRecord.displayName} ·{" "}
                   {relation.targetRecord.entityType.name}
-                  {relation.targetRecord.status !== "ACTIVE"
-                    ? ` · ${recordStatusLabels[relation.targetRecord.status]}`
-                    : ""}
                 </Link>
               </div>
             ))
@@ -228,7 +266,90 @@ export default async function EntityRecordDetailPage({
   );
 }
 
+function RecordReadView({
+  fields,
+  values,
+}: {
+  fields: Array<{
+    id: string;
+    name: string;
+    type: string;
+    config: Prisma.JsonValue | null;
+    options: Array<{ label: string; value: string }>;
+  }>;
+  values: Array<{
+    entityFieldId: string;
+    textValue: string | null;
+    integerValue: number | null;
+    decimalValue: Prisma.Decimal | null;
+    booleanValue: boolean | null;
+    dateValue: Date | null;
+    jsonValue: Prisma.JsonValue | null;
+  }>;
+}) {
+  if (fields.length === 0) {
+    return (
+      <p className="text-sm text-muted-foreground">
+        Este tipo de entidad no tiene campos activos configurados.
+      </p>
+    );
+  }
+
+  return (
+    <dl className="grid gap-4">
+      {fields.map((field) => {
+        const value = values.find((item) => item.entityFieldId === field.id);
+        const displayValue = value
+          ? deserializeEntityValue({
+              ...value,
+              jsonValue: value.jsonValue,
+              entityField: {
+                type: field.type,
+                config: field.config,
+                options: field.options,
+              },
+            })
+          : "";
+
+        return (
+          <div className="grid gap-1" key={field.id}>
+            <dt className="text-sm font-medium">{field.name}</dt>
+            <dd className="text-sm text-muted-foreground">
+              {displayValue || "Sin valor"}
+            </dd>
+          </div>
+        );
+      })}
+    </dl>
+  );
+}
+
 function parseFieldErrors(value?: string) {
+  if (!value) {
+    return {};
+  }
+
+  try {
+    const parsed = JSON.parse(value);
+
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return {};
+    }
+
+    return Object.fromEntries(
+      Object.entries(parsed).filter(
+        (entry): entry is [string, string[]] =>
+          typeof entry[0] === "string" &&
+          Array.isArray(entry[1]) &&
+          entry[1].every((item) => typeof item === "string"),
+      ),
+    );
+  } catch {
+    return {};
+  }
+}
+
+function parseFormValues(value?: string) {
   if (!value) {
     return {};
   }

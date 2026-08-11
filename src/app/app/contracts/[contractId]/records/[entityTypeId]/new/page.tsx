@@ -17,7 +17,7 @@ export default async function NewEntityRecordPage({
   searchParams,
 }: {
   params: Promise<{ contractId: string; entityTypeId: string }>;
-  searchParams: Promise<{ error?: string; fieldErrors?: string }>;
+  searchParams: Promise<{ error?: string; fieldErrors?: string; formValues?: string }>;
 }) {
   const session = await auth();
 
@@ -41,8 +41,9 @@ export default async function NewEntityRecordPage({
     notFound();
   }
 
-  const { error, fieldErrors } = await searchParams;
+  const { error, fieldErrors, formValues } = await searchParams;
   const parsedFieldErrors = parseFieldErrors(fieldErrors);
+  const parsedFormValues = parseFormValues(formValues);
 
   return (
     <div className="grid max-w-3xl gap-6">
@@ -75,6 +76,7 @@ export default async function NewEntityRecordPage({
             action={createEntityRecordAction.bind(null, contractId, entityTypeId)}
             fieldErrors={parsedFieldErrors}
             fields={data.entityType.fields}
+            formValues={parsedFormValues}
             relationOptions={relationOptions}
             submitLabel="Crear registro"
           />
@@ -85,6 +87,31 @@ export default async function NewEntityRecordPage({
 }
 
 function parseFieldErrors(value?: string) {
+  if (!value) {
+    return {};
+  }
+
+  try {
+    const parsed = JSON.parse(value);
+
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return {};
+    }
+
+    return Object.fromEntries(
+      Object.entries(parsed).filter(
+        (entry): entry is [string, string[]] =>
+          typeof entry[0] === "string" &&
+          Array.isArray(entry[1]) &&
+          entry[1].every((item) => typeof item === "string"),
+      ),
+    );
+  } catch {
+    return {};
+  }
+}
+
+function parseFormValues(value?: string) {
   if (!value) {
     return {};
   }

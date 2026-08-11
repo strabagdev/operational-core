@@ -76,6 +76,15 @@ describe("field editor UX", () => {
     expect(getFieldEditorSections("RELATION")).toContain("relation");
   });
 
+  it("reacts with type-specific progressive sections", () => {
+    expect(getFieldEditorSections("TEXT")).not.toContain("options");
+    expect(getFieldEditorSections("TEXT")).not.toContain("relation");
+    expect(getFieldEditorSections("SELECT")).toContain("options");
+    expect(getFieldEditorSections("MULTISELECT")).toContain("options");
+    expect(getFieldEditorSections("RELATION")).toContain("relation");
+    expect(getFieldEditorSections("RELATION")).not.toContain("options");
+  });
+
   it("builds an edit summary", () => {
     expect(getFieldEditorSummary(field({
       config: { display: { primary: true } },

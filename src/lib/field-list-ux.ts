@@ -1,5 +1,6 @@
 import { type EntityFieldType, type Prisma } from "@prisma/client";
 
+import { fieldTypeLabels } from "./field-editor-state";
 import { parseFieldConfig } from "./field-validation";
 
 export type FieldListOption = {
@@ -39,25 +40,6 @@ export type FieldUseFilter =
   | "VALIDATIONS"
   | "RELATION"
   | "OPTIONS";
-
-export const fieldTypeLabels: Record<EntityFieldType, string> = {
-  TEXT: "Texto corto",
-  TEXTAREA: "Texto largo",
-  EMAIL: "Correo electrónico",
-  PHONE: "Teléfono",
-  URL: "Enlace",
-  INTEGER: "Número entero",
-  DECIMAL: "Número decimal",
-  MONEY: "Monto",
-  BOOLEAN: "Sí / No",
-  DATE: "Fecha",
-  DATETIME: "Fecha y hora",
-  SELECT: "Lista de opciones",
-  MULTISELECT: "Selección múltiple",
-  RELATION: "Relación con otra entidad",
-  FILE: "Archivo",
-  IMAGE: "Imagen",
-};
 
 export function getFieldTypeLabel(type: EntityFieldType) {
   return fieldTypeLabels[type];

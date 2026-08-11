@@ -15,17 +15,18 @@ import {
   getEntityRecords,
   getPrimaryDisplayField,
   getRecordListFields,
-  recordStatusLabels,
 } from "@/lib/entity-records";
 
-import { archiveEntityRecordAction, restoreEntityRecordAction } from "../actions";
+import { deleteEntityRecordsAction } from "../actions";
+import { EntityRecordsTable } from "./entity-records-table";
+import { ImportRecordsSheet } from "./import-records-sheet";
 
 export default async function EntityRecordsPage({
   params,
   searchParams,
 }: {
   params: Promise<{ contractId: string; entityTypeId: string }>;
-  searchParams: Promise<{ q?: string; status?: string; error?: string }>;
+  searchParams: Promise<{ q?: string; page?: string; pageSize?: string; error?: string }>;
 }) {
   const session = await auth();
 
@@ -34,13 +35,16 @@ export default async function EntityRecordsPage({
   }
 
   const { contractId, entityTypeId } = await params;
-  const { q, status, error } = await searchParams;
+  const { q, page, pageSize, error } = await searchParams;
+  const parsedPage = parsePositiveInteger(page, 1);
+  const parsedPageSize = parsePageSize(pageSize);
   const data = await getEntityRecords({
     contractId,
     entityTypeId,
     userId: session.user.id,
+    page: parsedPage,
+    pageSize: parsedPageSize,
     query: q,
-    status: parseStatus(status),
   });
 
   if (!data) {
@@ -50,7 +54,28 @@ export default async function EntityRecordsPage({
   const primaryField = getPrimaryDisplayField(data.entityType.fields);
   const listFields = getRecordListFields(data.entityType.fields);
   const displayHeader = primaryField?.name ?? "Nombre";
-  const parsedStatus = parseStatus(status);
+  const fieldsById = new Map(data.entityType.fields.map((field) => [field.id, field]));
+  const tableRecords = data.records.map((record) => ({
+    id: record.id,
+    displayName: record.displayName,
+    updatedAt: record.updatedAt.toLocaleDateString("es-CL"),
+    values: listFields.map((field) => {
+      const value = record.values.find((item) => item.entityFieldId === field.id);
+      const fieldConfig = fieldsById.get(field.id);
+
+      return {
+        fieldId: field.id,
+        value: value
+          ? deserializeEntityValue({
+              ...value,
+              entityField: fieldConfig
+                ? { type: fieldConfig.type, config: fieldConfig.config, options: fieldConfig.options }
+                : undefined,
+            })
+          : "",
+      };
+    }),
+  }));
 
   return (
     <div className="grid max-w-6xl gap-6">
@@ -61,11 +86,23 @@ export default async function EntityRecordsPage({
             Registros operacionales de este tipo de entidad.
           </p>
         </div>
-        <Button asChild>
-          <Link href={`/app/contracts/${contractId}/records/${entityTypeId}/new`}>
-            Crear registro
-          </Link>
-        </Button>
+        <div className="flex flex-wrap justify-end gap-2">
+          <Button asChild variant="outline">
+            <a href={`/app/contracts/${contractId}/records/${entityTypeId}/template`}>
+              Descargar plantilla
+            </a>
+          </Button>
+          <ImportRecordsSheet
+            contractId={contractId}
+            entityName={data.entityType.name}
+            entityTypeId={entityTypeId}
+          />
+          <Button asChild>
+            <Link href={`/app/contracts/${contractId}/records/${entityTypeId}/new`}>
+              Crear registro
+            </Link>
+          </Button>
+        </div>
       </header>
 
       {error ? (
@@ -78,26 +115,17 @@ export default async function EntityRecordsPage({
 
       <Card>
         <CardContent className="pt-6">
-          <form className="grid gap-3 md:grid-cols-[1fr_180px_auto]" method="get">
+          <form className="grid gap-3 md:grid-cols-[1fr_auto]" method="get">
             <input
               className="h-10 rounded-md border border-input bg-background px-3 text-sm outline-none ring-ring focus-visible:ring-2"
               defaultValue={q ?? ""}
               name="q"
               placeholder="Buscar"
             />
-            <select
-              className="h-10 rounded-md border border-input bg-background px-3 text-sm"
-              defaultValue={parsedStatus}
-              name="status"
-            >
-              <option value="ACTIVE">Registros activos</option>
-              <option value="INACTIVE">Registros inactivos</option>
-              <option value="ARCHIVED">Registros archivados</option>
-              <option value="ALL">Todos los registros</option>
-            </select>
             <Button type="submit" variant="outline">
               Filtrar
             </Button>
+            <input name="pageSize" type="hidden" value={data.pagination.pageSize} />
           </form>
         </CardContent>
       </Card>
@@ -106,122 +134,111 @@ export default async function EntityRecordsPage({
         <CardHeader>
           <CardTitle>Listado</CardTitle>
           <CardDescription>
-            {data.records.length} registro{data.records.length === 1 ? "" : "s"}
+            {data.records.length} de {data.pagination.totalRecords} registro
+            {data.pagination.totalRecords === 1 ? "" : "s"}
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[720px] text-left text-sm">
-              <thead className="border-b border-border text-muted-foreground">
-                <tr>
-                  <th className="py-3 pr-4 font-medium">{displayHeader}</th>
-                  {listFields.map((field) => (
-                    <th className="py-3 pr-4 font-medium" key={field.id}>
-                      {field.name}
-                    </th>
-                  ))}
-                  <th className="py-3 pr-4 font-medium">Actualizado</th>
-                  <th className="py-3 text-right font-medium">Acciones</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.records.length > 0 ? (
-                  data.records.map((record) => (
-                    <tr className="border-b border-border" key={record.id}>
-                      <td className="py-3 pr-4 font-medium">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span>{record.displayName}</span>
-                          {shouldShowStatusBadge(record.status, parsedStatus) ? (
-                            <span className="rounded-full border border-border px-2 py-0.5 text-xs font-normal text-muted-foreground">
-                              {recordStatusLabels[record.status]}
-                            </span>
-                          ) : null}
-                        </div>
-                      </td>
-                      {listFields.map((field) => {
-                        const value = record.values.find(
-                          (item) => item.entityFieldId === field.id,
-                        );
-
-                        return (
-                          <td className="py-3 pr-4" key={field.id}>
-                            {value ? deserializeEntityValue(value) : ""}
-                          </td>
-                        );
-                      })}
-                      <td className="py-3 pr-4">
-                        {record.updatedAt.toLocaleDateString("es-CL")}
-                      </td>
-                      <td className="py-3">
-                        <div className="flex justify-end gap-2">
-                          <Button asChild size="sm" variant="outline">
-                            <Link
-                              href={`/app/contracts/${contractId}/records/${entityTypeId}/${record.id}`}
-                            >
-                              Editar
-                            </Link>
-                          </Button>
-                          {record.status !== "ARCHIVED" ? (
-                            <form
-                              action={archiveEntityRecordAction.bind(
-                                null,
-                                contractId,
-                                entityTypeId,
-                                record.id,
-                              )}
-                            >
-                              <Button size="sm" type="submit" variant="ghost">
-                                Archivar
-                              </Button>
-                            </form>
-                          ) : (
-                            <form
-                              action={restoreEntityRecordAction.bind(
-                                null,
-                                contractId,
-                                entityTypeId,
-                                record.id,
-                              )}
-                            >
-                              <Button size="sm" type="submit" variant="ghost">
-                                Restaurar
-                              </Button>
-                            </form>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td
-                      className="py-6 text-sm text-muted-foreground"
-                      colSpan={3 + listFields.length}
-                    >
-                      No hay registros para estos filtros.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
+          <EntityRecordsTable
+            contractId={contractId}
+            deleteAction={deleteEntityRecordsAction.bind(null, contractId, entityTypeId)}
+            displayHeader={displayHeader}
+            entityTypeId={entityTypeId}
+            key={`${entityTypeId}:${q ?? ""}:${tableRecords.map((record) => record.id).join("|")}`}
+            listFields={listFields.map((field) => ({ id: field.id, name: field.name }))}
+            records={tableRecords}
+          />
+          <PaginationControls
+            basePath={`/app/contracts/${contractId}/records/${entityTypeId}`}
+            page={data.pagination.page}
+            pageSize={data.pagination.pageSize}
+            query={q}
+            totalPages={data.pagination.totalPages}
+            totalRecords={data.pagination.totalRecords}
+          />
         </CardContent>
       </Card>
     </div>
   );
 }
 
-function parseStatus(value?: string) {
-  if (value === "ACTIVE" || value === "INACTIVE" || value === "ARCHIVED") {
-    return value;
-  }
+function parsePositiveInteger(value: string | undefined, fallback: number) {
+  const parsed = Number(value);
 
-  return "ALL";
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-function shouldShowStatusBadge(
-  recordStatus: "ACTIVE" | "INACTIVE" | "ARCHIVED",
-  currentFilter: "ACTIVE" | "INACTIVE" | "ARCHIVED" | "ALL",
-) {
-  return recordStatus !== "ACTIVE" || currentFilter !== "ACTIVE";
+function parsePageSize(value?: string) {
+  const parsed = Number(value);
+
+  return parsed === 25 || parsed === 50 || parsed === 100 ? parsed : 50;
+}
+
+function PaginationControls({
+  basePath,
+  page,
+  pageSize,
+  query,
+  totalPages,
+  totalRecords,
+}: {
+  basePath: string;
+  page: number;
+  pageSize: number;
+  query?: string;
+  totalPages: number;
+  totalRecords: number;
+}) {
+  const previousHref = pageHref({ basePath, page: page - 1, pageSize, query });
+  const nextHref = pageHref({ basePath, page: page + 1, pageSize, query });
+
+  return (
+    <div className="mt-4 flex flex-col gap-3 border-t border-border pt-4 text-sm sm:flex-row sm:items-center sm:justify-between">
+      <p className="text-muted-foreground">
+        Página {page} de {totalPages} · {totalRecords} registros
+      </p>
+      <div className="flex flex-wrap gap-2">
+        {page <= 1 ? (
+          <Button disabled size="sm" variant="outline">
+            Anterior
+          </Button>
+        ) : (
+          <Button asChild size="sm" variant="outline">
+            <Link href={previousHref}>Anterior</Link>
+          </Button>
+        )}
+        {page >= totalPages ? (
+          <Button disabled size="sm" variant="outline">
+            Siguiente
+          </Button>
+        ) : (
+          <Button asChild size="sm" variant="outline">
+            <Link href={nextHref}>Siguiente</Link>
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function pageHref({
+  basePath,
+  page,
+  pageSize,
+  query,
+}: {
+  basePath: string;
+  page: number;
+  pageSize: number;
+  query?: string;
+}) {
+  const params = new URLSearchParams();
+
+  if (query) params.set("q", query);
+  if (page > 1) params.set("page", String(page));
+  if (pageSize !== 50) params.set("pageSize", String(pageSize));
+
+  const queryString = params.toString();
+
+  return queryString ? `${basePath}?${queryString}` : basePath;
 }
