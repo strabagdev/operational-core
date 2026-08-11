@@ -6,6 +6,10 @@ const recordsPageSource = readFileSync(
   new URL("../app/app/contracts/[contractId]/records/[entityTypeId]/page.tsx", import.meta.url),
   "utf8",
 );
+const importSheetSource = readFileSync(
+  new URL("../app/app/contracts/[contractId]/records/[entityTypeId]/import-records-sheet.tsx", import.meta.url),
+  "utf8",
+);
 
 describe("entity record pagination UI", () => {
   it("offers the supported page sizes in the listing filter form", () => {
@@ -35,5 +39,25 @@ describe("entity record pagination UI", () => {
     expect(recordsPageSource).toContain("sort?: { key: string; direction: string } | null");
     expect(recordsPageSource).toContain('params.set("sort", sort.key)');
     expect(recordsPageSource).toContain('params.set("dir", sort.direction)');
+  });
+
+  it("exposes separate Excel template, export, and import actions", () => {
+    expect(recordsPageSource).toContain("Descargar plantilla");
+    expect(recordsPageSource).toContain("Exportar datos");
+    expect(recordsPageSource).toContain("ImportRecordsSheet");
+    expect(recordsPageSource).toContain("/export");
+  });
+
+  it("preserves visual sort and direction in the Excel export link", () => {
+    expect(recordsPageSource).toContain("function exportHref");
+    expect(recordsPageSource).toContain("sort: data.sort");
+    expect(recordsPageSource).toContain('params.set("sort", sort.key)');
+    expect(recordsPageSource).toContain('params.set("dir", sort.direction)');
+  });
+
+  it("shows create/update counts in the Excel import preview", () => {
+    expect(importSheetSource).toContain('label="Nuevos"');
+    expect(importSheetSource).toContain('label="Actualizaciones"');
+    expect(importSheetSource).toContain("importButtonLabel");
   });
 });

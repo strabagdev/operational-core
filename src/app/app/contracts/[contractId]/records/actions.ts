@@ -10,7 +10,7 @@ import {
   EntityImportUserError,
   friendlyImportPersistenceError,
   getEntityImportContext,
-  getExistingUniqueValues,
+  getExistingUniqueValuesByRecord,
   importEntityRecords,
   validateImportFile,
   type EntityImportError,
@@ -30,6 +30,9 @@ export type ImportEntityRecordsActionState = {
   errorRows?: number;
   errors?: EntityImportError[];
   importedCount?: number;
+  createdCount?: number;
+  updatedCount?: number;
+  changeCount?: number;
 };
 
 async function requireUserId() {
@@ -296,15 +299,19 @@ export async function importEntityRecordsAction(
       }
 
       const result = await validateImportFile({
+        entityTypeId: context.entityType.id,
         fields: context.importableFields,
         file,
-        existingUniqueValues: (field) => getExistingUniqueValues(context.entityType.id, field),
+        existingUniqueValues: (field) => getExistingUniqueValuesByRecord(context.entityType.id, field),
       });
 
       return {
         status: result.success ? "valid" : "error",
         rowsRead: result.rowsRead,
         validRows: result.validRows,
+        createdCount: result.createRows,
+        updatedCount: result.updateRows,
+        changeCount: result.changeCount,
         errorRows: result.errorRows,
         errors: result.errors,
         message: result.success
@@ -325,11 +332,13 @@ export async function importEntityRecordsAction(
     return {
       status: "success",
       importedCount: result.importedCount,
+      createdCount: result.createdCount,
+      updatedCount: result.updatedCount,
       rowsRead: result.importedCount,
       validRows: result.importedCount,
       errorRows: 0,
       errors: [],
-      message: `${result.importedCount} registros importados correctamente.`,
+      message: importSuccessMessage(result.createdCount, result.updatedCount),
     };
   } catch (error) {
     if (error instanceof EntityImportUserError) {
@@ -350,4 +359,16 @@ export async function importEntityRecordsAction(
       message: friendlyImportPersistenceError(error),
     };
   }
+}
+
+function importSuccessMessage(createdCount: number, updatedCount: number) {
+  if (createdCount > 0 && updatedCount > 0) {
+    return `${createdCount} registros creados y ${updatedCount} actualizados correctamente.`;
+  }
+
+  if (updatedCount > 0) {
+    return `${updatedCount} registros actualizados correctamente.`;
+  }
+
+  return `${createdCount} registros importados correctamente.`;
 }

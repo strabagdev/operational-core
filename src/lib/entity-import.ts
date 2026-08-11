@@ -4,7 +4,12 @@ import { randomUUID } from "node:crypto";
 
 import { buildValueChanges } from "./audit";
 import { dateOnlyInputValue, dateOnlyToUtcDate } from "./date-only";
-import { getAuthorizedRecordEntityType } from "./entity-records";
+import {
+  getEntityRecordIdsForSort,
+  deserializeEntityValue,
+  getAuthorizedRecordEntityType,
+  getRecordListFields,
+} from "./entity-records";
 import {
   FieldValidationError,
   fieldInputName,
@@ -21,6 +26,7 @@ export const ENTITY_IMPORT_LIMITS = {
   maxFileSizeBytes: 5 * 1024 * 1024,
   maxRows: 5000,
 } as const;
+export const RECORD_ID_HEADER = "__record_id";
 
 export const importableFieldTypes = new Set<EntityFieldType>([
   "TEXT",
@@ -63,17 +69,22 @@ export type EntityImportValidationResult = {
   success: boolean;
   rowsRead: number;
   validRows: number;
+  createRows: number;
+  updateRows: number;
+  changeCount?: number;
   errorRows: number;
   errors: EntityImportError[];
 };
 
 type ParsedImportRow = {
   rowNumber: number;
+  recordId: string | null;
   valuesByHeader: Map<string, unknown>;
 };
 
 type ValidImportRow = {
   rowNumber: number;
+  recordId?: string;
   values: SerializedFieldValue[];
   displayName: string;
 };
@@ -83,6 +94,8 @@ type ImportPersistencePlan = {
   auditEvents: Prisma.AuditEventCreateManyInput[];
   records: Prisma.EntityRecordCreateManyInput[];
   values: Prisma.EntityValueCreateManyInput[];
+  updatedRecords: Array<{ id: string; displayName: string }>;
+  updatedRecordIds: string[];
 };
 
 export class EntityImportUserError extends Error {
@@ -195,6 +208,98 @@ export async function generateEntityTemplate({
   return workbook.xlsx.writeBuffer();
 }
 
+export async function generateEntityExport({
+  contractId,
+  entityTypeId,
+  sort,
+  query,
+  userId,
+}: {
+  contractId: string;
+  entityTypeId: string;
+  sort?: {
+    key?: string;
+    direction?: string;
+  };
+  query?: string;
+  userId: string;
+}) {
+  const context = await getEntityImportContext(contractId, entityTypeId, userId);
+
+  if (!context) {
+    return null;
+  }
+
+  const workbook = new ExcelJS.Workbook();
+  const worksheet = workbook.addWorksheet(toExcelSheetName(context.entityType.name));
+  const fields = context.importableFields;
+  const headers = [RECORD_ID_HEADER, ...fields.map((field) => field.name)];
+  const orderedIds = await getEntityRecordIdsForSort({
+    entityTypeId: context.entityType.id,
+    fields: context.entityType.fields,
+    listFields: getRecordListFields(context.entityType.fields),
+    query,
+    sort,
+  });
+  const records = await prisma.entityRecord.findMany({
+    where: {
+      id: { in: orderedIds.ids },
+      entityTypeId: context.entityType.id,
+    },
+    include: {
+      values: {
+        include: {
+          entityField: {
+            include: {
+              options: {
+                orderBy: [{ sortOrder: "asc" }, { label: "asc" }],
+              },
+            },
+          },
+        },
+      },
+    },
+  });
+  const recordOrder = new Map(orderedIds.ids.map((id, index) => [id, index]));
+
+  records.sort((first, second) => {
+    return (recordOrder.get(first.id) ?? 0) - (recordOrder.get(second.id) ?? 0);
+  });
+
+  worksheet.addRow(headers);
+  worksheet.views = [{ state: "frozen", ySplit: 1 }];
+  worksheet.autoFilter = {
+    from: { row: 1, column: 1 },
+    to: { row: 1, column: headers.length },
+  };
+  worksheet.getRow(1).font = { bold: true };
+
+  for (const record of records) {
+    worksheet.addRow([
+      record.id,
+      ...fields.map((field) => {
+        const value = record.values.find((item) => item.entityFieldId === field.id);
+
+        return value ? exportEntityValue(field, value) : "";
+      }),
+    ]);
+  }
+
+  for (const [index, header] of headers.entries()) {
+    worksheet.getColumn(index + 1).width = Math.min(Math.max(header.length + 4, 14), 42);
+  }
+
+  return {
+    buffer: await workbook.xlsx.writeBuffer(),
+    count: records.length,
+    entityName: context.entityType.name,
+  };
+}
+
+export function exportFileName(entityName: string) {
+  return templateFileName(entityName).replace("_plantilla.xlsx", "_datos.xlsx");
+}
+
 export function templateFileName(entityName: string) {
   const normalized = entityName
     .normalize("NFD")
@@ -209,25 +314,35 @@ export function templateFileName(entityName: string) {
 }
 
 export async function validateImportFile({
+  entityTypeId,
   fields,
   file,
   existingUniqueValues,
+  existingRecords,
 }: {
+  entityTypeId?: string;
   fields: ImportField[];
   file: File;
   existingUniqueValues?: ExistingUniqueValuesProvider;
+  existingRecords?: ExistingRecord[];
 }): Promise<EntityImportValidationResult> {
   const rows = await parseExcelRows({ fields, file });
+  const recordsForValidation =
+    existingRecords ?? (entityTypeId ? await getExistingImportRecords(entityTypeId, rows) : undefined);
   const validation = await validateImportRows({
     fields,
     rows,
     existingUniqueValues,
+    existingRecords: recordsForValidation,
   });
 
   return {
     success: validation.errors.length === 0,
     rowsRead: rows.length,
     validRows: validation.validRows.length,
+    createRows: validation.validRows.filter((row) => !row.recordId).length,
+    updateRows: validation.validRows.filter((row) => row.recordId).length,
+    changeCount: validation.changeCount,
     errorRows: new Set(validation.errors.map((error) => error.row)).size,
     errors: validation.errors,
   };
@@ -251,10 +366,12 @@ export async function importEntityRecords({
   }
 
   const rows = await parseExcelRows({ fields: context.importableFields, file });
+  const existingRecords = await getExistingImportRecords(context.entityType.id, rows);
   const validation = await validateImportRows({
     fields: context.importableFields,
     rows,
-    existingUniqueValues: (field) => getExistingUniqueValues(context.entityType.id, field),
+    existingRecords,
+    existingUniqueValues: (field) => getExistingUniqueValuesByRecord(context.entityType.id, field),
   });
 
   if (validation.errors.length > 0) {
@@ -266,11 +383,25 @@ export async function importEntityRecords({
     entityTypeId: context.entityType.id,
     entityTypeName: context.entityType.name,
     fields: context.entityType.fields,
+    existingRecords,
     rows: validation.validRows,
     userId,
   });
 
   return prisma.$transaction(async (tx) => {
+    if (plan.updatedRecords.length > 0) {
+      await updateRecordDisplayNames(tx, plan.updatedRecords);
+    }
+
+    if (plan.updatedRecordIds.length > 0) {
+      await tx.entityValue.deleteMany({
+        where: {
+          entityRecordId: { in: plan.updatedRecordIds },
+          entityFieldId: { in: context.importableFields.map((field) => field.id) },
+        },
+      });
+    }
+
     if (plan.records.length > 0) {
       await tx.entityRecord.createMany({ data: plan.records });
     }
@@ -289,6 +420,8 @@ export async function importEntityRecords({
 
     return {
       importedCount: validation.validRows.length,
+      createdCount: plan.records.length,
+      updatedCount: plan.updatedRecordIds.length,
     };
   });
 }
@@ -297,6 +430,7 @@ export function buildImportPersistencePlan({
   contractId,
   entityTypeId,
   entityTypeName,
+  existingRecords = [],
   fields,
   rows,
   userId,
@@ -304,6 +438,7 @@ export function buildImportPersistencePlan({
   contractId: string;
   entityTypeId: string;
   entityTypeName: string;
+  existingRecords?: ExistingRecord[];
   fields: ImportField[];
   rows: ValidImportRow[];
   userId: string;
@@ -312,16 +447,27 @@ export function buildImportPersistencePlan({
   const values: Prisma.EntityValueCreateManyInput[] = [];
   const auditEvents: Prisma.AuditEventCreateManyInput[] = [];
   const auditChanges: Prisma.AuditChangeCreateManyInput[] = [];
+  const updatedRecords: Array<{ id: string; displayName: string }> = [];
+  const updatedRecordIds: string[] = [];
+  const existingById = new Map(existingRecords.map((record) => [record.id, record]));
 
   for (const row of rows) {
-    const recordId = randomUUID();
+    const recordId = row.recordId ?? randomUUID();
     const auditEventId = randomUUID();
+    const existingRecord = row.recordId ? existingById.get(row.recordId) : undefined;
 
-    records.push({
-      id: recordId,
-      entityTypeId,
-      displayName: row.displayName,
-    });
+    if (existingRecord) {
+      updatedRecordIds.push(recordId);
+      if (existingRecord.displayName !== row.displayName) {
+        updatedRecords.push({ id: recordId, displayName: row.displayName });
+      }
+    } else {
+      records.push({
+        id: recordId,
+        entityTypeId,
+        displayName: row.displayName,
+      });
+    }
 
     for (const value of row.values.filter((item) => !isEmptySerializedValue(item))) {
       values.push({
@@ -336,14 +482,26 @@ export function buildImportPersistencePlan({
       });
     }
 
+    const changes = buildValueChanges({
+      fields,
+      oldValues: existingRecord?.values ?? [],
+      newValues: row.values,
+    });
+
+    if (existingRecord && changes.length === 0 && existingRecord.displayName === row.displayName) {
+      continue;
+    }
+
     auditEvents.push({
       id: auditEventId,
       contractId,
       entityTypeId,
       entityRecordId: recordId,
       actorUserId: userId,
-      action: "RECORD_CREATED",
-      summary: `Importó ${entityTypeName} ${row.displayName}`,
+      action: existingRecord ? "RECORD_UPDATED" : "RECORD_CREATED",
+      summary: existingRecord
+        ? `Actualizó ${entityTypeName} ${row.displayName} desde Excel`
+        : `Importó ${entityTypeName} ${row.displayName}`,
       metadata: {
         displayName: row.displayName,
         entityTypeName,
@@ -351,11 +509,7 @@ export function buildImportPersistencePlan({
       },
     });
 
-    for (const change of buildValueChanges({
-      fields,
-      oldValues: [],
-      newValues: row.values,
-    })) {
+    for (const change of changes) {
       auditChanges.push({
         auditEventId,
         entityFieldId: change.entityFieldId ?? null,
@@ -366,7 +520,7 @@ export function buildImportPersistencePlan({
     }
   }
 
-  return { auditChanges, auditEvents, records, values };
+  return { auditChanges, auditEvents, records, updatedRecords, updatedRecordIds, values };
 }
 
 export async function parseExcelRows({
@@ -397,13 +551,16 @@ export async function parseExcelRows({
 
   const headerRow = worksheet.getRow(1);
   const headers = rowValues(headerRow).map(cellToHeader);
-  validateHeaders(headers, fields);
+  const hasRecordId = validateHeaders(headers, fields);
+  const fieldHeaders = hasRecordId ? headers.slice(1) : headers;
 
   const rows: ParsedImportRow[] = [];
 
   for (let rowNumber = 2; rowNumber <= worksheet.rowCount; rowNumber += 1) {
     const row = worksheet.getRow(rowNumber);
     const values = rowValues(row).slice(0, headers.length).map(cellToImportValue);
+    const recordId = hasRecordId ? String(values[0] ?? "").trim() : "";
+    const fieldValues = hasRecordId ? values.slice(1) : values;
 
     if (values.every(isBlankCellValue)) {
       continue;
@@ -417,31 +574,71 @@ export async function parseExcelRows({
 
     rows.push({
       rowNumber,
-      valuesByHeader: new Map(headers.map((header, index) => [header, values[index]])),
+      recordId: recordId || null,
+      valuesByHeader: new Map(fieldHeaders.map((header, index) => [header, fieldValues[index]])),
     });
   }
 
   return rows;
 }
 
-export type ExistingUniqueValuesProvider = (field: ImportField) => Promise<Set<string>>;
+export type ExistingUniqueValuesProvider = (field: ImportField) => Promise<Map<string, string> | Set<string>>;
+
+type ExistingRecord = {
+  id: string;
+  displayName: string;
+  values: Array<{
+    entityFieldId: string;
+    textValue: string | null;
+    integerValue: number | null;
+    decimalValue: Prisma.Decimal | null;
+    booleanValue: boolean | null;
+    dateValue: Date | null;
+    jsonValue: Prisma.JsonValue | null;
+  }>;
+};
 
 export async function validateImportRows({
   fields,
   rows,
   existingUniqueValues,
+  existingRecords,
 }: {
   fields: ImportField[];
   rows: ParsedImportRow[];
   existingUniqueValues?: ExistingUniqueValuesProvider;
+  existingRecords?: ExistingRecord[];
 }) {
   const errors: EntityImportError[] = [];
-  const validRows: ValidImportRow[] = [];
-  const seenUniqueValues = new Map<string, Set<string>>();
-  const existingCache = new Map<string, Set<string>>();
+  const candidateRows: ValidImportRow[] = [];
+  const existingById = new Map((existingRecords ?? []).map((record) => [record.id, record]));
+  const seenRecordIds = new Set<string>();
 
   for (const row of rows) {
     const formData = new FormData();
+    const recordId = row.recordId?.trim() || undefined;
+
+    if (recordId) {
+      if (seenRecordIds.has(recordId)) {
+        errors.push({
+          row: row.rowNumber,
+          field: RECORD_ID_HEADER,
+          message: "El identificador de registro está duplicado dentro del archivo.",
+        });
+        continue;
+      }
+
+      seenRecordIds.add(recordId);
+
+      if (!existingById.has(recordId)) {
+        errors.push({
+          row: row.rowNumber,
+          field: RECORD_ID_HEADER,
+          message: "El registro indicado ya no existe.",
+        });
+        continue;
+      }
+    }
 
     try {
       for (const field of fields) {
@@ -470,7 +667,7 @@ export async function validateImportRows({
     let values: SerializedFieldValue[];
 
     try {
-      values = validateRecordValues({ fields, formData, mode: "create" });
+      values = validateRecordValues({ fields, formData, mode: recordId ? "edit" : "create" });
     } catch (error) {
       if (error instanceof FieldValidationError) {
         for (const [fieldId, messages] of Object.entries(error.fieldErrors)) {
@@ -489,55 +686,106 @@ export async function validateImportRows({
       throw error;
     }
 
-    for (const field of fields.filter((item) => item.isUnique)) {
-      const value = values.find((item) => item.fieldId === field.id);
-
-      if (!value || isEmptySerializedValue(value)) {
-        continue;
-      }
-
-      const signature = uniqueValueSignature(value);
-      const seen = seenUniqueValues.get(field.id) ?? new Set<string>();
-
-      if (seen.has(signature)) {
-        errors.push({
-          row: row.rowNumber,
-          field: field.name,
-          message: "Este valor está duplicado dentro del archivo.",
-        });
-      }
-
-      seen.add(signature);
-      seenUniqueValues.set(field.id, seen);
-
-      if (existingUniqueValues) {
-        let existing = existingCache.get(field.id);
-
-        if (!existing) {
-          existing = await existingUniqueValues(field);
-          existingCache.set(field.id, existing);
-        }
-
-        if (existing.has(signature)) {
-          errors.push({
-            row: row.rowNumber,
-            field: field.name,
-            message: "Este valor ya existe.",
-          });
-        }
-      }
-    }
-
     if (!errors.some((error) => error.row === row.rowNumber)) {
-      validRows.push({
+      candidateRows.push({
         rowNumber: row.rowNumber,
+        recordId,
         values,
         displayName: getRecordDisplayName(fields, values),
       });
     }
   }
 
-  return { errors, validRows };
+  await validateUniqueImportRows({
+    errors,
+    existingUniqueValues,
+    fields,
+    rows: candidateRows,
+  });
+
+  const validRows = candidateRows.filter(
+    (row) => !errors.some((error) => error.row === row.rowNumber),
+  );
+  const changeCount = validRows.reduce((count, row) => {
+    const existingRecord = row.recordId ? existingById.get(row.recordId) : undefined;
+
+    if (!existingRecord) {
+      return count;
+    }
+
+    return count + buildValueChanges({
+      fields,
+      oldValues: existingRecord.values,
+      newValues: row.values,
+    }).length;
+  }, 0);
+
+  return { changeCount, errors, validRows };
+}
+
+async function validateUniqueImportRows({
+  errors,
+  existingUniqueValues,
+  fields,
+  rows,
+}: {
+  errors: EntityImportError[];
+  existingUniqueValues?: ExistingUniqueValuesProvider;
+  fields: ImportField[];
+  rows: ValidImportRow[];
+}) {
+  const updatedRecordIds = new Set(rows.map((row) => row.recordId).filter(Boolean));
+
+  for (const field of fields.filter((item) => item.isUnique)) {
+    const seen = new Map<string, ValidImportRow>();
+    const existingBySignature = existingUniqueValues
+      ? normalizeExistingUniqueValues(await existingUniqueValues(field))
+      : new Map<string, string>();
+
+    for (const row of rows) {
+      const value = row.values.find((item) => item.fieldId === field.id);
+
+      if (!value || isEmptySerializedValue(value)) {
+        continue;
+      }
+
+      const signature = uniqueValueSignature(value);
+      const previous = seen.get(signature);
+
+      if (previous) {
+        errors.push({
+          row: row.rowNumber,
+          field: field.name,
+          message: "Este valor está duplicado dentro del archivo.",
+        });
+        continue;
+      }
+
+      seen.set(signature, row);
+
+      const ownerRecordId = existingBySignature.get(signature);
+
+      if (
+        ownerRecordId &&
+        ownerRecordId !== row.recordId &&
+        !updatedRecordIds.has(ownerRecordId)
+      ) {
+        errors.push({
+          row: row.rowNumber,
+          field: field.name,
+          message: "Este valor ya existe.",
+        });
+      }
+    }
+  }
+}
+
+function normalizeExistingUniqueValues(values: Map<string, string> | Set<string>) {
+  if (values instanceof Map) {
+    return values;
+  }
+
+  return new Map(Array.from(values).map((signature) => [signature, "__external__"]));
 }
 
 function assertNoRequiredRelationFields(fields: ImportField[]) {
@@ -589,6 +837,8 @@ function assertExcelFile(file: File) {
 
 function validateHeaders(headers: string[], fields: ImportField[]) {
   const expectedHeaders = fields.map((field) => field.name);
+  const hasRecordId = headers[0] === RECORD_ID_HEADER;
+  const comparableHeaders = hasRecordId ? headers.slice(1) : headers;
 
   if (headers.length === 0 || headers.some((header) => !header)) {
     throw new EntityImportUserError(structureErrorMessage);
@@ -601,11 +851,13 @@ function validateHeaders(headers: string[], fields: ImportField[]) {
   }
 
   if (
-    headers.length !== expectedHeaders.length ||
-    headers.some((header, index) => header !== expectedHeaders[index])
+    comparableHeaders.length !== expectedHeaders.length ||
+    comparableHeaders.some((header, index) => header !== expectedHeaders[index])
   ) {
     throw new EntityImportUserError(structureErrorMessage);
   }
+
+  return hasRecordId;
 }
 
 function rowValues(row: ExcelJS.Row) {
@@ -736,7 +988,113 @@ function optionLabelToValue(field: ImportField, label: string) {
   return option.value;
 }
 
+function exportEntityValue(
+  field: ImportField,
+  value: ExistingRecord["values"][number],
+) {
+  if (field.type === "BOOLEAN" && value.booleanValue !== null) {
+    return value.booleanValue ? "Verdadero" : "Falso";
+  }
+
+  if (field.type === "INTEGER" && value.integerValue !== null) {
+    return value.integerValue;
+  }
+
+  if ((field.type === "DECIMAL" || field.type === "MONEY") && value.decimalValue !== null) {
+    return value.decimalValue.toString();
+  }
+
+  if (field.type === "DATE" && value.dateValue) {
+    return dateOnlyInputValue(value.dateValue);
+  }
+
+  if (field.type === "DATETIME" && value.dateValue) {
+    return value.dateValue.toISOString();
+  }
+
+  if (field.type === "SELECT" && value.textValue) {
+    return field.options.find((option) => option.value === value.textValue)?.label ?? value.textValue;
+  }
+
+  if (field.type === "MULTISELECT" && Array.isArray(value.jsonValue)) {
+    return value.jsonValue
+      .map((item) => {
+        const optionValue = String(item);
+
+        return field.options.find((option) => option.value === optionValue)?.label ?? optionValue;
+      })
+      .join("; ");
+  }
+
+  return deserializeEntityValue({
+    ...value,
+    entityField: {
+      type: field.type,
+      config: field.config,
+      options: field.options,
+    },
+  });
+}
+
+async function getExistingImportRecords(
+  entityTypeId: string,
+  rows: ParsedImportRow[],
+): Promise<ExistingRecord[]> {
+  const recordIds = Array.from(
+    new Set(rows.map((row) => row.recordId).filter((recordId): recordId is string => Boolean(recordId))),
+  );
+
+  if (recordIds.length === 0) {
+    return [];
+  }
+
+  return prisma.entityRecord.findMany({
+    where: {
+      id: { in: recordIds },
+      entityTypeId,
+    },
+    select: {
+      id: true,
+      displayName: true,
+      values: {
+        select: {
+          entityFieldId: true,
+          textValue: true,
+          integerValue: true,
+          decimalValue: true,
+          booleanValue: true,
+          dateValue: true,
+          jsonValue: true,
+        },
+      },
+    },
+  });
+}
+
+async function updateRecordDisplayNames(
+  tx: Prisma.TransactionClient,
+  records: Array<{ id: string; displayName: string }>,
+) {
+  const cases = records.map(
+    (record) => Prisma.sql`WHEN "id" = ${record.id} THEN ${record.displayName}`,
+  );
+
+  await tx.$executeRaw(
+    Prisma.sql`
+      UPDATE "EntityRecord"
+      SET "displayName" = CASE ${Prisma.join(cases, " ")} ELSE "displayName" END
+      WHERE "id" IN (${Prisma.join(records.map((record) => record.id))})
+    `,
+  );
+}
+
 export async function getExistingUniqueValues(entityTypeId: string, field: ImportField) {
+  const values = await getExistingUniqueValuesByRecord(entityTypeId, field);
+
+  return new Set(values.keys());
+}
+
+export async function getExistingUniqueValuesByRecord(entityTypeId: string, field: ImportField) {
   const values = await prisma.entityValue.findMany({
     where: {
       entityFieldId: field.id,
@@ -744,9 +1102,22 @@ export async function getExistingUniqueValues(entityTypeId: string, field: Impor
         entityTypeId,
       },
     },
+    select: {
+      entityRecordId: true,
+      textValue: true,
+      integerValue: true,
+      decimalValue: true,
+      booleanValue: true,
+      dateValue: true,
+      jsonValue: true,
+    },
   });
 
-  return new Set(values.map(uniqueValueSignature).filter(Boolean));
+  return new Map(
+    values
+      .map((value) => [uniqueValueSignature(value), value.entityRecordId] as const)
+      .filter(([signature]) => Boolean(signature)),
+  );
 }
 
 function uniqueValueSignature(value: SerializedFieldValue | {

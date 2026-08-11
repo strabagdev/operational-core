@@ -121,6 +121,16 @@ export default async function EntityRecordsPage({
               Descargar plantilla
             </a>
           </Button>
+          <Button asChild variant="outline">
+            <a href={exportHref({
+              basePath,
+              query: q,
+              sort: data.sort,
+            })}
+            >
+              Exportar datos ({data.pagination.totalRecords})
+            </a>
+          </Button>
           <ImportRecordsSheet
             contractId={contractId}
             entityName={data.entityType.name}
@@ -362,4 +372,26 @@ function sortHeader({
       sort: { key: sortKey, direction: nextDirection },
     }),
   };
+}
+
+function exportHref({
+  basePath,
+  query,
+  sort,
+}: {
+  basePath: string;
+  query?: string;
+  sort?: { key: string; direction: string } | null;
+}) {
+  const params = new URLSearchParams();
+
+  if (query) params.set("q", query);
+  if (sort) {
+    params.set("sort", sort.key);
+    params.set("dir", sort.direction);
+  }
+
+  const queryString = params.toString();
+
+  return `${basePath}/export${queryString ? `?${queryString}` : ""}`;
 }

@@ -284,6 +284,55 @@ export function resolveEntityRecordSort({
   };
 }
 
+export async function getEntityRecordIdsForSort({
+  entityTypeId,
+  fields,
+  listFields,
+  query,
+  sort,
+}: {
+  entityTypeId: string;
+  fields: FieldWithOptions[];
+  listFields?: FieldWithOptions[];
+  query?: string;
+  sort?: {
+    key?: string;
+    direction?: string;
+  };
+}) {
+  const resolvedSort = resolveEntityRecordSort({
+    fields,
+    listFields,
+    sortKey: sort?.key,
+    direction: sort?.direction,
+  });
+
+  if (resolvedSort.field) {
+    return {
+      ids: await getSortedRecordIdsByField({
+        entityTypeId,
+        fields,
+        field: resolvedSort.field,
+        query,
+        skip: 0,
+        direction: resolvedSort.direction,
+      }),
+      sort: resolvedSort,
+    };
+  }
+
+  const records = await prisma.entityRecord.findMany({
+    where: buildEntityRecordSearchWhere({ entityTypeId, fields, query }),
+    select: { id: true },
+    orderBy: entityRecordOrderBy(resolvedSort),
+  });
+
+  return {
+    ids: records.map((record) => record.id),
+    sort: resolvedSort,
+  };
+}
+
 function entityRecordOrderBy(sort: ResolvedEntityRecordSort): Prisma.EntityRecordOrderByWithRelationInput[] {
   if (sort.key === "displayName") {
     return [{ displayName: sort.direction }, { id: "asc" }];
@@ -351,13 +400,14 @@ async function getSortedRecordIdsByField({
   entityTypeId: string;
   fields: FieldWithOptions[];
   field: FieldWithOptions;
-  pageSize: number;
+  pageSize?: number;
   query?: string;
   skip: number;
   direction: EntityRecordSortDirection;
 }) {
   const valueExpression = sortableFieldValueExpression(field);
   const directionSql = direction === "asc" ? Prisma.sql`ASC` : Prisma.sql`DESC`;
+  const limitSql = pageSize === undefined ? Prisma.empty : Prisma.sql`LIMIT ${pageSize}`;
   const rows = await prisma.$queryRaw<Array<{ id: string }>>(
     Prisma.sql`
       SELECT r."id"
@@ -373,7 +423,7 @@ async function getSortedRecordIdsByField({
         r."displayName" ASC,
         r."id" ASC
       OFFSET ${skip}
-      LIMIT ${pageSize}
+      ${limitSql}
     `,
   );
 

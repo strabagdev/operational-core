@@ -127,9 +127,11 @@ export function ImportRecordsSheet({
                 ) : null}
 
                 {state.rowsRead !== undefined ? (
-                  <div className="grid gap-2 rounded-md border border-border p-3 text-sm sm:grid-cols-3">
+                  <div className="grid gap-2 rounded-md border border-border p-3 text-sm sm:grid-cols-5">
                     <SummaryItem label="Filas leídas" value={state.rowsRead} />
-                    <SummaryItem label="Válidas" value={state.validRows ?? 0} />
+                    <SummaryItem label="Nuevos" value={state.createdCount ?? state.validRows ?? 0} />
+                    <SummaryItem label="Actualizaciones" value={state.updatedCount ?? 0} />
+                    <SummaryItem label="Cambios" value={state.changeCount ?? 0} />
                     <SummaryItem label="Con errores" value={state.errorRows ?? 0} />
                   </div>
                 ) : null}
@@ -163,9 +165,10 @@ export function ImportRecordsSheet({
                 Cerrar
               </Button>
               <ImportButtons
+                createdCount={state.createdCount ?? state.validRows ?? 0}
                 isPending={pending}
-                validRows={state.validRows ?? 0}
                 isValid={isValid}
+                updatedCount={state.updatedCount ?? 0}
               />
             </SheetFooter>
           </form>
@@ -185,21 +188,35 @@ function SummaryItem({ label, value }: { label: string; value: number }) {
 }
 
 function ImportButtons({
+  createdCount,
   isPending,
   isValid,
-  validRows,
+  updatedCount,
 }: {
+  createdCount: number;
   isPending: boolean;
   isValid: boolean;
-  validRows: number;
+  updatedCount: number;
 }) {
   return isValid ? (
     <Button disabled={isPending} name="intent" type="submit" value="import">
-      {isPending ? "Importando registros..." : `Importar ${validRows} registros`}
+      {isPending ? "Importando registros..." : importButtonLabel(createdCount, updatedCount)}
     </Button>
   ) : (
     <Button disabled={isPending} name="intent" type="submit" value="validate">
       {isPending ? "Validando archivo..." : "Validar archivo"}
     </Button>
   );
+}
+
+function importButtonLabel(createdCount: number, updatedCount: number) {
+  if (createdCount > 0 && updatedCount > 0) {
+    return `Importar ${createdCount} nuevos y actualizar ${updatedCount}`;
+  }
+
+  if (updatedCount > 0) {
+    return `Actualizar ${updatedCount} registros`;
+  }
+
+  return `Importar ${createdCount} registros`;
 }

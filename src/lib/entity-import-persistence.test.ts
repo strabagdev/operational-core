@@ -1,7 +1,7 @@
 import ExcelJS from "exceljs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { importEntityRecords } from "./entity-import";
+import { generateEntityExport, importEntityRecords } from "./entity-import";
 import { prisma } from "./prisma";
 
 const mocks = vi.hoisted(() => ({
@@ -19,10 +19,16 @@ vi.mock("./prisma", () => ({
     entityValue: {
       findMany: vi.fn(async () => []),
     },
+    entityRecord: {
+      findMany: vi.fn(async () => []),
+    },
+    $queryRaw: vi.fn(async () => []),
   },
 }));
 
 const transaction = vi.mocked(prisma.$transaction);
+const entityRecordFindMany = vi.mocked(prisma.entityRecord.findMany);
+const queryRaw = vi.mocked(prisma.$queryRaw);
 
 function importField(overrides: Record<string, unknown> = {}) {
   return {
@@ -33,12 +39,12 @@ function importField(overrides: Record<string, unknown> = {}) {
     description: null,
     type: overrides.type ?? "TEXT",
     required: Boolean(overrides.required ?? true),
-    isUnique: false,
-    searchable: false,
+    isUnique: Boolean(overrides.isUnique ?? false),
+    searchable: Boolean(overrides.searchable ?? false),
     multiple: false,
-    sortOrder: 1,
-    config: null,
-    isActive: true,
+    sortOrder: Number(overrides.sortOrder ?? 1),
+    config: overrides.config ?? null,
+    isActive: Boolean(overrides.isActive ?? true),
     createdAt: new Date("2026-01-01T00:00:00.000Z"),
     updatedAt: new Date("2026-01-01T00:00:00.000Z"),
     options: overrides.options ?? [],
@@ -89,6 +95,7 @@ function tx() {
     },
     entityValue: {
       createMany: vi.fn(async ({ data }) => ({ count: data.length })),
+      deleteMany: vi.fn(async () => ({ count: 1 })),
     },
     auditEvent: {
       create: vi.fn(),
@@ -114,6 +121,20 @@ function tx() {
       updateMany: vi.fn(),
       upsert: vi.fn(),
     },
+    $executeRaw: vi.fn(async () => ({ count: 1 })),
+  };
+}
+
+function value(entityFieldId: string, overrides: Record<string, unknown> = {}) {
+  return {
+    entityFieldId,
+    textValue: null,
+    integerValue: null,
+    decimalValue: null,
+    booleanValue: null,
+    dateValue: null,
+    jsonValue: null,
+    ...overrides,
   };
 }
 
@@ -123,6 +144,266 @@ beforeEach(() => {
 });
 
 describe("entity import persistence", () => {
+  it("exports records with __record_id and human importable values", async () => {
+    const fields = [
+      importField({ id: "date", name: "Fecha", type: "DATE", sortOrder: 1 }),
+      importField({ id: "money", name: "Monto", type: "MONEY", sortOrder: 2 }),
+      importField({
+        id: "status",
+        name: "Estado",
+        type: "SELECT",
+        sortOrder: 3,
+        options: [
+          { id: "opt_aprobado", label: "Aprobado", value: "aprobado", sortOrder: 1, isActive: true },
+        ],
+      }),
+      importField({
+        id: "tags",
+        name: "Tags",
+        type: "MULTISELECT",
+        sortOrder: 4,
+        options: [
+          { id: "opt_a", label: "A", value: "a", sortOrder: 1, isActive: true },
+          { id: "opt_b", label: "B", value: "b", sortOrder: 2, isActive: true },
+        ],
+      }),
+    ];
+    mocks.getAuthorizedRecordEntityType.mockResolvedValue(importContext(fields));
+    entityRecordFindMany
+      .mockResolvedValueOnce([{ id: "record_1" }] as never)
+      .mockResolvedValueOnce([
+      {
+        id: "record_1",
+        displayName: "Persona 1",
+        values: [
+          value("date", { dateValue: new Date("2026-01-21T00:00:00.000Z") }),
+          value("money", { decimalValue: { toString: () => "5269808713" } }),
+          value("status", { textValue: "aprobado" }),
+          value("tags", { jsonValue: ["a", "b"] }),
+        ],
+      },
+    ] as never);
+
+    const result = await generateEntityExport({
+      contractId: "contract_1",
+      entityTypeId: "entity_1",
+      query: "persona",
+      userId: "user_1",
+    });
+    const workbook = new ExcelJS.Workbook();
+
+    await workbook.xlsx.load(result?.buffer as never);
+
+    expect(result?.count).toBe(1);
+    expect(workbook.worksheets[0].getRow(1).values).toMatchObject([
+      undefined,
+      "__record_id",
+      "Fecha",
+      "Monto",
+      "Estado",
+      "Tags",
+    ]);
+    expect(workbook.worksheets[0].getRow(2).values).toMatchObject([
+      undefined,
+      "record_1",
+      "2026-01-21",
+      "5269808713",
+      "Aprobado",
+      "A; B",
+    ]);
+    expect(entityRecordFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ entityTypeId: "entity_1" }),
+      }),
+    );
+    expect(entityRecordFindMany.mock.calls[0]?.[0]).toMatchObject({
+      select: { id: true },
+      orderBy: [{ updatedAt: "desc" }, { displayName: "asc" }, { id: "asc" }],
+    });
+    expect(entityRecordFindMany.mock.calls[1]?.[0]).toMatchObject({
+      where: {
+        id: { in: ["record_1"] },
+        entityTypeId: "entity_1",
+      },
+    });
+    expect(entityRecordFindMany.mock.calls[1]?.[0]).not.toHaveProperty("take");
+    expect(entityRecordFindMany.mock.calls[1]?.[0]).not.toHaveProperty("skip");
+  });
+
+  it.each([
+    ["displayName", "asc", [{ displayName: "asc" }, { id: "asc" }] as const],
+    ["displayName", "desc", [{ displayName: "desc" }, { id: "asc" }] as const],
+    ["updatedAt", "asc", [{ updatedAt: "asc" }, { displayName: "asc" }, { id: "asc" }] as const],
+    ["updatedAt", "desc", [{ updatedAt: "desc" }, { displayName: "asc" }, { id: "asc" }] as const],
+  ])("exports using visual %s %s ordering", async (sortKey, direction, orderBy) => {
+    entityRecordFindMany
+      .mockResolvedValueOnce([{ id: "record_2" }, { id: "record_1" }] as never)
+      .mockResolvedValueOnce([
+        { id: "record_1", displayName: "B", values: [] },
+        { id: "record_2", displayName: "A", values: [] },
+      ] as never);
+
+    const result = await generateEntityExport({
+      contractId: "contract_1",
+      entityTypeId: "entity_1",
+      sort: { key: sortKey, direction },
+      userId: "user_1",
+    });
+    const workbook = new ExcelJS.Workbook();
+
+    await workbook.xlsx.load(result?.buffer as never);
+
+    expect(entityRecordFindMany.mock.calls[0]?.[0]).toMatchObject({
+      select: { id: true },
+      orderBy,
+    });
+    expect(entityRecordFindMany.mock.calls[1]?.[0]).not.toHaveProperty("take");
+    expect(workbook.worksheets[0].getColumn(1).values).toMatchObject([
+      undefined,
+      "__record_id",
+      "record_2",
+      "record_1",
+    ]);
+  });
+
+  it.each([
+    ["TEXT", "field_text", "asc"],
+    ["INTEGER", "field_integer", "desc"],
+    ["MONEY", "field_money", "asc"],
+    ["DATE", "field_date", "desc"],
+    ["SELECT", "field_select", "asc"],
+  ] as const)("exports using visual dynamic %s ordering", async (type, fieldId, direction) => {
+    const fields = [
+      importField({
+        id: "field_name",
+        name: "Nombre",
+        config: { display: { primary: true } },
+        sortOrder: 0,
+      }),
+      importField({
+        id: fieldId,
+        name: "Orden",
+        type,
+        required: false,
+        config: { display: { showInList: true } },
+        options: type === "SELECT"
+          ? [
+              { id: "opt_b", label: "Borrador", value: "draft", sortOrder: 1, isActive: true },
+              { id: "opt_a", label: "Aprobado", value: "approved", sortOrder: 2, isActive: true },
+            ]
+          : [],
+        sortOrder: 1,
+      }),
+    ];
+
+    mocks.getAuthorizedRecordEntityType.mockResolvedValue(importContext(fields));
+    queryRaw.mockResolvedValueOnce([{ id: "record_2" }, { id: "record_1" }]);
+    entityRecordFindMany.mockResolvedValueOnce([
+      { id: "record_1", displayName: "B", values: [] },
+      { id: "record_2", displayName: "A", values: [] },
+    ] as never);
+
+    const result = await generateEntityExport({
+      contractId: "contract_1",
+      entityTypeId: "entity_1",
+      sort: { key: `field:${fieldId}`, direction },
+      userId: "user_1",
+    });
+    const workbook = new ExcelJS.Workbook();
+
+    await workbook.xlsx.load(result?.buffer as never);
+
+    expect(queryRaw).toHaveBeenCalledTimes(1);
+    const sql = queryRaw.mock.calls[0]?.[0] as { strings?: string[] };
+    expect(sql.strings?.join(" ")).toContain("IS NULL");
+    expect(sql.strings?.join(" ")).not.toContain("LIMIT");
+    if (type === "SELECT") {
+      expect(sql.strings?.join(" ")).toContain("CASE");
+    }
+    expect(entityRecordFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          id: { in: ["record_2", "record_1"] },
+          entityTypeId: "entity_1",
+        },
+      }),
+    );
+    expect(workbook.worksheets[0].getColumn(1).values).toMatchObject([
+      undefined,
+      "__record_id",
+      "record_2",
+      "record_1",
+    ]);
+  });
+
+  it("exports filtered search results using the requested visual sort", async () => {
+    entityRecordFindMany
+      .mockResolvedValueOnce([{ id: "record_3" }, { id: "record_1" }] as never)
+      .mockResolvedValueOnce([
+        { id: "record_1", displayName: "Enero B", values: [] },
+        { id: "record_3", displayName: "Enero A", values: [] },
+      ] as never);
+
+    await generateEntityExport({
+      contractId: "contract_1",
+      entityTypeId: "entity_1",
+      query: "enero",
+      sort: { key: "displayName", direction: "asc" },
+      userId: "user_1",
+    });
+
+    expect(entityRecordFindMany.mock.calls[0]?.[0]).toMatchObject({
+      where: expect.objectContaining({
+        entityTypeId: "entity_1",
+        OR: expect.any(Array),
+      }),
+      orderBy: [{ displayName: "asc" }, { id: "asc" }],
+    });
+  });
+
+  it("falls back safely for invalid export sort params", async () => {
+    entityRecordFindMany
+      .mockResolvedValueOnce([{ id: "record_1" }] as never)
+      .mockResolvedValueOnce([{ id: "record_1", displayName: "Persona", values: [] }] as never);
+
+    await generateEntityExport({
+      contractId: "contract_1",
+      entityTypeId: "entity_1",
+      sort: { key: "field:does_not_exist", direction: "drop table" },
+      userId: "user_1",
+    });
+
+    expect(entityRecordFindMany.mock.calls[0]?.[0]).toMatchObject({
+      orderBy: [{ updatedAt: "desc" }, { displayName: "asc" }, { id: "asc" }],
+    });
+    expect(queryRaw).not.toHaveBeenCalled();
+  });
+
+  it("exports all matching records instead of the visible page size", async () => {
+    const ids = Array.from({ length: 414 }, (_, index) => ({ id: `record_${index + 1}` }));
+    const records = ids.map((item) => ({
+      id: item.id,
+      displayName: item.id,
+      values: [],
+    }));
+
+    entityRecordFindMany
+      .mockResolvedValueOnce(ids as never)
+      .mockResolvedValueOnce(records.reverse() as never);
+
+    const result = await generateEntityExport({
+      contractId: "contract_1",
+      entityTypeId: "entity_1",
+      userId: "user_1",
+    });
+
+    expect(result?.count).toBe(414);
+    expect(entityRecordFindMany.mock.calls[0]?.[0]).not.toHaveProperty("take");
+    expect(entityRecordFindMany.mock.calls[0]?.[0]).not.toHaveProperty("skip");
+    expect(entityRecordFindMany.mock.calls[1]?.[0]).not.toHaveProperty("take");
+    expect(entityRecordFindMany.mock.calls[1]?.[0]).not.toHaveProperty("skip");
+  });
+
   it("does not import when the entity type is outside the authorized contract", async () => {
     mocks.getAuthorizedRecordEntityType.mockResolvedValueOnce(null);
 
@@ -149,7 +430,7 @@ describe("entity import persistence", () => {
         file: await workbookFile(414),
         userId: "user_1",
       }),
-    ).resolves.toEqual({ importedCount: 414 });
+    ).resolves.toEqual({ createdCount: 414, importedCount: 414, updatedCount: 0 });
 
     expect(transaction).toHaveBeenCalledTimes(1);
     expect(currentTx.entityRecord.createMany).toHaveBeenCalledWith({
@@ -190,7 +471,7 @@ describe("entity import persistence", () => {
         file: await workbookFile(3, ["Estado"], [["Operativo"], ["En mantención"], ["Operativo"]]),
         userId: "user_1",
       }),
-    ).resolves.toEqual({ importedCount: 3 });
+    ).resolves.toEqual({ createdCount: 3, importedCount: 3, updatedCount: 0 });
 
     expect(estadoField.type).toBe(originalType);
     expect(currentTx.entityValue.createMany.mock.calls[0][0].data).toMatchObject([
@@ -224,7 +505,7 @@ describe("entity import persistence", () => {
         file: await workbookFile(1, ["Estados"], [["Operativo; Mantención"]]),
         userId: "user_1",
       }),
-    ).resolves.toEqual({ importedCount: 1 });
+    ).resolves.toEqual({ createdCount: 1, importedCount: 1, updatedCount: 0 });
 
     expect(estadoField.type).toBe("MULTISELECT");
     expect(currentTx.entityValue.createMany.mock.calls[0][0].data[0]).toMatchObject({
@@ -232,6 +513,68 @@ describe("entity import persistence", () => {
       jsonValue: ["operativo", "mantencion"],
     });
     expectConfigurationDelegatesNotTouched(currentTx);
+  });
+
+  it("updates exported records and creates new rows in one transaction", async () => {
+    const currentTx = tx();
+    const fields = [importField({ id: "field_name", name: "Nombre", required: true })];
+
+    mocks.getAuthorizedRecordEntityType.mockResolvedValue(importContext(fields));
+    entityRecordFindMany.mockResolvedValueOnce([
+      {
+        id: "record_1",
+        displayName: "Ana",
+        values: [value("field_name", { textValue: "Ana" })],
+      },
+    ] as never);
+    transaction.mockImplementation(async (callback) => callback(currentTx as never));
+
+    await expect(
+      importEntityRecords({
+        contractId: "contract_1",
+        entityTypeId: "entity_1",
+        file: await workbookFile(2, ["__record_id", "Nombre"], [["record_1", "Ana editada"], ["", "Luis"]]),
+        userId: "user_1",
+      }),
+    ).resolves.toEqual({ createdCount: 1, importedCount: 2, updatedCount: 1 });
+
+    expect(currentTx.$executeRaw).toHaveBeenCalled();
+    expect(currentTx.entityValue.deleteMany).toHaveBeenCalledWith({
+      where: {
+        entityRecordId: { in: ["record_1"] },
+        entityFieldId: { in: ["field_name"] },
+      },
+    });
+    expect(currentTx.entityRecord.createMany.mock.calls[0][0].data).toHaveLength(1);
+    expect(currentTx.entityValue.createMany.mock.calls[0][0].data).toHaveLength(2);
+    expect(currentTx.auditEvent.createMany.mock.calls[0][0].data).toHaveLength(2);
+    expectConfigurationDelegatesNotTouched(currentTx);
+  });
+
+  it("rolls back creates when an update persistence step fails", async () => {
+    const currentTx = tx();
+
+    currentTx.entityValue.deleteMany.mockRejectedValueOnce(new Error("delete failed"));
+    entityRecordFindMany.mockResolvedValueOnce([
+      {
+        id: "record_1",
+        displayName: "Ana",
+        values: [value("field_name", { textValue: "Ana" })],
+      },
+    ] as never);
+    transaction.mockImplementation(async (callback) => callback(currentTx as never));
+
+    await expect(
+      importEntityRecords({
+        contractId: "contract_1",
+        entityTypeId: "entity_1",
+        file: await workbookFile(2, ["__record_id", "Nombre"], [["record_1", "Ana editada"], ["", "Luis"]]),
+        userId: "user_1",
+      }),
+    ).rejects.toThrow("delete failed");
+
+    expect(transaction).toHaveBeenCalledTimes(1);
+    expect(currentTx.entityRecord.createMany).not.toHaveBeenCalled();
   });
 
   it("rejects missing SELECT labels without falling back to text import", async () => {

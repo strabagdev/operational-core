@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   ENTITY_IMPORT_LIMITS,
   EntityImportUserError,
+  RECORD_ID_HEADER,
   assertEntityImportable,
   buildImportPersistencePlan,
   friendlyImportPersistenceError,
@@ -65,6 +66,33 @@ function toComparableValues(values: ReturnType<typeof validateRecordValues>) {
     dateValue: value.dateValue?.toISOString() ?? null,
     jsonValue: value.jsonValue ?? null,
   }));
+}
+
+function existingRecord(
+  id: string,
+  values: Array<Partial<{
+    entityFieldId: string;
+    textValue: string | null;
+    integerValue: number | null;
+    decimalValue: Prisma.Decimal | null;
+    booleanValue: boolean | null;
+    dateValue: Date | null;
+    jsonValue: Prisma.JsonValue | null;
+  }>>,
+) {
+  return {
+    id,
+    displayName: id,
+    values: values.map((value) => ({
+      entityFieldId: String(value.entityFieldId),
+      textValue: value.textValue ?? null,
+      integerValue: value.integerValue ?? null,
+      decimalValue: value.decimalValue ?? null,
+      booleanValue: value.booleanValue ?? null,
+      dateValue: value.dateValue ?? null,
+      jsonValue: value.jsonValue ?? null,
+    })),
+  };
 }
 
 describe("entity import template", () => {
@@ -202,6 +230,31 @@ describe("entity import structure and values", () => {
     await expect(parseExcelRows({ fields: [field()], file })).rejects.toThrow(
       "Puedes importar hasta 5000 filas por archivo.",
     );
+  });
+
+  it("accepts exported data headers with __record_id as the first column", async () => {
+    const fields = [field({ id: "name", name: "Nombre" })];
+    const rows = await parseExcelRows({
+      fields,
+      file: await workbookFile([RECORD_ID_HEADER, "Nombre"], [["record_1", "Ana"]]),
+    });
+
+    expect(rows).toEqual([
+      expect.objectContaining({
+        recordId: "record_1",
+        rowNumber: 2,
+        valuesByHeader: new Map([["Nombre", "Ana"]]),
+      }),
+    ]);
+  });
+
+  it("rejects __record_id in any position other than the first column", async () => {
+    await expect(
+      parseExcelRows({
+        fields: [field({ id: "name", name: "Nombre" })],
+        file: await workbookFile(["Nombre", RECORD_ID_HEADER], [["Ana", "record_1"]]),
+      }),
+    ).rejects.toThrow(EntityImportUserError);
   });
 
   it("uses simple formula results and rejects formulas without a result", async () => {
@@ -458,6 +511,123 @@ describe("entity import structure and values", () => {
     });
   });
 
+  it("classifies rows with __record_id as updates and rows without it as creates", async () => {
+    const fields = [field({ id: "name", name: "Nombre", required: true })];
+    const rows = await parseExcelRows({
+      fields,
+      file: await workbookFile([RECORD_ID_HEADER, "Nombre"], [["record_1", "Ana editada"], ["", "Luis"]]),
+    });
+    const result = await validateImportRows({
+      fields,
+      rows,
+      existingRecords: [existingRecord("record_1", [{ entityFieldId: "name", textValue: "Ana" }])],
+    });
+
+    expect(result.errors).toEqual([]);
+    expect(result.validRows.map((row) => row.recordId ?? null)).toEqual(["record_1", null]);
+    expect(result.changeCount).toBe(1);
+  });
+
+  it("rejects missing and duplicated record ids during update validation", async () => {
+    const fields = [field({ id: "name", name: "Nombre" })];
+    const rows = await parseExcelRows({
+      fields,
+      file: await workbookFile([RECORD_ID_HEADER, "Nombre"], [
+        ["missing", "Ana"],
+        ["record_1", "Luis"],
+        ["record_1", "Luis 2"],
+      ]),
+    });
+    const result = await validateImportRows({
+      fields,
+      rows,
+      existingRecords: [existingRecord("record_1", [])],
+    });
+
+    expect(result.errors).toEqual([
+      {
+        row: 2,
+        field: RECORD_ID_HEADER,
+        message: "El registro indicado ya no existe.",
+      },
+      {
+        row: 4,
+        field: RECORD_ID_HEADER,
+        message: "El identificador de registro está duplicado dentro del archivo.",
+      },
+    ]);
+  });
+
+  it("treats blank update cells as clear, keeps defaults off, and validates required fields", async () => {
+    const fields = [
+      field({ id: "name", name: "Nombre", required: true }),
+      field({ id: "status", name: "Estado", config: { defaultValue: "Activo" } }),
+    ];
+    const rows = await parseExcelRows({
+      fields,
+      file: await workbookFile([RECORD_ID_HEADER, "Nombre", "Estado"], [
+        ["record_1", "Ana", ""],
+        ["record_2", "", "Activo"],
+      ]),
+    });
+    const result = await validateImportRows({
+      fields,
+      rows,
+      existingRecords: [
+        existingRecord("record_1", [
+          { entityFieldId: "name", textValue: "Ana" },
+          { entityFieldId: "status", textValue: "Pendiente" },
+        ]),
+        existingRecord("record_2", [{ entityFieldId: "name", textValue: "Luis" }]),
+      ],
+    });
+
+    expect(result.validRows).toHaveLength(1);
+    expect(result.validRows[0].values).toEqual([{ fieldId: "name", textValue: "Ana" }]);
+    expect(result.errors).toEqual([
+      {
+        row: 3,
+        field: "Nombre",
+        message: "Este campo es obligatorio.",
+      },
+    ]);
+  });
+
+  it("validates unique values against the final batch state", async () => {
+    const fields = [field({ id: "code", name: "Código", isUnique: true })];
+    const rows = await parseExcelRows({
+      fields,
+      file: await workbookFile([RECORD_ID_HEADER, "Código"], [
+        ["record_a", "B"],
+        ["record_b", "C"],
+        ["", "A"],
+        ["", "C"],
+      ]),
+    });
+    const result = await validateImportRows({
+      fields,
+      rows,
+      existingRecords: [
+        existingRecord("record_a", [{ entityFieldId: "code", textValue: "A" }]),
+        existingRecord("record_b", [{ entityFieldId: "code", textValue: "B" }]),
+      ],
+      existingUniqueValues: async () => new Map([
+        ["text:A", "record_a"],
+        ["text:B", "record_b"],
+        ["text:Z", "record_z"],
+      ]),
+    });
+
+    expect(result.errors).toEqual([
+      {
+        row: 5,
+        field: "Código",
+        message: "Este valor está duplicado dentro del archivo.",
+      },
+    ]);
+    expect(result.validRows).toHaveLength(3);
+  });
+
   it("rejects invalid file types", async () => {
     const file = new File(["not excel"], "datos.csv", { type: "text/csv" });
 
@@ -534,6 +704,90 @@ describe("entity import persistence plan", () => {
     expect(plan.values).toHaveLength(0);
     expect(plan.auditEvents).toHaveLength(1);
     expect(plan.auditChanges).toHaveLength(0);
+  });
+
+  it("builds update persistence without false audit changes for identical fields", () => {
+    const fields = [
+      field({ id: "name", name: "Nombre" }),
+      field({ id: "cargo", name: "Cargo" }),
+    ];
+    const plan = buildImportPersistencePlan({
+      contractId: "contract_1",
+      entityTypeId: "entity_1",
+      entityTypeName: "Personas",
+      fields,
+      existingRecords: [
+        existingRecord("record_1", [
+          { entityFieldId: "name", textValue: "Ana" },
+          { entityFieldId: "cargo", textValue: "Analista" },
+        ]),
+      ],
+      rows: [
+        {
+          rowNumber: 2,
+          recordId: "record_1",
+          displayName: "Ana",
+          values: [
+            { fieldId: "name", textValue: "Ana" },
+            { fieldId: "cargo", textValue: "Jefa" },
+          ],
+        },
+      ],
+      userId: "user_1",
+    });
+
+    expect(plan.records).toHaveLength(0);
+    expect(plan.updatedRecordIds).toEqual(["record_1"]);
+    expect(plan.auditEvents).toMatchObject([{ action: "RECORD_UPDATED" }]);
+    expect(plan.auditChanges).toEqual([
+      expect.objectContaining({
+        entityFieldId: "cargo",
+        fieldName: "Cargo",
+        oldValue: "Analista",
+        newValue: "Jefa",
+      }),
+    ]);
+  });
+
+  it("builds batch plans for 400 updates and mixed 200 create plus 200 update rows", () => {
+    const fields = [field({ id: "name", name: "Nombre" })];
+    const updateRows = Array.from({ length: 400 }, (_, index) => ({
+      rowNumber: index + 2,
+      recordId: `record_${index}`,
+      displayName: `Persona ${index} editada`,
+      values: [{ fieldId: "name", textValue: `Persona ${index} editada` }],
+    }));
+    const existingRecords = Array.from({ length: 400 }, (_, index) =>
+      existingRecord(`record_${index}`, [{ entityFieldId: "name", textValue: `Persona ${index}` }]),
+    );
+    const updatePlan = buildImportPersistencePlan({
+      contractId: "contract_1",
+      entityTypeId: "entity_1",
+      entityTypeName: "Personas",
+      existingRecords,
+      fields,
+      rows: updateRows,
+      userId: "user_1",
+    });
+    const mixedPlan = buildImportPersistencePlan({
+      contractId: "contract_1",
+      entityTypeId: "entity_1",
+      entityTypeName: "Personas",
+      existingRecords: existingRecords.slice(0, 200),
+      fields,
+      rows: [
+        ...updateRows.slice(0, 200),
+        ...validRows(200),
+      ],
+      userId: "user_1",
+    });
+
+    expect(updatePlan.updatedRecordIds).toHaveLength(400);
+    expect(updatePlan.records).toHaveLength(0);
+    expect(updatePlan.values).toHaveLength(400);
+    expect(mixedPlan.updatedRecordIds).toHaveLength(200);
+    expect(mixedPlan.records).toHaveLength(200);
+    expect(mixedPlan.values).toHaveLength(600);
   });
 });
 
