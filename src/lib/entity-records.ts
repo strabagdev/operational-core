@@ -1,4 +1,4 @@
-import { Prisma, type EntityField } from "@prisma/client";
+import { Prisma, type EntityField, type EntityFieldType } from "@prisma/client";
 
 import {
   buildRelationChanges,
@@ -35,6 +35,12 @@ type FieldWithOptions = EntityField & {
 };
 
 type ValueInput = SerializedFieldValue;
+export type EntityRecordSortDirection = "asc" | "desc";
+export type EntityRecordSortKey = "displayName" | "updatedAt" | `field:${string}`;
+export type EntityRecordSort = {
+  key: EntityRecordSortKey;
+  direction: EntityRecordSortDirection;
+};
 
 export async function getRecordEntityTypes(contractId: string, userId: string) {
   const contract = await getAuthorizedContract(contractId, userId);
@@ -110,6 +116,7 @@ export async function getEntityRecords({
   pageSize = 50,
   userId,
   query,
+  sort,
 }: {
   contractId: string;
   entityTypeId: string;
@@ -117,6 +124,10 @@ export async function getEntityRecords({
   pageSize?: number;
   userId: string;
   query?: string;
+  sort?: {
+    key?: string;
+    direction?: string;
+  };
 }) {
   const authorized = await getAuthorizedRecordEntityType(
     contractId,
@@ -129,39 +140,43 @@ export async function getEntityRecords({
   }
 
   const orderedFields = orderEntityFields(authorized.entityType.fields);
-  const listFieldIds = new Set(getRecordListFields(orderedFields).map((field) => field.id));
+  const listFields = getRecordListFields(orderedFields);
+  const listFieldIds = new Set(listFields.map((field) => field.id));
   const normalizedPage = Math.max(1, page);
   const normalizedPageSize = clampPageSize(pageSize);
   const neededValueFieldIds = Array.from(listFieldIds);
+  const resolvedSort = resolveEntityRecordSort({
+    fields: orderedFields,
+    listFields,
+    sortKey: sort?.key,
+    direction: sort?.direction,
+  });
   const recordWhere = buildEntityRecordSearchWhere({
     entityTypeId: authorized.entityType.id,
     fields: orderedFields,
     query,
   });
   const totalRecords = await prisma.entityRecord.count({ where: recordWhere });
-  const records = await prisma.entityRecord.findMany({
-    where: recordWhere,
-    include: {
-      values: {
-        where:
-          neededValueFieldIds.length > 0
-            ? { entityFieldId: { in: neededValueFieldIds } }
-            : undefined,
-        select: {
-          entityFieldId: true,
-          textValue: true,
-          integerValue: true,
-          decimalValue: true,
-          booleanValue: true,
-          dateValue: true,
-          jsonValue: true,
-        },
-      },
-    },
-    orderBy: { updatedAt: "desc" },
-    skip: (normalizedPage - 1) * normalizedPageSize,
-    take: normalizedPageSize,
-  });
+  const include = entityRecordListInclude(neededValueFieldIds);
+  const skip = (normalizedPage - 1) * normalizedPageSize;
+  const records = resolvedSort.field
+    ? await findRecordsSortedByField({
+        entityTypeId: authorized.entityType.id,
+        fields: orderedFields,
+        field: resolvedSort.field,
+        include,
+        pageSize: normalizedPageSize,
+        query,
+        skip,
+        sort: resolvedSort,
+      })
+    : await prisma.entityRecord.findMany({
+        where: recordWhere,
+        include,
+        orderBy: entityRecordOrderBy(resolvedSort),
+        skip,
+        take: normalizedPageSize,
+      });
 
   return {
     ...authorized,
@@ -175,8 +190,278 @@ export async function getEntityRecords({
       totalRecords,
       totalPages: Math.max(1, Math.ceil(totalRecords / normalizedPageSize)),
     },
+    sort: resolvedSort.explicit ? {
+      key: resolvedSort.key,
+      direction: resolvedSort.direction,
+    } : null,
     records,
   };
+}
+
+function entityRecordListInclude(neededValueFieldIds: string[]) {
+  return {
+    values: {
+      where:
+        neededValueFieldIds.length > 0
+          ? { entityFieldId: { in: neededValueFieldIds } }
+          : undefined,
+      select: {
+        entityFieldId: true,
+        textValue: true,
+        integerValue: true,
+        decimalValue: true,
+        booleanValue: true,
+        dateValue: true,
+        jsonValue: true,
+      },
+    },
+  };
+}
+
+type ResolvedEntityRecordSort = EntityRecordSort & {
+  explicit: boolean;
+  field?: FieldWithOptions;
+};
+
+const sortableFieldTypes = new Set<EntityFieldType>([
+  "TEXT",
+  "TEXTAREA",
+  "EMAIL",
+  "PHONE",
+  "URL",
+  "INTEGER",
+  "DECIMAL",
+  "MONEY",
+  "DATE",
+  "DATETIME",
+  "BOOLEAN",
+  "SELECT",
+]);
+
+export function resolveEntityRecordSort({
+  fields,
+  listFields,
+  sortKey,
+  direction,
+}: {
+  fields: FieldWithOptions[];
+  listFields?: FieldWithOptions[];
+  sortKey?: string;
+  direction?: string;
+}): ResolvedEntityRecordSort {
+  const normalizedDirection: EntityRecordSortDirection =
+    direction === "asc" || direction === "desc" ? direction : "desc";
+
+  if (sortKey === "displayName" || sortKey === "updatedAt") {
+    return {
+      key: sortKey,
+      direction: normalizedDirection,
+      explicit: true,
+    };
+  }
+
+  if (sortKey?.startsWith("field:")) {
+    const fieldId = sortKey.slice("field:".length);
+    const visibleSortableFields = listFields ?? getRecordListFields(fields);
+    const field = visibleSortableFields.find(
+      (item) => item.id === fieldId && sortableFieldTypes.has(item.type),
+    );
+
+    if (field) {
+      return {
+        key: `field:${field.id}`,
+        direction: normalizedDirection,
+        explicit: true,
+        field,
+      };
+    }
+  }
+
+  return {
+    key: "updatedAt",
+    direction: "desc",
+    explicit: false,
+  };
+}
+
+function entityRecordOrderBy(sort: ResolvedEntityRecordSort): Prisma.EntityRecordOrderByWithRelationInput[] {
+  if (sort.key === "displayName") {
+    return [{ displayName: sort.direction }, { id: "asc" }];
+  }
+
+  return [{ updatedAt: sort.direction }, { displayName: "asc" }, { id: "asc" }];
+}
+
+async function findRecordsSortedByField({
+  entityTypeId,
+  fields,
+  field,
+  include,
+  pageSize,
+  query,
+  skip,
+  sort,
+}: {
+  entityTypeId: string;
+  fields: FieldWithOptions[];
+  field: FieldWithOptions;
+  include: ReturnType<typeof entityRecordListInclude>;
+  pageSize: number;
+  query?: string;
+  skip: number;
+  sort: ResolvedEntityRecordSort;
+}) {
+  const ids = await getSortedRecordIdsByField({
+    entityTypeId,
+    fields,
+    field,
+    pageSize,
+    query,
+    skip,
+    direction: sort.direction,
+  });
+
+  if (ids.length === 0) {
+    return [];
+  }
+
+  const records = await prisma.entityRecord.findMany({
+    where: {
+      id: { in: ids },
+      entityTypeId,
+    },
+    include,
+  });
+  const order = new Map(ids.map((id, index) => [id, index]));
+
+  return records.sort((first, second) => {
+    return (order.get(first.id) ?? 0) - (order.get(second.id) ?? 0);
+  });
+}
+
+async function getSortedRecordIdsByField({
+  entityTypeId,
+  fields,
+  field,
+  pageSize,
+  query,
+  skip,
+  direction,
+}: {
+  entityTypeId: string;
+  fields: FieldWithOptions[];
+  field: FieldWithOptions;
+  pageSize: number;
+  query?: string;
+  skip: number;
+  direction: EntityRecordSortDirection;
+}) {
+  const valueExpression = sortableFieldValueExpression(field);
+  const directionSql = direction === "asc" ? Prisma.sql`ASC` : Prisma.sql`DESC`;
+  const rows = await prisma.$queryRaw<Array<{ id: string }>>(
+    Prisma.sql`
+      SELECT r."id"
+      FROM "EntityRecord" r
+      LEFT JOIN "EntityValue" v
+        ON v."entityRecordId" = r."id"
+        AND v."entityFieldId" = ${field.id}
+      WHERE r."entityTypeId" = ${entityTypeId}
+      ${entityRecordSearchSql({ entityTypeId, fields, query })}
+      ORDER BY
+        (${valueExpression} IS NULL) ASC,
+        ${valueExpression} ${directionSql},
+        r."displayName" ASC,
+        r."id" ASC
+      OFFSET ${skip}
+      LIMIT ${pageSize}
+    `,
+  );
+
+  return rows.map((row) => row.id);
+}
+
+function sortableFieldValueExpression(field: FieldWithOptions) {
+  if (field.type === "INTEGER") return Prisma.sql`v."integerValue"`;
+  if (field.type === "DECIMAL" || field.type === "MONEY") return Prisma.sql`v."decimalValue"`;
+  if (field.type === "DATE" || field.type === "DATETIME") return Prisma.sql`v."dateValue"`;
+  if (field.type === "BOOLEAN") return Prisma.sql`v."booleanValue"`;
+
+  if (field.type === "SELECT" && field.options.length > 0) {
+    const cases = field.options.map(
+      (option) => Prisma.sql`WHEN v."textValue" = ${option.value} THEN ${option.label}`,
+    );
+
+    return Prisma.sql`CASE ${Prisma.join(cases, " ")} ELSE v."textValue" END`;
+  }
+
+  return Prisma.sql`v."textValue"`;
+}
+
+function entityRecordSearchSql({
+  entityTypeId,
+  fields,
+  query,
+}: {
+  entityTypeId: string;
+  fields: FieldWithOptions[];
+  query?: string;
+}) {
+  const normalizedQuery = query?.trim();
+
+  if (!normalizedQuery) {
+    return Prisma.empty;
+  }
+
+  const pattern = `%${normalizedQuery}%`;
+  const conditions: Prisma.Sql[] = [Prisma.sql`r."displayName" ILIKE ${pattern}`];
+  const textFieldIds = fields
+    .filter(
+      (field) =>
+        field.entityTypeId === entityTypeId &&
+        field.searchable &&
+        searchableTextFieldTypes.has(field.type),
+    )
+    .map((field) => field.id);
+  const selectValueSearches = fields
+    .filter(
+      (field) =>
+        field.entityTypeId === entityTypeId &&
+        field.searchable &&
+        field.type === "SELECT",
+    )
+    .map((field) => ({
+      fieldId: field.id,
+      values: field.options
+        .filter((option) => optionMatchesSearch(option, normalizedQuery))
+        .map((option) => option.value),
+    }))
+    .filter((item) => item.values.length > 0);
+
+  if (textFieldIds.length > 0) {
+    conditions.push(Prisma.sql`
+      EXISTS (
+        SELECT 1
+        FROM "EntityValue" sv
+        WHERE sv."entityRecordId" = r."id"
+          AND sv."entityFieldId" IN (${Prisma.join(textFieldIds)})
+          AND sv."textValue" ILIKE ${pattern}
+      )
+    `);
+  }
+
+  for (const search of selectValueSearches) {
+    conditions.push(Prisma.sql`
+      EXISTS (
+        SELECT 1
+        FROM "EntityValue" sv
+        WHERE sv."entityRecordId" = r."id"
+          AND sv."entityFieldId" = ${search.fieldId}
+          AND sv."textValue" IN (${Prisma.join(search.values)})
+      )
+    `);
+  }
+
+  return Prisma.sql`AND (${Prisma.join(conditions, " OR ")})`;
 }
 
 const searchableTextFieldTypes = new Set([

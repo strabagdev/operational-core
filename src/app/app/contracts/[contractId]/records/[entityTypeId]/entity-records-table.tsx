@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Trash2, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Trash2, X } from "lucide-react";
 
 import {
   AlertDialog,
@@ -40,22 +40,33 @@ type RecordRow = {
 type ListField = {
   id: string;
   name: string;
+  sort?: SortHeaderState;
+};
+
+type SortHeaderState = {
+  active: boolean;
+  direction: "asc" | "desc";
+  href: string;
 };
 
 export function EntityRecordsTable({
   contractId,
   deleteAction,
   displayHeader,
+  displaySort,
   entityTypeId,
   listFields,
   records,
+  updatedAtSort,
 }: {
   contractId: string;
   deleteAction: BulkAction;
   displayHeader: string;
+  displaySort: SortHeaderState;
   entityTypeId: string;
   listFields: ListField[];
   records: RecordRow[];
+  updatedAtSort: SortHeaderState;
 }) {
   const router = useRouter();
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -164,13 +175,21 @@ export function EntityRecordsTable({
                   onChange={toggleAllVisible}
                 />
               </th>
-              <th className="py-3 pr-4 font-medium">{displayHeader}</th>
+              <th className="py-3 pr-4 font-medium">
+                <SortableHeader label={displayHeader} sort={displaySort} />
+              </th>
               {listFields.map((field) => (
                 <th className="py-3 pr-4 font-medium" key={field.id}>
-                  {field.name}
+                  {field.sort ? (
+                    <SortableHeader label={field.name} sort={field.sort} />
+                  ) : (
+                    field.name
+                  )}
                 </th>
               ))}
-              <th className="py-3 pr-4 font-medium">Actualizado</th>
+              <th className="py-3 pr-4 font-medium">
+                <SortableHeader label="Actualizado" sort={updatedAtSort} />
+              </th>
               <th className="py-3 text-right font-medium">Acciones</th>
             </tr>
           </thead>
@@ -261,6 +280,28 @@ export function EntityRecordsTable({
         </AlertDialogContent>
       </AlertDialog>
     </div>
+  );
+}
+
+function SortableHeader({
+  label,
+  sort,
+}: {
+  label: string;
+  sort: SortHeaderState;
+}) {
+  const Icon = sort.direction === "asc" ? ArrowUp : ArrowDown;
+
+  return (
+    <Link
+      className="inline-flex items-center gap-1 rounded-sm underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      href={sort.href}
+    >
+      <span>{label}</span>
+      {sort.active ? (
+        <Icon aria-hidden="true" className="h-3.5 w-3.5" />
+      ) : null}
+    </Link>
   );
 }
 

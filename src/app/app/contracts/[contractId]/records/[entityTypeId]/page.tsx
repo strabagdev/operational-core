@@ -15,18 +15,32 @@ import {
   getEntityRecords,
   getPrimaryDisplayField,
   getRecordListFields,
+  resolveEntityRecordSort,
 } from "@/lib/entity-records";
 
 import { deleteEntityRecordsAction } from "../actions";
 import { EntityRecordsTable } from "./entity-records-table";
 import { ImportRecordsSheet } from "./import-records-sheet";
 
+type SortHeaderState = {
+  active: boolean;
+  direction: "asc" | "desc";
+  href: string;
+};
+
 export default async function EntityRecordsPage({
   params,
   searchParams,
 }: {
   params: Promise<{ contractId: string; entityTypeId: string }>;
-  searchParams: Promise<{ q?: string; page?: string; pageSize?: string; error?: string }>;
+  searchParams: Promise<{
+    dir?: string;
+    error?: string;
+    page?: string;
+    pageSize?: string;
+    q?: string;
+    sort?: string;
+  }>;
 }) {
   const session = await auth();
 
@@ -35,7 +49,7 @@ export default async function EntityRecordsPage({
   }
 
   const { contractId, entityTypeId } = await params;
-  const { q, page, pageSize, error } = await searchParams;
+  const { q, page, pageSize, sort, dir, error } = await searchParams;
   const parsedPage = parsePositiveInteger(page, 1);
   const parsedPageSize = parsePageSize(pageSize);
   const data = await getEntityRecords({
@@ -45,6 +59,7 @@ export default async function EntityRecordsPage({
     page: parsedPage,
     pageSize: parsedPageSize,
     query: q,
+    sort: { key: sort, direction: dir },
   });
 
   if (!data) {
@@ -55,6 +70,20 @@ export default async function EntityRecordsPage({
   const listFields = getRecordListFields(data.entityType.fields);
   const displayHeader = primaryField?.name ?? "Nombre";
   const fieldsById = new Map(data.entityType.fields.map((field) => [field.id, field]));
+  const basePath = `/app/contracts/${contractId}/records/${entityTypeId}`;
+  const sortableFields = listFields.filter((field) =>
+    resolveEntityRecordSort({
+      fields: data.entityType.fields,
+      listFields,
+      sortKey: `field:${field.id}`,
+      direction: "asc",
+    }).explicit,
+  );
+  const sortOptions = [
+    { label: displayHeader, value: "displayName" },
+    ...sortableFields.map((field) => ({ label: field.name, value: `field:${field.id}` })),
+    { label: "Actualizado", value: "updatedAt" },
+  ];
   const tableRecords = data.records.map((record) => ({
     id: record.id,
     displayName: record.displayName,
@@ -115,7 +144,7 @@ export default async function EntityRecordsPage({
 
       <Card>
         <CardContent className="pt-6">
-          <form className="grid gap-3 md:grid-cols-[1fr_160px_auto]" method="get">
+          <form className="grid gap-3 md:grid-cols-[1fr_160px_160px_150px_auto]" method="get">
             <input
               className="h-10 rounded-md border border-input bg-background px-3 text-sm outline-none ring-ring focus-visible:ring-2"
               defaultValue={q ?? ""}
@@ -130,6 +159,25 @@ export default async function EntityRecordsPage({
               <option value="25">25 por página</option>
               <option value="50">50 por página</option>
               <option value="100">100 por página</option>
+            </select>
+            <select
+              className="h-10 rounded-md border border-input bg-background px-3 text-sm"
+              defaultValue={data.sort?.key ?? "updatedAt"}
+              name="sort"
+            >
+              {sortOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            <select
+              className="h-10 rounded-md border border-input bg-background px-3 text-sm"
+              defaultValue={data.sort?.direction ?? "desc"}
+              name="dir"
+            >
+              <option value="asc">Ascendente</option>
+              <option value="desc">Descendente</option>
             </select>
             <Button type="submit" variant="outline">
               Filtrar
@@ -151,16 +199,43 @@ export default async function EntityRecordsPage({
             contractId={contractId}
             deleteAction={deleteEntityRecordsAction.bind(null, contractId, entityTypeId)}
             displayHeader={displayHeader}
+            displaySort={sortHeader({
+              basePath,
+              currentSort: data.sort,
+              pageSize: data.pagination.pageSize,
+              query: q,
+              sortKey: "displayName",
+            })}
             entityTypeId={entityTypeId}
             key={`${entityTypeId}:${q ?? ""}:${tableRecords.map((record) => record.id).join("|")}`}
-            listFields={listFields.map((field) => ({ id: field.id, name: field.name }))}
+            listFields={listFields.map((field) => ({
+              id: field.id,
+              name: field.name,
+              sort: sortableFields.some((item) => item.id === field.id)
+                ? sortHeader({
+                    basePath,
+                    currentSort: data.sort,
+                    pageSize: data.pagination.pageSize,
+                    query: q,
+                    sortKey: `field:${field.id}`,
+                  })
+                : undefined,
+            }))}
             records={tableRecords}
+            updatedAtSort={sortHeader({
+              basePath,
+              currentSort: data.sort,
+              pageSize: data.pagination.pageSize,
+              query: q,
+              sortKey: "updatedAt",
+            })}
           />
           <PaginationControls
-            basePath={`/app/contracts/${contractId}/records/${entityTypeId}`}
+            basePath={basePath}
             page={data.pagination.page}
             pageSize={data.pagination.pageSize}
             query={q}
+            sort={data.sort}
             totalPages={data.pagination.totalPages}
             totalRecords={data.pagination.totalRecords}
           />
@@ -189,16 +264,18 @@ function PaginationControls({
   query,
   totalPages,
   totalRecords,
+  sort,
 }: {
   basePath: string;
   page: number;
   pageSize: number;
   query?: string;
+  sort?: { key: string; direction: string } | null;
   totalPages: number;
   totalRecords: number;
 }) {
-  const previousHref = pageHref({ basePath, page: page - 1, pageSize, query });
-  const nextHref = pageHref({ basePath, page: page + 1, pageSize, query });
+  const previousHref = pageHref({ basePath, page: page - 1, pageSize, query, sort });
+  const nextHref = pageHref({ basePath, page: page + 1, pageSize, query, sort });
 
   return (
     <div className="mt-4 flex flex-col gap-3 border-t border-border pt-4 text-sm sm:flex-row sm:items-center sm:justify-between">
@@ -234,19 +311,55 @@ function pageHref({
   page,
   pageSize,
   query,
+  sort,
 }: {
   basePath: string;
   page: number;
   pageSize: number;
   query?: string;
+  sort?: { key: string; direction: string } | null;
 }) {
   const params = new URLSearchParams();
 
   if (query) params.set("q", query);
   if (page > 1) params.set("page", String(page));
   if (pageSize !== 50) params.set("pageSize", String(pageSize));
+  if (sort) {
+    params.set("sort", sort.key);
+    params.set("dir", sort.direction);
+  }
 
   const queryString = params.toString();
 
   return queryString ? `${basePath}?${queryString}` : basePath;
+}
+
+function sortHeader({
+  basePath,
+  currentSort,
+  pageSize,
+  query,
+  sortKey,
+}: {
+  basePath: string;
+  currentSort?: { key: string; direction: "asc" | "desc" } | null;
+  pageSize: number;
+  query?: string;
+  sortKey: string;
+}): SortHeaderState {
+  const active = currentSort?.key === sortKey;
+  const direction: "asc" | "desc" = active && currentSort?.direction === "asc" ? "asc" : "desc";
+  const nextDirection: "asc" | "desc" = active && direction === "asc" ? "desc" : "asc";
+
+  return {
+    active,
+    direction,
+    href: pageHref({
+      basePath,
+      page: 1,
+      pageSize,
+      query,
+      sort: { key: sortKey, direction: nextDirection },
+    }),
+  };
 }
