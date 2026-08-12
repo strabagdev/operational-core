@@ -21,6 +21,20 @@ export const operationalCoreAuthCookieNames = [
   ...operationalCoreCsrfCookieNames,
 ] as const;
 
+export const legacyAuthJsAuthCookieNames = [
+  "authjs.session-token",
+  "__Secure-authjs.session-token",
+  "authjs.callback-url",
+  "__Secure-authjs.callback-url",
+  "authjs.csrf-token",
+  "__Host-authjs.csrf-token",
+] as const;
+
+export const authCookieNamesToClear = [
+  ...operationalCoreAuthCookieNames,
+  ...legacyAuthJsAuthCookieNames,
+] as const;
+
 type AuthCookieEnv = {
   AUTH_URL?: string;
   NODE_ENV?: string;
@@ -72,17 +86,39 @@ export function getAuthCookieOptions(env: AuthCookieEnv = process.env) {
   };
 }
 
-export function authCookieDeletionOptions(name: string) {
+export function authCookieDeletionOptions(name: string, path = "/") {
   const secure = name.startsWith("__Secure-") || name.startsWith("__Host-");
 
   return {
     expires: new Date(0),
     httpOnly: true,
     maxAge: 0,
-    path: "/",
+    path,
     sameSite: "lax" as const,
     secure,
   };
+}
+
+export function authCookieDeletionHeader(name: string, path = "/") {
+  const options = authCookieDeletionOptions(name, path);
+
+  return [
+    `${name}=`,
+    `Path=${options.path}`,
+    `Expires=${options.expires.toUTCString()}`,
+    "Max-Age=0",
+    "HttpOnly",
+    "SameSite=lax",
+    options.secure ? "Secure" : "",
+  ].filter(Boolean).join("; ");
+}
+
+export function isSessionChunkCookieName(name: string) {
+  return [
+    ...operationalCoreSessionCookieNames,
+    "authjs.session-token",
+    "__Secure-authjs.session-token",
+  ].some((sessionCookieName) => name.startsWith(`${sessionCookieName}.`));
 }
 
 type MutableCookieStore = {
@@ -90,7 +126,7 @@ type MutableCookieStore = {
 };
 
 export function clearOperationalCoreAuthCookies(cookieStore: MutableCookieStore) {
-  for (const cookieName of operationalCoreAuthCookieNames) {
+  for (const cookieName of authCookieNamesToClear) {
     cookieStore.set(cookieName, "", authCookieDeletionOptions(cookieName));
   }
 }

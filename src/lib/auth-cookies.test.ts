@@ -2,9 +2,13 @@ import { describe, expect, it } from "vitest";
 
 import {
   authCookieDeletionOptions,
+  authCookieDeletionHeader,
+  authCookieNamesToClear,
   clearOperationalCoreAuthCookies,
   getAuthCookieOptions,
   isSecureAuthCookieEnvironment,
+  isSessionChunkCookieName,
+  legacyAuthJsAuthCookieNames,
   operationalCoreAuthCookieNames,
   operationalCoreCallbackCookieNames,
   operationalCoreCsrfCookieNames,
@@ -92,7 +96,7 @@ describe("auth cookie names", () => {
       },
     });
 
-    expect(calls.map((call) => call.name)).toEqual(operationalCoreAuthCookieNames);
+    expect(calls.map((call) => call.name)).toEqual(authCookieNamesToClear);
     expect(calls).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -106,6 +110,46 @@ describe("auth cookie names", () => {
           options: expect.objectContaining({ maxAge: 0, secure: false }),
         }),
       ]),
+    );
+  });
+
+  it("also clears legacy Auth.js cookie names without using them for new sessions", () => {
+    expect(legacyAuthJsAuthCookieNames).toEqual([
+      "authjs.session-token",
+      "__Secure-authjs.session-token",
+      "authjs.callback-url",
+      "__Secure-authjs.callback-url",
+      "authjs.csrf-token",
+      "__Host-authjs.csrf-token",
+    ]);
+    expect(authCookieNamesToClear).toEqual([
+      ...operationalCoreAuthCookieNames,
+      ...legacyAuthJsAuthCookieNames,
+    ]);
+    expect(getAuthCookieOptions({ NODE_ENV: "development" }).sessionToken.name).toBe(
+      "operational-core.session-token",
+    );
+  });
+
+  it("detects stale session chunk cookies that Auth.js would concatenate into the session token", () => {
+    expect(isSessionChunkCookieName("operational-core.session-token.0")).toBe(true);
+    expect(isSessionChunkCookieName("__Secure-operational-core.session-token.1")).toBe(true);
+    expect(isSessionChunkCookieName("authjs.session-token.0")).toBe(true);
+    expect(isSessionChunkCookieName("operational-core.session-token")).toBe(false);
+    expect(isSessionChunkCookieName("operational-core.csrf-token.0")).toBe(false);
+  });
+
+  it("can expire stale chunks on both root and app paths", () => {
+    expect(authCookieDeletionOptions("operational-core.session-token.0", "/app")).toMatchObject({
+      maxAge: 0,
+      path: "/app",
+      secure: false,
+    });
+    expect(authCookieDeletionHeader("operational-core.session-token.0", "/")).toContain(
+      "Path=/",
+    );
+    expect(authCookieDeletionHeader("operational-core.session-token.0", "/app")).toContain(
+      "Path=/app",
     );
   });
 });

@@ -20,7 +20,7 @@ vi.mock("next/server", () => ({
 }));
 
 describe("POST /api/logout", () => {
-  it("redirects to login and expires Operational Core auth cookies", async () => {
+  it("redirects to login and expires Operational Core and legacy Auth.js auth cookies", async () => {
     const response = await POST(new Request("http://localhost:3000/api/logout", {
       method: "POST",
     })) as unknown as Response & {
@@ -36,6 +36,16 @@ describe("POST /api/logout", () => {
     );
     expect(response.cookies.set).toHaveBeenCalledWith(
       "__Secure-operational-core.session-token",
+      "",
+      expect.objectContaining({ maxAge: 0, path: "/", secure: true }),
+    );
+    expect(response.cookies.set).toHaveBeenCalledWith(
+      "authjs.session-token",
+      "",
+      expect.objectContaining({ maxAge: 0, path: "/", secure: false }),
+    );
+    expect(response.cookies.set).toHaveBeenCalledWith(
+      "__Secure-authjs.session-token",
       "",
       expect.objectContaining({ maxAge: 0, path: "/", secure: true }),
     );

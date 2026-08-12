@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 
 import {
+  authCookieNamesToClear,
   authCookieDeletionOptions,
-  operationalCoreAuthCookieNames,
 } from "@/lib/auth-cookies";
 
 export const runtime = "nodejs";
@@ -12,7 +12,7 @@ export async function POST(request: Request) {
     status: 303,
   });
 
-  for (const cookieName of operationalCoreAuthCookieNames) {
+  for (const cookieName of authCookieNamesToClear) {
     response.cookies.set(cookieName, "", authCookieDeletionOptions(cookieName));
   }
 

@@ -1,9 +1,28 @@
 import { NextResponse, type NextRequest } from "next/server";
 
-import { operationalCoreSessionCookieNames } from "@/lib/auth-cookies";
+import {
+  authCookieDeletionHeader,
+  isSessionChunkCookieName,
+  operationalCoreSessionCookieNames,
+} from "@/lib/auth-cookies";
 import { getAuthRouteDecision } from "@/lib/auth-route-policy";
 
 export function proxy(request: NextRequest) {
+  const staleSessionChunks = request.cookies
+    .getAll()
+    .filter((cookie) => isSessionChunkCookieName(cookie.name));
+
+  if (staleSessionChunks.length > 0) {
+    const response = NextResponse.redirect(request.nextUrl);
+
+    for (const cookie of staleSessionChunks) {
+      response.headers.append("Set-Cookie", authCookieDeletionHeader(cookie.name, "/"));
+      response.headers.append("Set-Cookie", authCookieDeletionHeader(cookie.name, "/app"));
+    }
+
+    return response;
+  }
+
   const hasSessionCookie = operationalCoreSessionCookieNames.some((name) =>
     request.cookies.has(name),
   );

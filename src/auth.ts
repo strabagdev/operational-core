@@ -4,6 +4,7 @@ import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 
 import { getAuthCookieOptions } from "@/lib/auth-cookies";
+import { applyAuthenticatedUserToToken } from "@/lib/auth-token";
 import { prisma } from "@/lib/prisma";
 
 function requiredEnv(name: string) {
@@ -73,36 +74,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   ],
   callbacks: {
     async jwt({ token, user }) {
-      if (user) {
-        token.id = user.id;
-      }
-
-      const userId = typeof token.id === "string" ? token.id : token.sub;
-
-      if (!userId) {
-        return null;
-      }
-
-      const existingUser = await prisma.user.findUnique({
-        where: { id: userId },
-        select: {
-          id: true,
-          name: true,
-          email: true,
-          image: true,
-        },
-      });
-
-      if (!existingUser) {
-        return null;
-      }
-
-      token.id = existingUser.id;
-      token.name = existingUser.name;
-      token.email = existingUser.email;
-      token.picture = existingUser.image;
-
-      return token;
+      return applyAuthenticatedUserToToken(token, user);
     },
     session({ session, token }) {
       const userId = typeof token.id === "string" ? token.id : undefined;

@@ -30,6 +30,8 @@ Auth.js v5 reads `AUTH_SECRET` and `AUTH_URL`. Do not define a competing `NEXTAU
 
 The real database URL and auth secret belong only in local or deployment environment variables; do not commit them.
 
+`AUTH_URL` must be present in the runtime environment used by `next start` and production deployments. Without it, Auth.js can reject local or deployed requests with `UntrustedHost` before credentials/session handling runs.
+
 ## Prisma
 
 Validate the schema:
@@ -149,6 +151,8 @@ Demo login:
 ## JWTSessionError Recovery
 
 `JWTSessionError` with cause `no matching decryption secret` means Auth.js could not decrypt an existing session cookie with the current `AUTH_SECRET`.
+
+`JWTSessionError` can also wrap errors thrown from the Auth.js JWT callback after the token was already decrypted. Operational Core keeps the callback free of per-request database reads so transient database connection exhaustion does not get reported as a broken JWT session.
 
 Operational Core uses a project-specific session cookie in development:
 
