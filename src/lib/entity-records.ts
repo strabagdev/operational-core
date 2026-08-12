@@ -278,7 +278,7 @@ export function resolveEntityRecordSort({
   }
 
   return {
-    key: "updatedAt",
+    key: "displayName",
     direction: "desc",
     explicit: false,
   };

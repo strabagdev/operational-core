@@ -218,7 +218,7 @@ describe("entity import persistence", () => {
     );
     expect(entityRecordFindMany.mock.calls[0]?.[0]).toMatchObject({
       select: { id: true },
-      orderBy: [{ updatedAt: "desc" }, { displayName: "asc" }, { id: "asc" }],
+      orderBy: [{ displayName: "desc" }, { id: "asc" }],
     });
     expect(entityRecordFindMany.mock.calls[1]?.[0]).toMatchObject({
       where: {
@@ -374,7 +374,7 @@ describe("entity import persistence", () => {
     });
 
     expect(entityRecordFindMany.mock.calls[0]?.[0]).toMatchObject({
-      orderBy: [{ updatedAt: "desc" }, { displayName: "asc" }, { id: "asc" }],
+      orderBy: [{ displayName: "desc" }, { id: "asc" }],
     });
     expect(queryRaw).not.toHaveBeenCalled();
   });

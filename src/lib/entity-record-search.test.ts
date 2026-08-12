@@ -288,7 +288,7 @@ describe("entity record server-side sorting", () => {
     expect(data?.sort).toBeNull();
     expect(entityRecordFindMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        orderBy: [{ updatedAt: "desc" }, { displayName: "asc" }, { id: "asc" }],
+        orderBy: [{ displayName: "desc" }, { id: "asc" }],
       }),
     );
     expect(queryRaw).not.toHaveBeenCalled();
@@ -381,7 +381,7 @@ describe("entity record server-side sorting", () => {
           sortKey: `field:${fieldId}`,
           direction: "asc",
         }),
-      ).toMatchObject({ key: "updatedAt", explicit: false });
+      ).toMatchObject({ key: "displayName", explicit: false });
     }
   });
 });

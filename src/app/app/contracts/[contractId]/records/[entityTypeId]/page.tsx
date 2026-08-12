@@ -172,7 +172,7 @@ export default async function EntityRecordsPage({
             </select>
             <select
               className="h-10 rounded-md border border-input bg-background px-3 text-sm"
-              defaultValue={data.sort?.key ?? "updatedAt"}
+              defaultValue={data.sort?.key ?? "displayName"}
               name="sort"
             >
               {sortOptions.map((option) => (

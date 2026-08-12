@@ -35,6 +35,7 @@ describe("entity record pagination UI", () => {
     expect(recordsPageSource).toContain('name="dir"');
     expect(recordsPageSource).toContain('value: "displayName"');
     expect(recordsPageSource).toContain('value: "updatedAt"');
+    expect(recordsPageSource).toContain('defaultValue={data.sort?.key ?? "displayName"}');
   });
 
   it("resets to the first page when building sort header links", () => {
