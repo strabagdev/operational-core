@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import type React from "react";
 import { Activity, ClipboardList, Settings, TableProperties } from "lucide-react";
 
+import { ThemeToggleButton } from "@/components/theme-toggle-button";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { isContractNavigationItemActive } from "@/lib/contract-layout-navigation";
@@ -71,6 +72,7 @@ export function ContractNavigationRail({
               key={item.href}
             />
           ))}
+          <ThemeToggleButton />
         </div>
       </nav>
     </aside>

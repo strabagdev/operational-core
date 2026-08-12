@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
 import { auth } from "@/auth";
+import { ThemeToggleButton } from "@/components/theme-toggle-button";
 import { Button } from "@/components/ui/button";
 import { getAuthorizedContract } from "@/lib/contracts";
 
@@ -75,6 +76,10 @@ export default async function ContractLayout({
                 <Link href={item.href}>{item.label}</Link>
               </Button>
             ))}
+            <ThemeToggleButton
+              className="shrink-0 border border-border"
+              tooltipClassName="left-auto right-0 top-[calc(100%+0.5rem)] translate-y-0"
+            />
           </nav>
         </div>
 

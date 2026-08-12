@@ -28,6 +28,7 @@ describe("contract layout navigation", () => {
     expect(railSource).toContain("w-[60px]");
     expect(railSource).toContain("sticky top-0");
     expect(railSource).toContain("h-screen");
+    expect(railSource).toContain("ThemeToggleButton");
     expect(railSource).toContain('aria-label={ariaLabel}');
     expect(railSource).toContain('aria-hidden="true"');
     expect(railSource).toContain('role="tooltip"');
@@ -61,5 +62,11 @@ describe("contract layout navigation", () => {
     expect(railSource).toContain('className="mt-8 flex flex-1 flex-col items-center"');
     expect(railSource).toContain('className="flex flex-1 flex-col gap-2"');
     expect(railSource).not.toContain("justify-center gap-2");
+  });
+
+  it("keeps the theme toggle available on mobile navigation", () => {
+    expect(layoutSource).toContain("ThemeToggleButton");
+    expect(layoutSource).toContain("md:hidden");
+    expect(layoutSource).toContain("tooltipClassName");
   });
 });
