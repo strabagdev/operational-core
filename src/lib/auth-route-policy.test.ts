@@ -9,6 +9,15 @@ describe("auth route policy", () => {
     });
   });
 
+  it("keeps setup route available for its page-level initialization checks", () => {
+    expect(getAuthRouteDecision({ hasSession: false, pathname: "/setup" })).toEqual({
+      kind: "next",
+    });
+    expect(getAuthRouteDecision({ hasSession: true, pathname: "/setup" })).toEqual({
+      kind: "next",
+    });
+  });
+
   it("redirects protected app routes without a session", () => {
     expect(getAuthRouteDecision({ hasSession: false, pathname: "/app" })).toEqual({
       kind: "redirect",

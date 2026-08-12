@@ -64,7 +64,28 @@ Seed demo data:
 npm run db:seed
 ```
 
-The seed creates the administrator user, demo organization, demo contract, entity types, fields, options, records, relations, and non-duplicated audit events.
+The seed is optional development/demo data. It creates the administrator user, demo organization, demo contract, entity types, fields, options, records, relations, and non-duplicated audit events. Do not run it automatically in production deploys.
+
+## Initial Production Setup
+
+New production installations do not require demo seed data.
+
+Use this flow for an empty database:
+
+1. Deploy the app.
+2. Run `npx prisma migrate deploy`.
+3. Open the deployed domain.
+4. Complete `/setup` with the first user and organization.
+5. Sign in from `/login`.
+6. Create the first contract from `/app/settings/contracts`.
+
+The first setup creates the initial `User`, `Organization`, and `Membership` with role `ADMIN` in a single transaction. Once an organization has an ADMIN membership, `/setup` closes and redirects authenticated users to `/app` or unauthenticated users to `/login`.
+
+Un usuario pertenece a una única organización. Una organización puede contener múltiples usuarios y contratos. El rol `ADMIN`/`MEMBER` pertenece a la `Membership`.
+
+User administration lives at `/app/settings/users` and is available only to organization ADMIN memberships. This first version supports local password creation, attaching an existing user only when the user has no organization membership, role changes between `ADMIN` and `MEMBER`, and removing a user from an organization without deleting the global `User`. Operational Core prevents demoting or removing the last organization ADMIN.
+
+Audit events are currently contract-scoped. User administration actions should move to organization-level audit when that model exists; this version does not force user changes into contract audit records.
 
 ## Configurable Validations
 

@@ -19,6 +19,10 @@ export function getAuthRouteDecision({
     return { kind: "next" };
   }
 
+  if (pathname === "/setup") {
+    return { kind: "next" };
+  }
+
   if (pathname === "/login") {
     return hasSession ? { kind: "redirect", destination: "/app" } : { kind: "next" };
   }

@@ -2,6 +2,7 @@ import { AuthError } from "next-auth";
 import { redirect } from "next/navigation";
 
 import { auth, signIn } from "@/auth";
+import { isInitialSetupRequired } from "@/lib/setup";
 
 async function loginAction(formData: FormData) {
   "use server";
@@ -24,15 +25,22 @@ async function loginAction(formData: FormData) {
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ error?: string }>;
+  searchParams: Promise<{ error?: string; notice?: string }>;
 }) {
-  const session = await auth();
+  const [session, setupRequired] = await Promise.all([
+    auth(),
+    isInitialSetupRequired(),
+  ]);
 
   if (session) {
     redirect("/app");
   }
 
-  const { error } = await searchParams;
+  if (setupRequired) {
+    redirect("/setup");
+  }
+
+  const { error, notice } = await searchParams;
 
   return (
     <main className="flex min-h-screen items-center justify-center px-6">
@@ -46,6 +54,9 @@ export default async function LoginPage({
           <p className="text-sm text-destructive">
             Invalid email or password.
           </p>
+        ) : null}
+        {notice ? (
+          <p className="text-sm text-muted-foreground">{notice}</p>
         ) : null}
 
         <label className="flex flex-col gap-2 text-sm font-medium">

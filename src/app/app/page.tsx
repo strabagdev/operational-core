@@ -32,9 +32,14 @@ export default async function AppPage() {
             Selecciona un contrato para continuar.
           </p>
           </div>
-          <Button asChild variant="outline">
-            <Link href="/app/settings/contracts">Administrar contratos</Link>
-          </Button>
+          <div className="flex flex-wrap gap-2 sm:justify-end">
+            <Button asChild variant="outline">
+              <Link href="/app/settings/users">Usuarios</Link>
+            </Button>
+            <Button asChild variant="outline">
+              <Link href="/app/settings/contracts">Administrar contratos</Link>
+            </Button>
+          </div>
         </div>
       </header>
 
