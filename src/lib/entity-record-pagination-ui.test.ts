@@ -19,6 +19,13 @@ describe("entity record pagination UI", () => {
     expect(recordsPageSource).toContain('<option value="100">100 por página</option>');
   });
 
+  it("defaults record listings to the smallest page size", () => {
+    expect(recordsPageSource).toContain("return parsed === 25 || parsed === 50 || parsed === 100 ? parsed : 25");
+    expect(recordsPageSource).toContain("if (pageSize !== 25) params.set");
+    expect(recordsPageSource).not.toContain("? parsed : 50");
+    expect(recordsPageSource).not.toContain("if (pageSize !== 50) params.set");
+  });
+
   it("does not submit a stale page number when searching or changing page size", () => {
     expect(recordsPageSource).not.toContain('name="page"');
   });
@@ -59,5 +66,10 @@ describe("entity record pagination UI", () => {
     expect(importSheetSource).toContain('label="Nuevos"');
     expect(importSheetSource).toContain('label="Actualizaciones"');
     expect(importSheetSource).toContain("importButtonLabel");
+  });
+
+  it("lets the record listing use the available horizontal space", () => {
+    expect(recordsPageSource).toContain('className="grid w-full gap-6"');
+    expect(recordsPageSource).not.toContain('className="grid max-w-6xl gap-6"');
   });
 });

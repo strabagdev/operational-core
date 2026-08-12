@@ -107,7 +107,7 @@ export default async function EntityRecordsPage({
   }));
 
   return (
-    <div className="grid max-w-6xl gap-6">
+    <div className="grid w-full gap-6">
       <header className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold">{data.entityType.name}</h1>
@@ -264,7 +264,7 @@ function parsePositiveInteger(value: string | undefined, fallback: number) {
 function parsePageSize(value?: string) {
   const parsed = Number(value);
 
-  return parsed === 25 || parsed === 50 || parsed === 100 ? parsed : 50;
+  return parsed === 25 || parsed === 50 || parsed === 100 ? parsed : 25;
 }
 
 function PaginationControls({
@@ -333,7 +333,7 @@ function pageHref({
 
   if (query) params.set("q", query);
   if (page > 1) params.set("page", String(page));
-  if (pageSize !== 50) params.set("pageSize", String(pageSize));
+  if (pageSize !== 25) params.set("pageSize", String(pageSize));
   if (sort) {
     params.set("sort", sort.key);
     params.set("dir", sort.direction);
