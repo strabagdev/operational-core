@@ -18,6 +18,7 @@ function field(overrides: Record<string, unknown> = {}) {
     config: overrides.config ?? null,
     isActive: overrides.isActive ?? true,
     options: [],
+    _count: { auditChanges: 0, relations: 0, values: 0 },
     ...overrides,
   } as never;
 }
@@ -40,6 +41,7 @@ function renderFieldListItem({
       index={index}
       isLast={isLast}
       openHref="/app/contracts/contract_1/settings/entities/entity_1?fieldQ=rut&editField=nombre"
+      deleteAction={() => {}}
       reorderAction={() => {}}
       returnTo="/app/contracts/contract_1/settings/entities/entity_1?fieldQ=rut&fieldType=TEXT"
       toggleAction={() => {}}
@@ -90,4 +92,5 @@ describe("field list item order controls", () => {
       'value="/app/contracts/contract_1/settings/entities/entity_1?fieldQ=rut&amp;fieldType=TEXT"',
     );
   });
+
 });

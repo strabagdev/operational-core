@@ -31,6 +31,7 @@ import {
 
 import {
   createEntityFieldEditorAction,
+  deleteEntityFieldFromListAction,
   deleteFieldOptionAction,
   reorderEntityFieldAction,
   toggleEntityFieldFromListAction,
@@ -200,6 +201,7 @@ export default async function EntityTypeDetailPage({
                         currentParams,
                         mode: { kind: "edit", fieldId: field.id },
                       })}
+                      deleteAction={deleteEntityFieldFromListAction}
                       reorderAction={reorderEntityFieldAction}
                       returnTo={closeEditorHref}
                       toggleAction={toggleEntityFieldFromListAction}

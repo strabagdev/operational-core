@@ -13,6 +13,10 @@ const themeToggleSource = readFileSync(
   new URL("../components/theme-toggle-button.tsx", import.meta.url),
   "utf8",
 );
+const rootLayoutSource = readFileSync(
+  new URL("../app/layout.tsx", import.meta.url),
+  "utf8",
+);
 
 describe("theme preference", () => {
   it("defaults to light when no browser preference is stored", () => {
@@ -53,5 +57,22 @@ describe("theme preference", () => {
     expect(themeToggleSource).toContain("Moon");
     expect(themeToggleSource).toContain("Sun");
     expect(themeToggleSource).toContain("window.localStorage.setItem(themeStorageKey, next)");
+  });
+
+  it("keeps the early theme script in the root document head without next/script", () => {
+    expect(rootLayoutSource).toContain("<head>");
+    expect(rootLayoutSource).toContain(
+      '<script dangerouslySetInnerHTML={{ __html: themeInitScript }} />',
+    );
+    expect(rootLayoutSource).not.toContain("next/script");
+    expect(rootLayoutSource).not.toContain("strategy=\"beforeInteractive\"");
+  });
+
+  it("does not read browser theme state during the ThemeToggleButton initial render", () => {
+    expect(themeToggleSource).toContain('useState<ResolvedTheme>("light")');
+    expect(themeToggleSource).toContain("useEffect(() =>");
+    expect(themeToggleSource).toContain("window.setTimeout");
+    expect(themeToggleSource).toContain("setTheme(readStoredTheme())");
+    expect(themeToggleSource).not.toContain("suppressHydrationWarning");
   });
 });

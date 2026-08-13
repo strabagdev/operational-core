@@ -1,4 +1,5 @@
 import Link from "next/link";
+import type { ComponentProps } from "react";
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -10,6 +11,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { cn } from "@/lib/utils";
 
 import { ContractLogoutForm } from "./contract-logout-form";
 
@@ -27,16 +29,26 @@ export function UserMenu({
   email,
   name,
   image,
+  contentAlign = "end",
+  contentSide,
+  triggerClassName,
 }: {
   email?: string | null;
   name?: string | null;
   image?: string | null;
+  contentAlign?: ComponentProps<typeof DropdownMenuContent>["align"];
+  contentSide?: ComponentProps<typeof DropdownMenuContent>["side"];
+  triggerClassName?: string;
 }) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button aria-label="Abrir menú de usuario" size="icon" variant="ghost">
-          <Avatar>
+        <Button
+          aria-label="Menú de usuario"
+          className={cn("h-10 w-10 px-0", triggerClassName)}
+          variant="ghost"
+        >
+          <Avatar className="h-9 w-9">
             <AvatarImage alt={name ?? "Usuario"} src={image ?? ""} />
             <AvatarFallback>
               {getInitials(name, email)}
@@ -44,7 +56,7 @@ export function UserMenu({
           </Avatar>
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
+      <DropdownMenuContent align={contentAlign} side={contentSide}>
         <UserMenuContentItems email={email} name={name} />
       </DropdownMenuContent>
     </DropdownMenu>

@@ -21,14 +21,15 @@ Create `.env` from `.env.example` and configure:
 ```bash
 DATABASE_URL="postgresql://USER:PASSWORD@HOST:PORT/DATABASE?schema=public"
 AUTH_SECRET="replace-with-a-secure-secret"
+API_AUTH_SECRET="replace-with-a-separate-secure-secret"
 AUTH_URL="http://localhost:3000"
 ```
 
-`DATABASE_URL` is the only database connection source used by Prisma. In Railway, use the database URL provided by the environment instead of hard-coding local credentials. `AUTH_SECRET` is required and must be a stable generated value; the app fails at startup/build if it is missing or empty. Do not rely on generated or fallback secrets.
+`DATABASE_URL` is the only database connection source used by Prisma. In Railway, use the database URL provided by the environment instead of hard-coding local credentials. `AUTH_SECRET` is required and must be a stable generated value; the app fails at startup/build if it is missing or empty. `API_AUTH_SECRET` is required by the external `/api/v1` bearer-token endpoints and must be a separate stable generated value. Do not rely on generated or fallback secrets.
 
 Auth.js v5 reads `AUTH_SECRET` and `AUTH_URL`. Do not define a competing `NEXTAUTH_SECRET`. If a legacy `NEXTAUTH_URL` exists locally, replace it with `AUTH_URL` when touching the file.
 
-The real database URL and auth secret belong only in local or deployment environment variables; do not commit them.
+The real database URL, auth secret, and API auth secret belong only in local or deployment environment variables; do not commit them.
 
 `AUTH_URL` must be present in the runtime environment used by `next start` and production deployments. Without it, Auth.js can reject local or deployed requests with `UntrustedHost` before credentials/session handling runs.
 
@@ -56,6 +57,34 @@ Create and apply a local migration:
 
 ```bash
 npx prisma migrate dev --name migration_name
+```
+
+Before applying migrations or running any write script, confirm which database is active without printing credentials:
+
+```bash
+node -e 'require("dotenv").config(); const u = new URL(process.env.DATABASE_URL); console.log({ host: u.hostname, port: u.port, database: u.pathname.slice(1), railway: /railway|rlwy/i.test(u.hostname) })'
+```
+
+Do not run mutating Prisma commands against Railway/shared development data unless that is the explicit deployment task. For local validation, override `DATABASE_URL` per command instead of editing the Railway `.env` value:
+
+```bash
+DATABASE_URL="postgresql://USER@127.0.0.1:55432/opco_local?schema=public" npx prisma migrate deploy
+```
+
+One safe local option is a disposable PostgreSQL cluster under `/tmp`:
+
+```bash
+/usr/lib/postgresql/16/bin/initdb -D /tmp/opco-pg --auth=trust --no-instructions
+printf "\nlisten_addresses = '127.0.0.1'\nport = 55432\nunix_socket_directories = '/tmp'\n" >> /tmp/opco-pg/postgresql.conf
+/usr/lib/postgresql/16/bin/pg_ctl -D /tmp/opco-pg -l /tmp/opco-pg.log start
+createdb -h 127.0.0.1 -p 55432 -U "$USER" opco_local
+DATABASE_URL="postgresql://$USER@127.0.0.1:55432/opco_local?schema=public" npx prisma migrate deploy
+```
+
+If Docker PostgreSQL is available, it is also acceptable, as long as the active `DATABASE_URL` host is local and the command includes an explicit guard before mutating:
+
+```bash
+DATABASE_URL="postgresql://USER@127.0.0.1:55432/opco_local?schema=public" node -e 'const u = new URL(process.env.DATABASE_URL); if (!["127.0.0.1", "localhost"].includes(u.hostname) || /railway|rlwy/i.test(u.hostname)) process.exit(1)'
 ```
 
 Seed demo data:

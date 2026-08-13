@@ -96,6 +96,7 @@ function tx() {
       deleteMany: vi.fn(),
       delete: vi.fn(),
     },
+    $executeRaw: vi.fn(async () => 1),
   };
 }
 
@@ -382,24 +383,18 @@ describe("entity field option persistence", () => {
       ],
     );
 
-    expect(currentTx.fieldOption.update).toHaveBeenCalledWith({
-      where: { id: "opt_activo" },
-      data: {
-        label: "Activo laboral",
-        value: "activo",
-        sortOrder: 1,
-        isActive: true,
-      },
-    });
-    expect(currentTx.fieldOption.create).toHaveBeenCalledWith({
-      data: {
+    expect(currentTx.$executeRaw).toHaveBeenCalledTimes(1);
+    expect(currentTx.fieldOption.update).not.toHaveBeenCalled();
+    expect(currentTx.fieldOption.createMany).toHaveBeenCalledWith({
+      data: [{
         entityFieldId: "field_1",
-        label: "Inactivo",
-        value: "inactivo",
-        sortOrder: 2,
         isActive: true,
-      },
+        label: "Inactivo",
+        sortOrder: 2,
+        value: "inactivo",
+      }],
     });
+    expect(currentTx.fieldOption.create).not.toHaveBeenCalled();
     expect(currentTx.fieldOption.deleteMany).not.toHaveBeenCalled();
     expect(currentTx.fieldOption.delete).not.toHaveBeenCalled();
   });
@@ -503,34 +498,52 @@ describe("entity field option persistence", () => {
       ],
     );
 
-    expect(currentTx.fieldOption.update).toHaveBeenCalledWith({
-      where: { id: "opt_inactivo" },
-      data: {
-        label: "Inactivo",
-        value: "inactivo",
-        sortOrder: 1,
-        isActive: false,
-      },
-    });
-    expect(currentTx.fieldOption.update).toHaveBeenCalledWith({
-      where: { id: "opt_activo" },
-      data: {
-        label: "Activo",
-        value: "activo",
-        sortOrder: 2,
-        isActive: true,
-      },
-    });
+    expect(currentTx.$executeRaw).toHaveBeenCalledTimes(1);
+    expect(currentTx.fieldOption.update).not.toHaveBeenCalled();
   });
 
-  it("rolls back the field update when creating an option fails inside the transaction", async () => {
+  it("updates many existing options in one bulk statement to avoid transaction timeout", async () => {
+    const options = Array.from({ length: 97 }, (_, index) => ({
+      id: `opt_${index + 1}`,
+      label: `Opción ${index + 1}`,
+      value: `opcion_${index + 1}`,
+      sortOrder: index + 1,
+      isActive: true,
+    }));
+    entityTypeFindFirst.mockResolvedValue({
+      id: "entity_1",
+      contractId: "contract_1",
+      fields: [field({ type: "SELECT", options })],
+    } as never);
+    const currentTx = tx();
+    transaction.mockImplementation(async (callback) => callback(currentTx as never));
+
+    await updateEntityFieldWithOptions(
+      "contract_1",
+      "entity_1",
+      "field_1",
+      "user_1",
+      input(false, { type: "SELECT", name: "Estado", key: "estado" }),
+      options.map((option) => ({
+        ...option,
+        label: `${option.label} editada`,
+      })),
+    );
+
+    expect(currentTx.$executeRaw).toHaveBeenCalledTimes(1);
+    expect(currentTx.fieldOption.update).not.toHaveBeenCalled();
+    expect(currentTx.fieldOption.create).not.toHaveBeenCalled();
+    expect(currentTx.fieldOption.createMany).not.toHaveBeenCalled();
+  });
+
+  it("rolls back the field update when creating options fails inside the transaction", async () => {
     entityTypeFindFirst.mockResolvedValue({
       id: "entity_1",
       contractId: "contract_1",
       fields: [field({ type: "SELECT", options: [] })],
     } as never);
     const currentTx = tx();
-    currentTx.fieldOption.create.mockRejectedValueOnce(new Error("option failed"));
+    currentTx.fieldOption.createMany.mockRejectedValueOnce(new Error("option failed"));
     transaction.mockImplementation(async (callback) => callback(currentTx as never));
 
     await expect(

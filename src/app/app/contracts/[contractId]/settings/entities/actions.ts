@@ -12,6 +12,7 @@ import {
   createEntityField,
   createEntityType,
   createFieldOption,
+  deleteUnusedEntityField,
   deleteUnusedFieldOption,
   FieldEditorInputError,
   friendlyActionError,
@@ -293,6 +294,36 @@ export async function toggleEntityFieldFromListAction(
   redirect(
     withMessage(returnTo, "notice", isActive ? "Campo activado." : "Campo desactivado."),
   );
+}
+
+export async function deleteEntityFieldFromListAction(
+  contractId: string,
+  entityTypeId: string,
+  fieldId: string,
+  formData: FormData,
+) {
+  const userId = await requireUserId();
+  const fallbackPath = entityTypePath(contractId, entityTypeId);
+  const returnTo = redirectPath(formData, "returnTo", fallbackPath);
+  let deleted: Awaited<ReturnType<typeof deleteUnusedEntityField>>;
+
+  try {
+    deleted = await deleteUnusedEntityField(
+      contractId,
+      entityTypeId,
+      fieldId,
+      userId,
+    );
+  } catch (error) {
+    redirect(withMessage(returnTo, "error", friendlyActionError(error)));
+  }
+
+  if (!deleted) {
+    redirect(withMessage(returnTo, "error", "No se encontró el campo."));
+  }
+
+  revalidatePath(entityTypePath(contractId, entityTypeId));
+  redirect(withMessage(returnTo, "notice", "Campo eliminado definitivamente."));
 }
 
 export async function reorderEntityFieldAction(

@@ -102,13 +102,14 @@ model VerificationToken {
 }
 
 model Organization {
-  id          String       @id @default(cuid())
-  name        String
-  slug        String       @unique
-  memberships Membership[]
-  contracts   Contract[]
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
+  id           String        @id @default(cuid())
+  name         String
+  slug         String        @unique
+  memberships  Membership[]
+  contracts    Contract[]
+  externalApps ExternalApp[]
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
 }
 
 model Membership {
@@ -139,6 +140,20 @@ model Contract {
   updatedAt      DateTime       @updatedAt
 
   @@unique([organizationId, code])
+  @@unique([organizationId, slug])
+}
+
+model ExternalApp {
+  id             String       @id @default(cuid())
+  organizationId String
+  clientId       String       @unique
+  name           String
+  slug           String
+  active         Boolean      @default(true)
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
   @@unique([organizationId, slug])
 }
 

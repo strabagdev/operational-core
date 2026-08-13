@@ -1,0 +1,433 @@
+import { Prisma } from "@prisma/client";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import { signApiAccessToken } from "@/lib/api-auth";
+import { prisma } from "@/lib/prisma";
+import { GET as entityDefinitionGET } from "./[entityTypeId]/route";
+import { GET as recordDetailGET } from "./[entityTypeId]/records/[recordId]/route";
+import { GET as recordsGET } from "./[entityTypeId]/records/route";
+import { GET as entitiesGET } from "./route";
+
+vi.mock("@/lib/prisma", () => ({
+  prisma: {
+    contract: {
+      findFirst: vi.fn(),
+    },
+    entityRecord: {
+      count: vi.fn(),
+      findFirst: vi.fn(),
+      findMany: vi.fn(),
+    },
+    entityType: {
+      findFirst: vi.fn(),
+      findMany: vi.fn(),
+    },
+    externalApp: {
+      findUnique: vi.fn(),
+    },
+    membership: {
+      findMany: vi.fn(),
+      findUnique: vi.fn(),
+    },
+    user: {
+      findUnique: vi.fn(),
+    },
+  },
+}));
+
+const contractFindFirst = vi.mocked(prisma.contract.findFirst);
+const entityRecordCount = vi.mocked(prisma.entityRecord.count);
+const entityRecordFindFirst = vi.mocked(prisma.entityRecord.findFirst);
+const entityRecordFindMany = vi.mocked(prisma.entityRecord.findMany);
+const entityTypeFindFirst = vi.mocked(prisma.entityType.findFirst);
+const entityTypeFindMany = vi.mocked(prisma.entityType.findMany);
+const externalAppFindUnique = vi.mocked(prisma.externalApp.findUnique);
+const membershipFindMany = vi.mocked(prisma.membership.findMany);
+const membershipFindUnique = vi.mocked(prisma.membership.findUnique);
+const userFindUnique = vi.mocked(prisma.user.findUnique);
+
+const app = {
+  clientId: "opco_app_client_1",
+  id: "app_1",
+  name: "Bodega",
+  slug: "bodega",
+};
+
+async function apiRequest(path: string, userId = "user_1") {
+  const token = await signApiAccessToken({
+    app,
+    user: {
+      email: "user@example.com",
+      id: userId,
+      name: "User One",
+    },
+  });
+
+  return new Request(`http://localhost${path}`, {
+    headers: { authorization: `Bearer ${token}` },
+  });
+}
+
+function contract() {
+  return {
+    id: "contract_1",
+    name: "Contrato",
+    organization: {
+      id: "org_1",
+      name: "Organizacion",
+    },
+    organizationId: "org_1",
+  };
+}
+
+function field(overrides: Record<string, unknown> = {}) {
+  return {
+    config: null,
+    createdAt: new Date("2026-01-01T00:00:00.000Z"),
+    description: null,
+    entityTypeId: "entity_1",
+    id: String(overrides.id ?? "field_codigo"),
+    isActive: overrides.isActive ?? true,
+    isUnique: false,
+    key: String(overrides.key ?? "codigo"),
+    multiple: false,
+    name: String(overrides.name ?? "Código"),
+    options: [],
+    required: false,
+    searchable: false,
+    sortOrder: Number(overrides.sortOrder ?? 1),
+    type: overrides.type ?? "TEXT",
+    updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+    ...overrides,
+  } as never;
+}
+
+function entity(overrides: Record<string, unknown> = {}) {
+  return {
+    fields: [field()],
+    id: "entity_1",
+    isActive: true,
+    name: "Equipos",
+    slug: "equipos",
+    ...overrides,
+  } as never;
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  process.env.API_AUTH_SECRET = "test-api-auth-secret";
+  userFindUnique.mockResolvedValue({
+    email: "user@example.com",
+    id: "user_1",
+    name: "User One",
+  } as never);
+  membershipFindMany.mockResolvedValue([{ organizationId: "org_1" }] as never);
+  externalAppFindUnique.mockResolvedValue({
+    active: true,
+    clientId: app.clientId,
+    id: app.id,
+    name: app.name,
+    organizationId: "org_1",
+    slug: app.slug,
+  } as never);
+  contractFindFirst.mockResolvedValue(contract() as never);
+  membershipFindUnique.mockResolvedValue({ role: "ADMIN" } as never);
+});
+
+describe("GET /api/v1/contracts/[contractId]/entities", () => {
+  it("lists active entities for an authorized contract", async () => {
+    entityTypeFindMany.mockResolvedValue([
+      { id: "entity_1", isActive: true, name: "Equipos", slug: "equipos" },
+    ] as never);
+
+    const response = await entitiesGET(await apiRequest("/api/v1/contracts/contract_1/entities"), {
+      params: Promise.resolve({ contractId: "contract_1" }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      ok: true,
+      data: {
+        entities: [
+          { active: true, id: "entity_1", name: "Equipos", slug: "equipos" },
+        ],
+      },
+    });
+    expect(entityTypeFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { contractId: "contract_1", isActive: true },
+    }));
+  });
+
+  it("rejects a contract from another organization", async () => {
+    membershipFindUnique.mockResolvedValue(null);
+
+    const response = await entitiesGET(await apiRequest("/api/v1/contracts/contract_1/entities"), {
+      params: Promise.resolve({ contractId: "contract_1" }),
+    });
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({
+      error: { code: "CONTRACT_FORBIDDEN" },
+      ok: false,
+    });
+    expect(entityTypeFindMany).not.toHaveBeenCalled();
+  });
+
+  it("rejects an inactive external app", async () => {
+    externalAppFindUnique.mockResolvedValueOnce({
+      active: false,
+      clientId: app.clientId,
+      id: app.id,
+      name: app.name,
+      organizationId: "org_1",
+      slug: app.slug,
+    } as never);
+
+    const response = await entitiesGET(await apiRequest("/api/v1/contracts/contract_1/entities"), {
+      params: Promise.resolve({ contractId: "contract_1" }),
+    });
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({
+      error: { code: "TOKEN_APP_INACTIVE" },
+      ok: false,
+    });
+  });
+});
+
+describe("GET /api/v1/contracts/[contractId]/entities/[entityTypeId]", () => {
+  it("returns an entity definition with active fields, options and relation metadata", async () => {
+    entityTypeFindFirst.mockResolvedValue(entity({
+      fields: [
+        field({ id: "inactive", isActive: false, key: "inactivo" }),
+        field({
+          id: "status",
+          key: "estado",
+          options: [
+            { id: "opt_1", isActive: true, label: "Activo", sortOrder: 1, value: "activo" },
+          ],
+          sortOrder: 1,
+          type: "SELECT",
+        }),
+        field({
+          config: { relationKind: "MANY", targetEntityTypeId: "people" },
+          id: "people",
+          key: "personas",
+          multiple: true,
+          sortOrder: 2,
+          type: "RELATION",
+        }),
+      ],
+    }) as never);
+
+    const response = await entityDefinitionGET(
+      await apiRequest("/api/v1/contracts/contract_1/entities/entity_1"),
+      { params: Promise.resolve({ contractId: "contract_1", entityTypeId: "entity_1" }) },
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.data.entity.fields.map((item: { key: string }) => item.key)).toEqual([
+      "estado",
+      "personas",
+    ]);
+    expect(body.data.entity.fields[0]).toMatchObject({
+      options: [{ active: true, label: "Activo", value: "activo" }],
+      type: "SELECT",
+    });
+    expect(body.data.entity.fields[1]).toMatchObject({
+      config: { relation: { relationKind: "MANY", targetEntityTypeId: "people" } },
+      type: "RELATION",
+    });
+  });
+
+  it("returns 404 for an entity from another contract or a missing entity", async () => {
+    entityTypeFindFirst.mockResolvedValue(null);
+
+    const response = await entityDefinitionGET(
+      await apiRequest("/api/v1/contracts/contract_1/entities/foreign_entity"),
+      { params: Promise.resolve({ contractId: "contract_1", entityTypeId: "foreign_entity" }) },
+    );
+
+    expect(response.status).toBe(404);
+    expect(await response.json()).toMatchObject({
+      error: { code: "ENTITY_NOT_FOUND" },
+      ok: false,
+    });
+  });
+});
+
+describe("GET /api/v1/contracts/[contractId]/entities/[entityTypeId]/records", () => {
+  it("lists records with pagination, search and serialized values", async () => {
+    entityTypeFindFirst.mockResolvedValue(entity({
+      fields: [
+        field({ id: "code", key: "codigo", searchable: true }),
+        field({ id: "amount", key: "monto", type: "DECIMAL" }),
+      ],
+    }) as never);
+    entityRecordCount.mockResolvedValue(1);
+    entityRecordFindMany
+      .mockResolvedValueOnce([{ id: "record_1" }] as never)
+      .mockResolvedValueOnce([
+        {
+          displayName: "EQ-001",
+          id: "record_1",
+          outgoingRelations: [],
+          values: [
+            { entityFieldId: "code", textValue: "EQ-001" },
+            { decimalValue: new Prisma.Decimal("123.45"), entityFieldId: "amount" },
+          ],
+        },
+      ] as never);
+
+    const response = await recordsGET(
+      await apiRequest("/api/v1/contracts/contract_1/entities/entity_1/records?page=1&pageSize=50&search=EQ"),
+      { params: Promise.resolve({ contractId: "contract_1", entityTypeId: "entity_1" }) },
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      ok: true,
+      data: {
+        pagination: { page: 1, pageSize: 50, total: 1, totalPages: 1 },
+        records: [
+          {
+            displayName: "EQ-001",
+            id: "record_1",
+            values: {
+              codigo: "EQ-001",
+              monto: "123.45",
+            },
+          },
+        ],
+      },
+    });
+    expect(entityRecordCount).toHaveBeenCalled();
+  });
+
+  it("returns an empty page when there are no records", async () => {
+    entityTypeFindFirst.mockResolvedValue(entity() as never);
+    entityRecordCount.mockResolvedValue(0);
+    entityRecordFindMany.mockResolvedValueOnce([] as never);
+
+    const response = await recordsGET(
+      await apiRequest("/api/v1/contracts/contract_1/entities/entity_1/records"),
+      { params: Promise.resolve({ contractId: "contract_1", entityTypeId: "entity_1" }) },
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      data: {
+        pagination: { page: 1, pageSize: 50, total: 0, totalPages: 1 },
+        records: [],
+      },
+      ok: true,
+    });
+  });
+
+  it("rejects invalid pagination and invalid sort", async () => {
+    entityTypeFindFirst.mockResolvedValue(entity() as never);
+
+    const invalidPagination = await recordsGET(
+      await apiRequest("/api/v1/contracts/contract_1/entities/entity_1/records?page=0&pageSize=500"),
+      { params: Promise.resolve({ contractId: "contract_1", entityTypeId: "entity_1" }) },
+    );
+    const invalidSort = await recordsGET(
+      await apiRequest("/api/v1/contracts/contract_1/entities/entity_1/records?sort=field:unknown"),
+      { params: Promise.resolve({ contractId: "contract_1", entityTypeId: "entity_1" }) },
+    );
+
+    expect(invalidPagination.status).toBe(400);
+    expect(await invalidPagination.json()).toMatchObject({
+      error: { code: "INVALID_PAGINATION" },
+      ok: false,
+    });
+    expect(invalidSort.status).toBe(400);
+    expect(await invalidSort.json()).toMatchObject({
+      error: { code: "INVALID_SORT" },
+      ok: false,
+    });
+  });
+});
+
+describe("GET /api/v1/contracts/[contractId]/entities/[entityTypeId]/records/[recordId]", () => {
+  it("returns a single record with relation references", async () => {
+    entityTypeFindFirst.mockResolvedValue(entity({
+      fields: [
+        field({
+          config: { relationKind: "ONE", targetEntityTypeId: "people" },
+          id: "owner",
+          key: "responsable",
+          type: "RELATION",
+        }),
+      ],
+    }) as never);
+    entityRecordFindFirst.mockResolvedValue({
+      displayName: "EQ-001",
+      id: "record_1",
+      outgoingRelations: [
+        {
+          sourceFieldId: "owner",
+          targetRecord: {
+            displayName: "Persona 1",
+            entityTypeId: "people",
+            id: "person_1",
+          },
+          targetRecordId: "person_1",
+        },
+      ],
+      values: [],
+    } as never);
+
+    const response = await recordDetailGET(
+      await apiRequest("/api/v1/contracts/contract_1/entities/entity_1/records/record_1"),
+      {
+        params: Promise.resolve({
+          contractId: "contract_1",
+          entityTypeId: "entity_1",
+          recordId: "record_1",
+        }),
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      ok: true,
+      data: {
+        record: {
+          displayName: "EQ-001",
+          id: "record_1",
+          values: {
+            responsable: {
+              displayName: "Persona 1",
+              entityTypeId: "people",
+              id: "person_1",
+            },
+          },
+        },
+      },
+    });
+  });
+
+  it("returns 404 for a missing record or a record from another entity", async () => {
+    entityTypeFindFirst.mockResolvedValue(entity() as never);
+    entityRecordFindFirst.mockResolvedValue(null);
+
+    const response = await recordDetailGET(
+      await apiRequest("/api/v1/contracts/contract_1/entities/entity_1/records/foreign_record"),
+      {
+        params: Promise.resolve({
+          contractId: "contract_1",
+          entityTypeId: "entity_1",
+          recordId: "foreign_record",
+        }),
+      },
+    );
+
+    expect(response.status).toBe(404);
+    expect(await response.json()).toMatchObject({
+      error: { code: "RECORD_NOT_FOUND" },
+      ok: false,
+    });
+  });
+});

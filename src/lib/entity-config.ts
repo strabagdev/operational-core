@@ -434,6 +434,7 @@ export async function getAuthorizedEntityType(
           },
           _count: {
             select: {
+              auditChanges: true,
               values: true,
               relations: true,
             },
@@ -725,33 +726,64 @@ export async function updateEntityFieldWithOptions(
     });
 
     if (optionFieldTypes.has(input.type)) {
-      for (const [index, option] of options.entries()) {
-        if (option.id) {
-          await tx.fieldOption.update({
-            where: { id: option.id },
-            data: {
-              label: option.label,
-              value: option.value,
-              sortOrder: option.sortOrder || index + 1,
-              isActive: option.isActive,
-            },
-          });
-        } else {
-          await tx.fieldOption.create({
-            data: {
-              entityFieldId: field.id,
-              label: option.label,
-              value: option.value,
-              sortOrder: option.sortOrder || index + 1,
-              isActive: option.isActive,
-            },
-          });
-        }
-      }
+      await syncFieldOptions(tx, field.id, options);
     }
 
     return updated;
   });
+}
+
+async function syncFieldOptions(
+  tx: Prisma.TransactionClient,
+  fieldId: string,
+  options: FieldOptionDraft[],
+) {
+  const existingOptions = options
+    .map((option, index) => ({
+      ...option,
+      sortOrder: option.sortOrder || index + 1,
+    }))
+    .filter((option): option is FieldOptionDraft & { id: string; sortOrder: number } =>
+      Boolean(option.id),
+    );
+  const newOptions = options
+    .map((option, index) => ({
+      ...option,
+      sortOrder: option.sortOrder || index + 1,
+    }))
+    .filter((option) => !option.id);
+
+  if (existingOptions.length > 0) {
+    await tx.$executeRaw`
+      UPDATE "FieldOption" AS option
+      SET
+        "label" = data."label",
+        "value" = data."value",
+        "sortOrder" = data."sortOrder",
+        "isActive" = data."isActive"
+      FROM (
+        VALUES ${Prisma.join(
+          existingOptions.map((option) =>
+            Prisma.sql`(${option.id}, ${option.label}, ${option.value}, ${option.sortOrder}, ${option.isActive})`,
+          ),
+        )}
+      ) AS data("id", "label", "value", "sortOrder", "isActive")
+      WHERE option."id" = data."id"
+        AND option."entityFieldId" = ${fieldId}
+    `;
+  }
+
+  if (newOptions.length > 0) {
+    await tx.fieldOption.createMany({
+      data: newOptions.map((option) => ({
+        entityFieldId: fieldId,
+        label: option.label,
+        value: option.value,
+        sortOrder: option.sortOrder,
+        isActive: option.isActive,
+      })),
+    });
+  }
 }
 
 export async function setEntityFieldActive(
@@ -776,6 +808,154 @@ export async function setEntityFieldActive(
     where: { id: fieldId },
     data: { isActive },
   });
+}
+
+export type EntityFieldDeletionReasonCode =
+  | "HAS_VALUES"
+  | "HAS_RELATIONS"
+  | "HAS_AUDIT_HISTORY";
+
+export type EntityFieldDeletionSafety = {
+  canDelete: boolean;
+  reasons: Array<{
+    code: EntityFieldDeletionReasonCode;
+    count: number;
+    message: string;
+  }>;
+  counts: {
+    auditChanges: number;
+    relations: number;
+    values: number;
+  };
+};
+
+type EntityFieldUsageCounts = {
+  auditChanges: number;
+  relations: number;
+  values: number;
+};
+
+export function getEntityFieldDeletionSafetyFromCounts(
+  counts: EntityFieldUsageCounts,
+): EntityFieldDeletionSafety {
+  const reasons: EntityFieldDeletionSafety["reasons"] = [];
+
+  if (counts.values > 0) {
+    reasons.push({
+      code: "HAS_VALUES",
+      count: counts.values,
+      message: "Tiene valores históricos asociados.",
+    });
+  }
+
+  if (counts.relations > 0) {
+    reasons.push({
+      code: "HAS_RELATIONS",
+      count: counts.relations,
+      message: "Tiene relaciones históricas asociadas.",
+    });
+  }
+
+  if (counts.auditChanges > 0) {
+    reasons.push({
+      code: "HAS_AUDIT_HISTORY",
+      count: counts.auditChanges,
+      message: "Tiene auditoría histórica asociada.",
+    });
+  }
+
+  return {
+    canDelete: reasons.length === 0,
+    reasons,
+    counts,
+  };
+}
+
+export async function getEntityFieldDeletionSafety(
+  fieldId: string,
+  client: PrismaClientLike = prisma,
+) {
+  const [values, relations, auditChanges] = await Promise.all([
+    client.entityValue.count({ where: { entityFieldId: fieldId } }),
+    client.entityRelation.count({ where: { sourceFieldId: fieldId } }),
+    client.auditChange.count({ where: { entityFieldId: fieldId } }),
+  ]);
+
+  return getEntityFieldDeletionSafetyFromCounts({
+    auditChanges,
+    relations,
+    values,
+  });
+}
+
+export async function deleteUnusedEntityField(
+  contractId: string,
+  entityTypeId: string,
+  fieldId: string,
+  userId: string,
+) {
+  const authorized = await getAuthorizedEntityType(contractId, entityTypeId, userId);
+
+  if (!authorized) {
+    return null;
+  }
+
+  return prisma.$transaction(
+    async (tx) => {
+      const field = await tx.entityField.findFirst({
+        where: {
+          id: fieldId,
+          entityTypeId: authorized.entityType.id,
+          entityType: {
+            contractId: authorized.contract.id,
+          },
+        },
+        select: {
+          id: true,
+          name: true,
+          key: true,
+          type: true,
+          _count: {
+            select: {
+              auditChanges: true,
+              relations: true,
+              values: true,
+            },
+          },
+        },
+      });
+
+      if (!field) {
+        return null;
+      }
+
+      const safety = getEntityFieldDeletionSafetyFromCounts(field._count);
+
+      if (!safety.canDelete) {
+        throw userError(getEntityFieldDeletionBlockedMessage(safety));
+      }
+
+      await tx.fieldOption.deleteMany({
+        where: { entityFieldId: field.id },
+      });
+      await tx.entityField.delete({
+        where: { id: field.id },
+      });
+
+      return field;
+    },
+    { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+  );
+}
+
+export function getEntityFieldDeletionBlockedMessage(
+  safety: EntityFieldDeletionSafety,
+) {
+  const messages = safety.reasons.map((reason) => reason.message);
+
+  return messages.length > 0
+    ? `No puedes eliminar este campo porque ${messages.join(" ")} Puedes desactivarlo para que deje de estar disponible en nuevos registros.`
+    : "No puedes eliminar este campo.";
 }
 
 export async function reorderEntityFields(

@@ -29,6 +29,7 @@ describe("contract layout navigation", () => {
     expect(railSource).toContain("sticky top-0");
     expect(railSource).toContain("h-screen");
     expect(railSource).toContain("ThemeToggleButton");
+    expect(railSource).toContain("UserMenu");
     expect(railSource).toContain('aria-label={ariaLabel}');
     expect(railSource).toContain('aria-hidden="true"');
     expect(railSource).toContain('role="tooltip"');
@@ -64,9 +65,26 @@ describe("contract layout navigation", () => {
     expect(railSource).not.toContain("justify-center gap-2");
   });
 
-  it("keeps the theme toggle available on mobile navigation", () => {
+  it("keeps theme and user controls in the lower rail area", () => {
+    expect(railSource).toContain('className="grid gap-2 border-t border-border pt-2"');
+    expect(railSource).toContain("<ThemeToggleButton />");
+    expect(railSource).toContain("contentSide=\"right\"");
+    expect(railSource).toContain("userEmail");
+    expect(railSource).toContain("userImage");
+    expect(railSource).toContain("userName");
+  });
+
+  it("keeps the theme toggle and user menu available on mobile", () => {
     expect(layoutSource).toContain("ThemeToggleButton");
+    expect(layoutSource).toContain("<UserMenu");
     expect(layoutSource).toContain("md:hidden");
     expect(layoutSource).toContain("tooltipClassName");
+  });
+
+  it("moves the desktop user menu out of the header and into the rail", () => {
+    expect(layoutSource).toContain("userEmail={session.user.email}");
+    expect(layoutSource).toContain("userImage={session.user.image}");
+    expect(layoutSource).toContain("userName={session.user.name}");
+    expect(layoutSource).toContain('className="md:hidden"');
   });
 });

@@ -6,9 +6,6 @@ import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
 } from "@/components/ui/card";
 import {
   deserializeEntityValue,
@@ -21,6 +18,7 @@ import {
 import { deleteEntityRecordsAction } from "../actions";
 import { EntityRecordsTable } from "./entity-records-table";
 import { ImportRecordsSheet } from "./import-records-sheet";
+import { RecordListControls } from "./record-list-controls";
 
 type SortHeaderState = {
   active: boolean;
@@ -79,15 +77,9 @@ export default async function EntityRecordsPage({
       direction: "asc",
     }).explicit,
   );
-  const sortOptions = [
-    { label: displayHeader, value: "displayName" },
-    ...sortableFields.map((field) => ({ label: field.name, value: `field:${field.id}` })),
-    { label: "Actualizado", value: "updatedAt" },
-  ];
   const tableRecords = data.records.map((record) => ({
     id: record.id,
     displayName: record.displayName,
-    updatedAt: record.updatedAt.toLocaleDateString("es-CL"),
     values: listFields.map((field) => {
       const value = record.values.find((item) => item.entityFieldId === field.id);
       const fieldConfig = fieldsById.get(field.id);
@@ -154,57 +146,18 @@ export default async function EntityRecordsPage({
 
       <Card>
         <CardContent className="pt-6">
-          <form className="grid gap-3 md:grid-cols-[1fr_160px_160px_150px_auto]" method="get">
-            <input
-              className="h-10 rounded-md border border-input bg-background px-3 text-sm outline-none ring-ring focus-visible:ring-2"
-              defaultValue={q ?? ""}
-              name="q"
-              placeholder="Buscar"
-            />
-            <select
-              className="h-10 rounded-md border border-input bg-background px-3 text-sm"
-              defaultValue={data.pagination.pageSize}
-              name="pageSize"
-            >
-              <option value="25">25 por página</option>
-              <option value="50">50 por página</option>
-              <option value="100">100 por página</option>
-            </select>
-            <select
-              className="h-10 rounded-md border border-input bg-background px-3 text-sm"
-              defaultValue={data.sort?.key ?? "displayName"}
-              name="sort"
-            >
-              {sortOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-            <select
-              className="h-10 rounded-md border border-input bg-background px-3 text-sm"
-              defaultValue={data.sort?.direction ?? "desc"}
-              name="dir"
-            >
-              <option value="asc">Ascendente</option>
-              <option value="desc">Descendente</option>
-            </select>
-            <Button type="submit" variant="outline">
-              Filtrar
-            </Button>
-          </form>
+          <RecordListControls
+            basePath={basePath}
+            pageSize={data.pagination.pageSize}
+            query={q}
+            searchParams={{ dir, page, pageSize, q, sort }}
+            totalRecords={data.pagination.totalRecords}
+          />
         </CardContent>
       </Card>
 
       <Card>
-        <CardHeader>
-          <CardTitle>Listado</CardTitle>
-          <CardDescription>
-            {data.records.length} de {data.pagination.totalRecords} registro
-            {data.pagination.totalRecords === 1 ? "" : "s"}
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
+        <CardContent className="pt-6">
           <EntityRecordsTable
             contractId={contractId}
             deleteAction={deleteEntityRecordsAction.bind(null, contractId, entityTypeId)}
@@ -232,13 +185,6 @@ export default async function EntityRecordsPage({
                 : undefined,
             }))}
             records={tableRecords}
-            updatedAtSort={sortHeader({
-              basePath,
-              currentSort: data.sort,
-              pageSize: data.pagination.pageSize,
-              query: q,
-              sortKey: "updatedAt",
-            })}
           />
           <PaginationControls
             basePath={basePath}

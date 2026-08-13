@@ -143,6 +143,28 @@ export default async function EntityRecordDetailPage({
 
       <Card>
         <CardHeader>
+          <CardTitle>Metadata</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <dl className="grid gap-4 sm:grid-cols-2">
+            <div className="grid gap-1">
+              <dt className="text-sm font-medium">Creado</dt>
+              <dd className="text-sm text-muted-foreground">
+                {data.record.createdAt.toLocaleString("es-CL")}
+              </dd>
+            </div>
+            <div className="grid gap-1">
+              <dt className="text-sm font-medium">Actualizado</dt>
+              <dd className="text-sm text-muted-foreground">
+                {data.record.updatedAt.toLocaleString("es-CL")}
+              </dd>
+            </div>
+          </dl>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
           <CardTitle>Datos del registro</CardTitle>
         </CardHeader>
         <CardContent>

@@ -11,8 +11,13 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  getEntityFieldDeletionBlockedMessage,
+  getEntityFieldDeletionSafetyFromCounts,
+} from "@/lib/entity-config";
 import { parseFieldConfig } from "@/lib/field-validation";
 import {
   getFieldBehaviorBadges,
@@ -21,10 +26,12 @@ import {
   hasLimitedSupport,
 } from "@/lib/field-list-ux";
 
+import { FieldDeleteForm } from "./field-delete-form";
 import { FieldToggleForm } from "./field-toggle-form";
 
 export type FieldWithUsage = Parameters<typeof getFieldBehaviorBadges>[0] & {
   _count?: {
+    auditChanges: number;
     values: number;
     relations: number;
   };
@@ -40,6 +47,7 @@ export function FieldListItem({
   openHref,
   reorderAction,
   returnTo,
+  deleteAction,
   toggleAction,
 }: {
   contractId: string;
@@ -57,6 +65,12 @@ export function FieldListItem({
     formData: FormData,
   ) => void | Promise<void>;
   returnTo: string;
+  deleteAction: (
+    contractId: string,
+    entityTypeId: string,
+    fieldId: string,
+    formData: FormData,
+  ) => void | Promise<void>;
   toggleAction: (
     contractId: string,
     entityTypeId: string,
@@ -69,6 +83,11 @@ export function FieldListItem({
   const useBadges = getFieldUseBadges(field, entityTypes);
   const isPrimary = parseFieldConfig(field.config).display.primary === true;
   const toggleReturnTo = openHref.replace(/[?&]editField=[^&]+/, "");
+  const deletionSafety = getEntityFieldDeletionSafetyFromCounts({
+    auditChanges: field._count?.auditChanges ?? 0,
+    relations: field._count?.relations ?? 0,
+    values: field._count?.values ?? 0,
+  });
 
   return (
     <Card className={field.isActive ? "" : "opacity-70"}>
@@ -148,6 +167,16 @@ export function FieldListItem({
                     )}
                     isActive={field.isActive}
                     isPrimary={isPrimary}
+                    returnTo={toggleReturnTo}
+                  />
+                </div>
+                <DropdownMenuSeparator />
+                <div className="relative flex cursor-default select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none">
+                  <FieldDeleteForm
+                    action={deleteAction.bind(null, contractId, entityTypeId, field.id)}
+                    blockedMessage={getEntityFieldDeletionBlockedMessage(deletionSafety)}
+                    canDelete={deletionSafety.canDelete}
+                    fieldName={field.name}
                     returnTo={toggleReturnTo}
                   />
                 </div>

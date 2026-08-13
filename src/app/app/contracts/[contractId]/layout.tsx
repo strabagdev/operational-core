@@ -51,10 +51,13 @@ export default async function ContractLayout({
         contractCode={contract.code}
         contractName={contract.name}
         navigation={navigation}
+        userEmail={session.user.email}
+        userImage={session.user.image}
+        userName={session.user.name}
       />
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex min-h-16 items-center justify-between gap-4 border-b border-border px-4 md:px-6">
+        <header className="flex min-h-16 items-center justify-between gap-4 border-b border-border px-4 md:block md:px-6 md:py-3">
           <div className="min-w-0">
             <div className="truncate font-semibold">{contract.name}</div>
             <div className="truncate text-sm text-muted-foreground">
@@ -62,11 +65,13 @@ export default async function ContractLayout({
             </div>
           </div>
 
-          <UserMenu
-            email={session.user.email}
-            image={session.user.image}
-            name={session.user.name}
-          />
+          <div className="md:hidden">
+            <UserMenu
+              email={session.user.email}
+              image={session.user.image}
+              name={session.user.name}
+            />
+          </div>
         </header>
 
         <div className="border-b border-border px-4 py-3 md:hidden">

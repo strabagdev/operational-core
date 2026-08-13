@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Moon, Sun } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -18,10 +18,6 @@ type ThemeToggleButtonProps = {
 };
 
 function readStoredTheme(): ResolvedTheme {
-  if (typeof window === "undefined") {
-    return "light";
-  }
-
   return resolveThemePreference({
     preference: window.localStorage.getItem(themeStorageKey),
     systemPrefersDark: window.matchMedia("(prefers-color-scheme: dark)").matches,
@@ -38,10 +34,18 @@ export function ThemeToggleButton({
   className,
   tooltipClassName,
 }: ThemeToggleButtonProps) {
-  const [theme, setTheme] = useState<ResolvedTheme>(() => readStoredTheme());
+  const [theme, setTheme] = useState<ResolvedTheme>("light");
   const nextTheme = nextThemePreference(theme);
   const label = nextTheme === "dark" ? "Cambiar a modo oscuro" : "Cambiar a modo claro";
   const Icon = nextTheme === "dark" ? Moon : Sun;
+
+  useEffect(() => {
+    const syncTheme = window.setTimeout(() => {
+      setTheme(readStoredTheme());
+    }, 0);
+
+    return () => window.clearTimeout(syncTheme);
+  }, []);
 
   function toggleTheme() {
     const next = nextThemePreference(theme);
@@ -56,7 +60,6 @@ export function ThemeToggleButton({
       aria-label={label}
       className={cn("group relative h-10 w-10 px-0", className)}
       onClick={toggleTheme}
-      suppressHydrationWarning
       type="button"
       variant="ghost"
     >

@@ -28,6 +28,13 @@ Record presentation is stored inside `EntityField.config.display`:
 
 `EntityField.sortOrder` is the single official order for field configuration, record forms, record-list dynamic columns, Excel templates, and Excel imports. `display.listOrder` must not create a different order.
 
+Dynamic fields support two different lifecycle operations:
+
+- deactivation keeps the `EntityField` row and preserves all historical data while removing the field from new operational use;
+- permanent deletion removes the `EntityField` only when it has never been used.
+
+Permanent deletion is intentionally conservative. A field is not deletable when any `EntityValue`, `EntityRelation`, or `AuditChange` references it. This includes inactive fields and values that may look empty at presentation time but still exist as persisted rows. `FieldOption` rows for unused `SELECT` or `MULTISELECT` fields are configuration only and do not block deletion; they are deleted together with the field. Operational Core does not currently implement destructive deletion of fields with history, nor does the audit enum include a dedicated configuration-deletion event for this operation.
+
 Only one active field should be primary for each `EntityType`. The server unmarks any previous primary field when a new one is saved. If no primary field is configured, records keep the legacy display-name fallback: first required `TEXT`, then first `TEXT`, then `Registro sin nombre`.
 
 Supported validation rules are constrained by field type:

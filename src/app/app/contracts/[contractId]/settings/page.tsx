@@ -47,6 +47,13 @@ export default async function SettingsPage({
             </Link>
           </Button>
         </div>
+        <div>
+          <Button asChild variant="outline">
+            <Link href="/app/settings/apps">
+              Aplicaciones externas
+            </Link>
+          </Button>
+        </div>
       </CardContent>
     </Card>
   );

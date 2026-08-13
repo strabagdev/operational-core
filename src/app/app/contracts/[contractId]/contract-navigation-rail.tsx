@@ -10,6 +10,8 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { isContractNavigationItemActive } from "@/lib/contract-layout-navigation";
 
+import { UserMenu } from "./user-menu";
+
 const icons = {
   Actividad: Activity,
   Configuración: Settings,
@@ -25,10 +27,16 @@ type NavigationItem = {
 export function ContractNavigationRail({
   contractCode,
   contractName,
+  userEmail,
+  userImage,
+  userName,
   navigation,
 }: {
   contractCode: string;
   contractName: string;
+  userEmail?: string | null;
+  userImage?: string | null;
+  userName?: string | null;
   navigation: NavigationItem[];
 }) {
   const pathname = usePathname();
@@ -60,7 +68,7 @@ export function ContractNavigationRail({
             />
           ))}
         </div>
-        <div className="grid gap-2">
+        <div className="grid gap-2 border-t border-border pt-2">
           {secondaryItems.map((item) => (
             <NavigationRailLink
               active={isContractNavigationItemActive({
@@ -73,6 +81,13 @@ export function ContractNavigationRail({
             />
           ))}
           <ThemeToggleButton />
+          <UserMenu
+            contentAlign="end"
+            contentSide="right"
+            email={userEmail}
+            image={userImage}
+            name={userName}
+          />
         </div>
       </nav>
     </aside>

@@ -39,6 +39,9 @@ export default async function AppPage() {
             <Button asChild variant="outline">
               <Link href="/app/settings/contracts">Administrar contratos</Link>
             </Button>
+            <Button asChild variant="outline">
+              <Link href="/app/settings/apps">Aplicaciones externas</Link>
+            </Button>
           </div>
         </div>
       </header>

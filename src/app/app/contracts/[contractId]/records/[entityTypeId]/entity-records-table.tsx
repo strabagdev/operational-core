@@ -33,7 +33,6 @@ type BulkAction = (
 type RecordRow = {
   id: string;
   displayName: string;
-  updatedAt: string;
   values: Array<{ fieldId: string; value: string }>;
 };
 
@@ -57,7 +56,6 @@ export function EntityRecordsTable({
   entityTypeId,
   listFields,
   records,
-  updatedAtSort,
 }: {
   contractId: string;
   deleteAction: BulkAction;
@@ -66,7 +64,6 @@ export function EntityRecordsTable({
   entityTypeId: string;
   listFields: ListField[];
   records: RecordRow[];
-  updatedAtSort: SortHeaderState;
 }) {
   const router = useRouter();
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -187,9 +184,6 @@ export function EntityRecordsTable({
                   )}
                 </th>
               ))}
-              <th className="py-3 pr-4 font-medium">
-                <SortableHeader label="Actualizado" sort={updatedAtSort} />
-              </th>
               <th className="py-3 text-right font-medium">Acciones</th>
             </tr>
           </thead>
@@ -219,9 +213,13 @@ export function EntityRecordsTable({
                       {record.values.find((value) => value.fieldId === field.id)?.value ?? ""}
                     </td>
                   ))}
-                  <td className="py-3 pr-4">{record.updatedAt}</td>
                   <td className="py-3">
                     <div className="flex justify-end gap-2">
+                      <Button asChild size="sm" variant="outline">
+                        <Link href={entityRecordDetailPath(contractId, entityTypeId, record.id)}>
+                          Ver
+                        </Link>
+                      </Button>
                       <Button asChild size="sm" variant="outline">
                         <Link href={entityRecordEditPath(contractId, entityTypeId, record.id)}>
                           Editar
@@ -235,7 +233,7 @@ export function EntityRecordsTable({
               <tr>
                 <td
                   className="py-6 text-sm text-muted-foreground"
-                  colSpan={4 + listFields.length}
+                  colSpan={3 + listFields.length}
                 >
                   No hay registros para estos filtros.
                 </td>
