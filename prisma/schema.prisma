@@ -151,10 +151,29 @@ model ExternalApp {
   slug           String
   active         Boolean      @default(true)
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  idempotencyKeys ApiIdempotencyKey[]
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 
   @@unique([organizationId, slug])
+}
+
+model ApiIdempotencyKey {
+  id              String   @id @default(cuid())
+  externalAppId   String
+  clientRequestId String
+  operation       String
+  requestHash     String
+  contractId      String
+  entityTypeId    String
+  entityRecordId  String?
+  externalApp     ExternalApp @relation(fields: [externalAppId], references: [id], onDelete: Cascade)
+  entityRecord    EntityRecord? @relation(fields: [entityRecordId], references: [id], onDelete: SetNull)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([externalAppId, operation, clientRequestId])
+  @@index([entityRecordId])
 }
 
 model EntityType {
@@ -222,6 +241,7 @@ model EntityRecord {
   outgoingRelations EntityRelation[] @relation("SourceRecordRelations")
   incomingRelations EntityRelation[] @relation("TargetRecordRelations")
   auditEvents       AuditEvent[]
+  idempotencyKeys   ApiIdempotencyKey[]
   createdAt         DateTime         @default(now())
   updatedAt         DateTime         @updatedAt
 }

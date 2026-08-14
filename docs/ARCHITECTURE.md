@@ -130,6 +130,16 @@ Record mutations and audit writes run in the same Prisma transaction where appli
 
 Historical audit actions such as `RECORD_STATUS_CHANGED` and `RECORD_ARCHIVED` may remain in the `AuditAction` enum for legacy events, but new EntityRecord mutations no longer generate technical status audit events.
 
+## External API
+
+The external API lives under `/api/v1` and uses JSON response envelopes. It is separate from the Auth.js web session flow: API clients authenticate with Bearer JWT access tokens signed by `API_AUTH_SECRET`, not with web cookies or `AUTH_SECRET`.
+
+Contract-scoped API access derives organization, app, contract, and membership from the database on every protected request. Clients cannot choose organization or role through request payloads.
+
+Dynamic entity definitions and records are exposed through `/api/v1/contracts/:contractId/entities`. Record write endpoints reuse the same server-side validation layer used by the web UI instead of maintaining a parallel validation engine. `EntityField.key` is the external JSON key for record values.
+
+External record creation is persistently idempotent through `ApiIdempotencyKey`. The unique boundary is external app, operation, and `clientRequestId`; matching payload replays return the original record, while different payloads are rejected as conflicts. The idempotency row points back to the created `EntityRecord` after a successful transaction.
+
 ## Application Boundaries
 
 The current Core does not implement:
@@ -137,7 +147,6 @@ The current Core does not implement:
 - workflows or approvals;
 - business process states; model them as dynamic entity fields instead;
 - granular permissions;
-- public APIs;
 - real file storage;
 - comments;
 - labels or favorites;

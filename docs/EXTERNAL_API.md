@@ -386,6 +386,47 @@ Success response:
 
 Records are never returned as raw `EntityRecord`/`EntityValue` Prisma objects. `values` is keyed by `EntityField.key`.
 
+### POST /api/v1/contracts/:contractId/entities/:entityTypeId/records
+
+Creates one record in an active entity type.
+
+Request:
+
+```json
+{
+  "clientRequestId": "external-system-request-123",
+  "displayName": "Nombre opcional",
+  "values": {
+    "codigo": "EQ-001",
+    "monto": "123.45"
+  }
+}
+```
+
+`clientRequestId` is mandatory and is used for persistent idempotency. It must be unique per external app, operation, and entity type. Repeating the same `clientRequestId` with the same payload returns the existing created record. Repeating it with a different payload returns `409 IDEMPOTENCY_CONFLICT`.
+
+`values` must be a JSON object keyed by `EntityField.key`. Only active fields can be written. Inactive fields remain stored historically but are rejected for new API writes.
+
+Success response:
+
+```json
+{
+  "ok": true,
+  "data": {
+    "record": {
+      "id": "record_id",
+      "displayName": "EQ-001",
+      "values": {
+        "codigo": "EQ-001",
+        "monto": "123.45"
+      }
+    }
+  }
+}
+```
+
+New writes return status `201`. Idempotent replays of the same request return status `200` and do not create a second record or audit event.
+
 ### GET /api/v1/contracts/:contractId/entities/:entityTypeId/records/:recordId
 
 Returns one record from an active entity type.
@@ -408,6 +449,49 @@ Success response:
 ```
 
 The record must belong to the requested `entityTypeId`, and the entity type must belong to the requested `contractId`.
+
+### PATCH /api/v1/contracts/:contractId/entities/:entityTypeId/records/:recordId
+
+Updates one existing record in an active entity type.
+
+Request:
+
+```json
+{
+  "displayName": "Nombre visible opcional",
+  "values": {
+    "monto": null,
+    "estado": "vigente"
+  }
+}
+```
+
+PATCH is partial:
+
+- omitted fields are left unchanged;
+- `null` clears the value when the field validation allows it;
+- `displayName` changes only when the request includes it;
+- active field validation, unique checks, option validation, relation validation, and cross-contract isolation use the same server-side domain helpers as the web UI.
+
+Success response:
+
+```json
+{
+  "ok": true,
+  "data": {
+    "record": {
+      "id": "record_id",
+      "displayName": "Nombre visible opcional",
+      "values": {
+        "monto": null,
+        "estado": "vigente"
+      }
+    }
+  }
+}
+```
+
+PATCH does not currently use `clientRequestId`; it is not idempotent in this stage.
 
 ### Record Value Serialization
 
@@ -433,14 +517,36 @@ Relation values are serialized as:
 }
 ```
 
+### Record Write Value Input
+
+| EntityField type | JSON input |
+| --- | --- |
+| `TEXT`, `TEXTAREA`, `EMAIL`, `PHONE`, `URL`, `DATE`, `DATETIME`, `SELECT` | `string` or `null`. |
+| `INTEGER` | integer `number` or `null`. |
+| `DECIMAL`, `MONEY` | decimal `string` or `number`, or `null`. |
+| `BOOLEAN` | `boolean` or `null`. |
+| `MULTISELECT` | array of option-value strings, or `null` to clear. |
+| `RELATION` | target record id string, array of target record ids, or `null` to clear. |
+| `FILE`, `IMAGE` | Not writable through the JSON API in this stage because upload/storage behavior is not implemented. |
+
+All relation target ids are validated server-side. The target record must belong to the configured target entity type inside the same contract.
+
 ### Dynamic Entity Errors
 
 | Status | Code | Meaning |
 | --- | --- | --- |
+| 400 | `INVALID_JSON` | Request body is not valid JSON. |
+| 400 | `INVALID_RECORD_BODY` | Request body shape is invalid. |
+| 400 | `UNKNOWN_FIELD` | A value key does not match an entity field. |
+| 400 | `INACTIVE_FIELD` | A value key matches an inactive field and cannot be written. |
+| 400 | `INVALID_FIELD_VALUE` | A field value fails type or configured validation. |
+| 400 | `INVALID_RELATION` | Relation input points to an invalid, incompatible, cross-contract, or self-referential record. |
+| 400 | `UNIQUE_CONSTRAINT` | A unique field value conflicts with an existing record. |
 | 400 | `INVALID_PAGINATION` | `page` or `pageSize` is invalid, or `pageSize` exceeds `100`. |
 | 400 | `INVALID_SORT` | `sort` or `direction` is invalid. |
 | 401 | API auth codes | Missing, invalid, expired, or stale Bearer token. |
 | 403 | `CONTRACT_FORBIDDEN` / `TOKEN_APP_INACTIVE` | Authenticated caller cannot access the contract, or the app is inactive. |
+| 409 | `IDEMPOTENCY_CONFLICT` | POST reused `clientRequestId` with a different payload. |
 | 404 | `CONTRACT_NOT_FOUND` | Active contract does not exist. |
 | 404 | `ENTITY_NOT_FOUND` | Active entity type does not exist in the contract. |
 | 404 | `RECORD_NOT_FOUND` | Record does not exist inside the requested entity type. |
@@ -491,6 +597,22 @@ Current limitations:
 - No contracts are restricted by application yet.
 - Audit events for external applications are not implemented because the current audit model is contract-centered through `AuditEvent.contractId`.
 
+## API Idempotency
+
+`POST /api/v1/contracts/:contractId/entities/:entityTypeId/records` persists idempotency keys in `ApiIdempotencyKey`.
+
+The unique key is:
+
+```text
+externalAppId + operation + clientRequestId
+```
+
+The operation currently includes the contract id and entity type id for record creation. The persisted request hash is a SHA-256 hash of a stable JSON representation of the accepted create payload. The table stores the created `entityRecordId` after the record write succeeds.
+
+This model makes retries safe after network failures and protects concurrent duplicate POSTs. Replays with the same payload return the original record. Replays with a different payload are rejected with `409 IDEMPOTENCY_CONFLICT`.
+
+`clientRequestId`, request hashes, and `entityRecordId` are not secrets, but logs should still avoid dumping full request bodies from external systems.
+
 ## Health
 
 `GET /api/v1/health` is public and returns:
@@ -509,8 +631,10 @@ Current limitations:
 
 - No refresh tokens.
 - Organization and contract context is available only through `GET /api/v1/context`.
-- Contract-scoped entity and record endpoints are read-only.
-- No create/update/delete endpoints for external dynamic records yet.
+- No batch endpoints for external dynamic records yet.
+- No delete endpoints for external dynamic records yet.
+- PATCH is not idempotent yet.
+- `FILE` and `IMAGE` fields are not writable through JSON API.
 - No granular permission model for external API endpoints yet.
 - No API-specific CORS policy yet.
 - No API keys.

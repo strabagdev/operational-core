@@ -32,11 +32,14 @@ type ApiEntityFieldForQuery = Awaited<ReturnType<typeof getApiEntityDefinition>>
     : never
   : never;
 
+export type ApiRecordEntity = NonNullable<Awaited<ReturnType<typeof getApiEntityDefinition>>>;
+
 export async function getApiContractEntities(contractId: string) {
   return prisma.entityType.findMany({
     orderBy: { name: "asc" },
     select: {
       id: true,
+      contractId: true,
       isActive: true,
       name: true,
       slug: true,
@@ -87,6 +90,7 @@ export async function getApiEntityDefinition(
           isActive: true,
         },
       },
+      contractId: true,
       id: true,
       isActive: true,
       name: true,

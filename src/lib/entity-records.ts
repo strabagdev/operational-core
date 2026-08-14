@@ -782,7 +782,10 @@ export async function updateEntityRecord(
 
   return prisma.$transaction(async (tx) => {
     await tx.entityValue.deleteMany({
-      where: { entityRecordId: authorized.record.id },
+      where: {
+        entityRecordId: authorized.record.id,
+        entityFieldId: { in: authorized.entityType.fields.map((field) => field.id) },
+      },
     });
 
     if (values.length > 0) {

@@ -4,19 +4,48 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { signApiAccessToken } from "@/lib/api-auth";
 import { prisma } from "@/lib/prisma";
 import { GET as entityDefinitionGET } from "./[entityTypeId]/route";
-import { GET as recordDetailGET } from "./[entityTypeId]/records/[recordId]/route";
-import { GET as recordsGET } from "./[entityTypeId]/records/route";
+import {
+  GET as recordDetailGET,
+  PATCH as recordDetailPATCH,
+} from "./[entityTypeId]/records/[recordId]/route";
+import {
+  GET as recordsGET,
+  POST as recordsPOST,
+} from "./[entityTypeId]/records/route";
 import { GET as entitiesGET } from "./route";
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    $transaction: vi.fn(),
+    apiIdempotencyKey: {
+      create: vi.fn(),
+      update: vi.fn(),
+    },
+    auditEvent: {
+      create: vi.fn(),
+    },
     contract: {
       findFirst: vi.fn(),
     },
+    entityField: {
+      findMany: vi.fn(),
+    },
     entityRecord: {
       count: vi.fn(),
+      create: vi.fn(),
       findFirst: vi.fn(),
       findMany: vi.fn(),
+      update: vi.fn(),
+    },
+    entityRelation: {
+      createMany: vi.fn(),
+      deleteMany: vi.fn(),
+      findMany: vi.fn(),
+    },
+    entityValue: {
+      createMany: vi.fn(),
+      deleteMany: vi.fn(),
+      findFirst: vi.fn(),
     },
     entityType: {
       findFirst: vi.fn(),
@@ -35,10 +64,23 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
+const transaction = vi.mocked(prisma.$transaction);
+const apiIdempotencyKeyCreate = vi.mocked(prisma.apiIdempotencyKey.create);
+const apiIdempotencyKeyUpdate = vi.mocked(prisma.apiIdempotencyKey.update);
+const auditEventCreate = vi.mocked(prisma.auditEvent.create);
 const contractFindFirst = vi.mocked(prisma.contract.findFirst);
+const entityFieldFindMany = vi.mocked(prisma.entityField.findMany);
 const entityRecordCount = vi.mocked(prisma.entityRecord.count);
+const entityRecordCreate = vi.mocked(prisma.entityRecord.create);
 const entityRecordFindFirst = vi.mocked(prisma.entityRecord.findFirst);
 const entityRecordFindMany = vi.mocked(prisma.entityRecord.findMany);
+const entityRecordUpdate = vi.mocked(prisma.entityRecord.update);
+const entityRelationCreateMany = vi.mocked(prisma.entityRelation.createMany);
+const entityRelationDeleteMany = vi.mocked(prisma.entityRelation.deleteMany);
+const entityRelationFindMany = vi.mocked(prisma.entityRelation.findMany);
+const entityValueCreateMany = vi.mocked(prisma.entityValue.createMany);
+const entityValueDeleteMany = vi.mocked(prisma.entityValue.deleteMany);
+const entityValueFindFirst = vi.mocked(prisma.entityValue.findFirst);
 const entityTypeFindFirst = vi.mocked(prisma.entityType.findFirst);
 const entityTypeFindMany = vi.mocked(prisma.entityType.findMany);
 const externalAppFindUnique = vi.mocked(prisma.externalApp.findUnique);
@@ -116,6 +158,12 @@ function entity(overrides: Record<string, unknown> = {}) {
 beforeEach(() => {
   vi.clearAllMocks();
   process.env.API_AUTH_SECRET = "test-api-auth-secret";
+  transaction.mockImplementation((async (
+    callback: (tx: typeof prisma) => Promise<unknown>,
+  ) => callback(prisma)) as never);
+  apiIdempotencyKeyCreate.mockResolvedValue({ id: "idem_1" } as never);
+  apiIdempotencyKeyUpdate.mockResolvedValue({ id: "idem_1" } as never);
+  auditEventCreate.mockResolvedValue({ id: "audit_1" } as never);
   userFindUnique.mockResolvedValue({
     email: "user@example.com",
     id: "user_1",
@@ -131,6 +179,15 @@ beforeEach(() => {
     slug: app.slug,
   } as never);
   contractFindFirst.mockResolvedValue(contract() as never);
+  entityFieldFindMany.mockResolvedValue([] as never);
+  entityRecordCreate.mockResolvedValue({ displayName: "EQ-001", id: "record_1" } as never);
+  entityRecordUpdate.mockResolvedValue({ displayName: "EQ-001", id: "record_1" } as never);
+  entityRelationCreateMany.mockResolvedValue({ count: 0 } as never);
+  entityRelationDeleteMany.mockResolvedValue({ count: 0 } as never);
+  entityRelationFindMany.mockResolvedValue([] as never);
+  entityValueCreateMany.mockResolvedValue({ count: 1 } as never);
+  entityValueDeleteMany.mockResolvedValue({ count: 1 } as never);
+  entityValueFindFirst.mockResolvedValue(null);
   membershipFindUnique.mockResolvedValue({ role: "ADMIN" } as never);
 });
 
@@ -350,6 +407,47 @@ describe("GET /api/v1/contracts/[contractId]/entities/[entityTypeId]/records", (
   });
 });
 
+describe("POST /api/v1/contracts/[contractId]/entities/[entityTypeId]/records", () => {
+  it("creates a record from values keyed by EntityField.key", async () => {
+    entityTypeFindFirst.mockResolvedValue(entity() as never);
+    entityRecordFindMany.mockResolvedValueOnce([] as never);
+    entityRecordFindFirst.mockResolvedValueOnce({
+      displayName: "EQ-001",
+      id: "record_1",
+      outgoingRelations: [],
+      values: [{ entityFieldId: "field_codigo", textValue: "EQ-001" }],
+    } as never);
+
+    const response = await recordsPOST(
+      new Request("http://localhost/api/v1/contracts/contract_1/entities/entity_1/records", {
+        body: JSON.stringify({
+          clientRequestId: "client-request-1",
+          values: { codigo: "EQ-001" },
+        }),
+        headers: (await apiRequest("/api/v1/contracts/contract_1/entities/entity_1/records")).headers,
+        method: "POST",
+      }),
+      { params: Promise.resolve({ contractId: "contract_1", entityTypeId: "entity_1" }) },
+    );
+
+    expect(response.status).toBe(201);
+    expect(await response.json()).toEqual({
+      ok: true,
+      data: {
+        record: {
+          displayName: "EQ-001",
+          id: "record_1",
+          values: { codigo: "EQ-001" },
+        },
+      },
+    });
+    expect(entityRecordCreate).toHaveBeenCalledWith({
+      data: { displayName: "EQ-001", entityTypeId: "entity_1" },
+    });
+    expect(apiIdempotencyKeyCreate).toHaveBeenCalled();
+  });
+});
+
 describe("GET /api/v1/contracts/[contractId]/entities/[entityTypeId]/records/[recordId]", () => {
   it("returns a single record with relation references", async () => {
     entityTypeFindFirst.mockResolvedValue(entity({
@@ -428,6 +526,73 @@ describe("GET /api/v1/contracts/[contractId]/entities/[entityTypeId]/records/[re
     expect(await response.json()).toMatchObject({
       error: { code: "RECORD_NOT_FOUND" },
       ok: false,
+    });
+  });
+});
+
+describe("PATCH /api/v1/contracts/[contractId]/entities/[entityTypeId]/records/[recordId]", () => {
+  it("partially updates a record and leaves omitted values intact", async () => {
+    entityTypeFindFirst.mockResolvedValue(entity({
+      fields: [
+        field({ id: "field_codigo", key: "codigo", required: true }),
+        field({ id: "field_nota", key: "nota", required: false, sortOrder: 2 }),
+      ],
+    }) as never);
+    entityRecordFindFirst
+      .mockResolvedValueOnce({
+        displayName: "EQ-001",
+        id: "record_1",
+        outgoingRelations: [],
+        values: [
+          { entityFieldId: "field_codigo", textValue: "EQ-001" },
+          { entityFieldId: "field_nota", textValue: "Anterior" },
+        ],
+      } as never)
+      .mockResolvedValueOnce({
+        displayName: "EQ-001",
+        id: "record_1",
+        outgoingRelations: [],
+        values: [
+          { entityFieldId: "field_codigo", textValue: "EQ-001" },
+          { entityFieldId: "field_nota", textValue: "Nueva" },
+        ],
+      } as never);
+    entityRecordFindMany.mockResolvedValueOnce([] as never);
+
+    const response = await recordDetailPATCH(
+      new Request("http://localhost/api/v1/contracts/contract_1/entities/entity_1/records/record_1", {
+        body: JSON.stringify({ values: { nota: "Nueva" } }),
+        headers: (await apiRequest("/api/v1/contracts/contract_1/entities/entity_1/records/record_1")).headers,
+        method: "PATCH",
+      }),
+      {
+        params: Promise.resolve({
+          contractId: "contract_1",
+          entityTypeId: "entity_1",
+          recordId: "record_1",
+        }),
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      ok: true,
+      data: {
+        record: {
+          displayName: "EQ-001",
+          id: "record_1",
+          values: {
+            codigo: "EQ-001",
+            nota: "Nueva",
+          },
+        },
+      },
+    });
+    expect(entityValueCreateMany).toHaveBeenCalledWith({
+      data: expect.arrayContaining([
+        expect.objectContaining({ entityFieldId: "field_codigo", textValue: "EQ-001" }),
+        expect.objectContaining({ entityFieldId: "field_nota", textValue: "Nueva" }),
+      ]),
     });
   });
 });
