@@ -6,8 +6,8 @@ import { ThemeToggleButton } from "@/components/theme-toggle-button";
 import { Button } from "@/components/ui/button";
 import { getAuthorizedContract } from "@/lib/contracts";
 
+import { ContractContextHeader } from "./contract-context-header";
 import { ContractNavigationRail } from "./contract-navigation-rail";
-import { UserMenu } from "./user-menu";
 
 export default async function ContractLayout({
   children,
@@ -57,22 +57,14 @@ export default async function ContractLayout({
       />
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex min-h-16 items-center justify-between gap-4 border-b border-border px-4 md:block md:px-6 md:py-3">
-          <div className="min-w-0">
-            <div className="truncate font-semibold">{contract.name}</div>
-            <div className="truncate text-sm text-muted-foreground">
-              {contract.code} · {contract.organization.name}
-            </div>
-          </div>
-
-          <div className="md:hidden">
-            <UserMenu
-              email={session.user.email}
-              image={session.user.image}
-              name={session.user.name}
-            />
-          </div>
-        </header>
+        <ContractContextHeader
+          contractCode={contract.code}
+          contractName={contract.name}
+          organizationName={contract.organization.name}
+          userEmail={session.user.email}
+          userImage={session.user.image}
+          userName={session.user.name}
+        />
 
         <div className="border-b border-border px-4 py-3 md:hidden">
           <nav className="flex gap-2 overflow-x-auto">

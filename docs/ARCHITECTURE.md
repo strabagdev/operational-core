@@ -14,6 +14,8 @@ It is not an ERP. The Core should not own workflows, approvals, generic business
 
 `EntityType` defines a record category inside one contract, such as Personas, Equipos, Empresas, or Documentos.
 
+`EntityType.icon` is optional and stores only a stable key from Opco's controlled Lucide-based catalog, such as `warehouse`. It is nullable for existing or unbranded entities. The database does not store SVG, HTML, or React component names.
+
 `EntityField` defines active fields for an entity type. Field definitions include type, required, unique, searchable, multiple, sort order, optional JSON config, and active state.
 
 `FieldOption` stores active options for `SELECT` and `MULTISELECT` fields.

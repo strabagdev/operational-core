@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
 import { auth } from "@/auth";
+import { EntityIcon } from "@/components/entity-icon";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -63,7 +64,10 @@ export default async function EntityTypesPage({
               <CardHeader className="pb-4">
                 <div className="flex items-start justify-between gap-4">
                   <div className="space-y-1">
-                    <CardTitle>{entityType.name}</CardTitle>
+                    <CardTitle className="flex items-center gap-2">
+                      <EntityIcon className="text-muted-foreground" icon={entityType.icon} />
+                      {entityType.name}
+                    </CardTitle>
                     <CardDescription>{entityType.slug}</CardDescription>
                   </div>
                   <span className="rounded-md border border-border px-2 py-1 text-xs font-medium">

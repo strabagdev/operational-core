@@ -23,6 +23,7 @@ import {
 } from "./field-editor-state";
 import { keyify, slugify } from "./format";
 import { getReorderedEntityFieldUpdates } from "./entity-field-order";
+import { isEntityIconKey } from "./entity-icons";
 import { prisma } from "./prisma";
 import { parseMoneyCurrency } from "./money";
 
@@ -40,7 +41,14 @@ export const entityTypeSchema = z.object({
     .min(2, "El slug debe tener al menos 2 caracteres.")
     .regex(slugRegex, "Usa solo minúsculas, números y guiones."),
   description: z.string().trim().optional(),
-  icon: z.string().trim().optional(),
+  icon: z
+    .string()
+    .trim()
+    .optional()
+    .transform((value) => value || undefined)
+    .refine((value) => value === undefined || isEntityIconKey(value), {
+      message: "Selecciona un icono válido.",
+    }),
   isActive: z.boolean(),
 });
 

@@ -260,6 +260,7 @@ Success response:
         "id": "entity_type_id",
         "name": "Equipos",
         "slug": "equipos",
+        "icon": "warehouse",
         "active": true
       }
     ]
@@ -283,6 +284,7 @@ Success response:
       "id": "entity_type_id",
       "name": "Equipos",
       "slug": "equipos",
+      "icon": "warehouse",
       "active": true,
       "fields": [
         {
@@ -306,6 +308,8 @@ Success response:
   }
 }
 ```
+
+The entity DTO uses `icon` as a nullable stable key from Opco's controlled entity-icon catalog. It is never SVG, HTML, or a React component name. Clients can map keys such as `warehouse` to their own local icon library. Entities without a configured icon return `icon: null`.
 
 The field DTO uses `EntityField.key` as the stable external key. Record DTOs use the same key inside `values`.
 

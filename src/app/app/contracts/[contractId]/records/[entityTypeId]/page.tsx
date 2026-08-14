@@ -1,12 +1,11 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
+import { type ReactNode } from "react";
+import { Download, FileSpreadsheet, Plus } from "lucide-react";
 
 import { auth } from "@/auth";
+import { EntityIcon } from "@/components/entity-icon";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-} from "@/components/ui/card";
 import {
   deserializeEntityValue,
   getEntityRecords,
@@ -99,65 +98,81 @@ export default async function EntityRecordsPage({
   }));
 
   return (
-    <div className="grid w-full gap-6">
-      <header className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold">{data.entityType.name}</h1>
-          <p className="text-sm text-muted-foreground">
-            Registros operacionales de este tipo de entidad.
-          </p>
-        </div>
-        <div className="flex flex-wrap justify-end gap-2">
-          <Button asChild variant="outline">
-            <a href={`/app/contracts/${contractId}/records/${entityTypeId}/template`}>
-              Descargar plantilla
-            </a>
-          </Button>
-          <Button asChild variant="outline">
-            <a href={exportHref({
-              basePath,
-              query: q,
-              sort: data.sort,
-            })}
-            >
-              Exportar datos ({data.pagination.totalRecords})
-            </a>
-          </Button>
-          <ImportRecordsSheet
-            contractId={contractId}
-            entityName={data.entityType.name}
-            entityTypeId={entityTypeId}
-          />
-          <Button asChild>
-            <Link href={`/app/contracts/${contractId}/records/${entityTypeId}/new`}>
-              Crear registro
-            </Link>
-          </Button>
+    <div className="-mt-6 grid w-full gap-3">
+      <header className="sticky top-0 z-40 -mx-4 border-b border-border bg-background/95 px-4 py-2 backdrop-blur md:-mx-6 md:px-6">
+        <div className="flex flex-wrap items-center gap-2 lg:flex-nowrap">
+          <div className="flex min-w-0 shrink-0 items-center gap-3">
+            <h1 className="flex min-w-0 items-center gap-2 text-xl font-semibold">
+              <EntityIcon className="text-muted-foreground" icon={data.entityType.icon} />
+              <span className="truncate">{data.entityType.name}</span>
+            </h1>
+            <span className="rounded-md border border-border bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
+              {data.pagination.totalRecords}
+            </span>
+          </div>
+          <div className="min-w-[min(100%,360px)] flex-1">
+            <RecordListControls
+              basePath={basePath}
+              pageSize={data.pagination.pageSize}
+              query={q}
+              searchParams={{ dir, page, pageSize, q, sort }}
+              totalRecords={data.pagination.totalRecords}
+            />
+          </div>
+          <div className="ml-auto flex shrink-0 flex-nowrap items-center justify-end gap-1.5">
+            <TooltipIconButton label="Descargar plantilla">
+              <Button asChild size="icon" variant="outline">
+                <a
+                  aria-label="Descargar plantilla"
+                  href={`/app/contracts/${contractId}/records/${entityTypeId}/template`}
+                >
+                  <Download aria-hidden="true" className="h-4 w-4" />
+                </a>
+              </Button>
+            </TooltipIconButton>
+            <TooltipIconButton label="Exportar datos">
+              <Button asChild size="icon" variant="outline">
+                <a
+                  aria-label="Exportar datos"
+                  href={exportHref({
+                    basePath,
+                    query: q,
+                    sort: data.sort,
+                  })}
+                >
+                  <FileSpreadsheet aria-hidden="true" className="h-4 w-4" />
+                </a>
+              </Button>
+            </TooltipIconButton>
+            <ImportRecordsSheet
+              contractId={contractId}
+              entityName={data.entityType.name}
+              entityTypeId={entityTypeId}
+            />
+            <TooltipIconButton label="Crear registro">
+              <Button asChild size="icon">
+                <Link
+                  aria-label="Crear registro"
+                  href={`/app/contracts/${contractId}/records/${entityTypeId}/new`}
+                >
+                  <Plus aria-hidden="true" className="h-4 w-4" />
+                </Link>
+              </Button>
+            </TooltipIconButton>
+          </div>
         </div>
       </header>
 
       {error ? (
-        <Card>
-          <CardContent className="pt-6">
+        <div className="rounded-md border border-border">
+          <div className="p-4">
             <p className="text-sm text-destructive">{error}</p>
-          </CardContent>
-        </Card>
+          </div>
+        </div>
       ) : null}
 
-      <Card>
-        <CardContent className="pt-6">
-          <RecordListControls
-            basePath={basePath}
-            pageSize={data.pagination.pageSize}
-            query={q}
-            searchParams={{ dir, page, pageSize, q, sort }}
-            totalRecords={data.pagination.totalRecords}
-          />
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardContent className="pt-6">
+      <div className="rounded-md border border-border bg-card text-card-foreground">
+        <div className="p-4">
           <EntityRecordsTable
             contractId={contractId}
             deleteAction={deleteEntityRecordsAction.bind(null, contractId, entityTypeId)}
@@ -195,9 +210,29 @@ export default async function EntityRecordsPage({
             totalPages={data.pagination.totalPages}
             totalRecords={data.pagination.totalRecords}
           />
-        </CardContent>
-      </Card>
+        </div>
+      </div>
     </div>
+  );
+}
+
+function TooltipIconButton({
+  children,
+  label,
+}: {
+  children: ReactNode;
+  label: string;
+}) {
+  return (
+    <span className="group relative inline-flex">
+      {children}
+      <span
+        className="pointer-events-none absolute right-0 top-[calc(100%+0.5rem)] z-50 whitespace-nowrap rounded-md border border-border bg-popover px-2 py-1 text-xs font-medium text-popover-foreground opacity-0 shadow-md transition-opacity group-focus-within:opacity-100 group-hover:opacity-100"
+        role="tooltip"
+      >
+        {label}
+      </span>
+    </span>
   );
 }
 

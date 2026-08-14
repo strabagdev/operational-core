@@ -1,7 +1,8 @@
 "use client";
 
-import { startTransition, useState, type FormEvent } from "react";
+import { startTransition, useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
+import { Upload } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -37,6 +38,16 @@ export function ImportRecordsSheet({
   const hasErrors = state.status === "error" && Boolean(state.errors?.length);
   const isValid = state.status === "valid";
 
+  useEffect(() => {
+    if (!notice) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => setNotice(null), 6000);
+
+    return () => window.clearTimeout(timeout);
+  }, [notice]);
+
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
@@ -57,7 +68,7 @@ export function ImportRecordsSheet({
 
       if (nextState.status === "success") {
         setOpen(false);
-        setNotice(nextState.message ?? null);
+        setNotice(compactImportNotice(nextState));
         form.reset();
         router.refresh();
       }
@@ -67,21 +78,42 @@ export function ImportRecordsSheet({
   return (
     <>
       {notice ? (
-        <p className="w-full text-sm text-muted-foreground" role="status">
-          {notice}
-        </p>
+        <div
+          className="fixed right-4 top-4 z-50 flex max-w-sm items-center gap-2 rounded-md border border-border bg-popover px-3 py-2 text-sm text-popover-foreground shadow-md"
+          role="status"
+        >
+          <span>{notice}</span>
+          <button
+            aria-label="Cerrar mensaje de importación"
+            className="rounded-sm px-1 text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            onClick={() => setNotice(null)}
+            type="button"
+          >
+            x
+          </button>
+        </div>
       ) : null}
-      <Button
-        onClick={() => {
-          setState(initialState);
-          setNotice(null);
-          setOpen(true);
-        }}
-        type="button"
-        variant="outline"
-      >
-        Importar Excel
-      </Button>
+      <span className="group relative inline-flex">
+        <Button
+          aria-label="Importar Excel"
+          onClick={() => {
+            setState(initialState);
+            setNotice(null);
+            setOpen(true);
+          }}
+          size="icon"
+          type="button"
+          variant="outline"
+        >
+          <Upload aria-hidden="true" className="h-4 w-4" />
+        </Button>
+        <span
+          className="pointer-events-none absolute right-0 top-[calc(100%+0.5rem)] z-50 whitespace-nowrap rounded-md border border-border bg-popover px-2 py-1 text-xs font-medium text-popover-foreground opacity-0 shadow-md transition-opacity group-focus-within:opacity-100 group-hover:opacity-100"
+          role="tooltip"
+        >
+          Importar Excel
+        </span>
+      </span>
       <Sheet open={open} onOpenChange={setOpen}>
         <SheetContent>
           <SheetHeader>
@@ -176,6 +208,25 @@ export function ImportRecordsSheet({
       </Sheet>
     </>
   );
+}
+
+export function compactImportNotice(state: ImportEntityRecordsActionState) {
+  const created = state.createdCount ?? state.importedCount ?? state.validRows ?? 0;
+  const updated = state.updatedCount ?? 0;
+
+  if (created > 0 && updated > 0) {
+    return `${created} creados · ${updated} actualizados`;
+  }
+
+  if (updated > 0) {
+    return `${updated} actualizados`;
+  }
+
+  if (created > 0) {
+    return `${created} creados`;
+  }
+
+  return state.message ?? "Importación completada";
 }
 
 function SummaryItem({ label, value }: { label: string; value: number }) {

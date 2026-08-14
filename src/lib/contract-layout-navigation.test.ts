@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
+import { shouldHideContractContextHeader } from "../app/app/contracts/[contractId]/contract-context-header";
 import { isContractNavigationItemActive } from "./contract-layout-navigation";
 
 const railSource = readFileSync(
@@ -10,6 +11,10 @@ const railSource = readFileSync(
 );
 const layoutSource = readFileSync(
   new URL("../app/app/contracts/[contractId]/layout.tsx", import.meta.url),
+  "utf8",
+);
+const contractContextHeaderSource = readFileSync(
+  new URL("../app/app/contracts/[contractId]/contract-context-header.tsx", import.meta.url),
   "utf8",
 );
 
@@ -76,8 +81,10 @@ describe("contract layout navigation", () => {
 
   it("keeps the theme toggle and user menu available on mobile", () => {
     expect(layoutSource).toContain("ThemeToggleButton");
-    expect(layoutSource).toContain("<UserMenu");
+    expect(layoutSource).toContain("ContractContextHeader");
+    expect(contractContextHeaderSource).toContain("<UserMenu");
     expect(layoutSource).toContain("md:hidden");
+    expect(contractContextHeaderSource).toContain("md:hidden");
     expect(layoutSource).toContain("tooltipClassName");
   });
 
@@ -85,6 +92,32 @@ describe("contract layout navigation", () => {
     expect(layoutSource).toContain("userEmail={session.user.email}");
     expect(layoutSource).toContain("userImage={session.user.image}");
     expect(layoutSource).toContain("userName={session.user.name}");
-    expect(layoutSource).toContain('className="md:hidden"');
+    expect(contractContextHeaderSource).toContain('className="md:hidden"');
+  });
+
+  it("keeps the global contract header independent from entity record listings", () => {
+    expect(contractContextHeaderSource).not.toContain("usePathname");
+    expect(contractContextHeaderSource).toContain("useSelectedLayoutSegments");
+    expect(contractContextHeaderSource).toContain("contractCode");
+    expect(contractContextHeaderSource).toContain("organizationName");
+  });
+
+  it("hides the contract header only on record index and entity record listing routes", () => {
+    expect(contractContextHeaderSource).toContain("shouldHideContractContextHeader(segments)");
+    expect(contractContextHeaderSource).toContain("return null");
+    expect(contractContextHeaderSource).toContain("segments.length === 1");
+    expect(contractContextHeaderSource).toContain("segments.length === 2");
+    expect(contractContextHeaderSource).toContain('segments[0] === "records"');
+    expect(contractContextHeaderSource).toContain("Boolean(segments[1])");
+  });
+
+  it("matches only the records routes that should hide contract context", () => {
+    expect(shouldHideContractContextHeader(["records"])).toBe(true);
+    expect(shouldHideContractContextHeader(["records", "entity_1"])).toBe(true);
+    expect(shouldHideContractContextHeader([])).toBe(false);
+    expect(shouldHideContractContextHeader(["activity"])).toBe(false);
+    expect(shouldHideContractContextHeader(["settings"])).toBe(false);
+    expect(shouldHideContractContextHeader(["records", "entity_1", "record_1"])).toBe(false);
+    expect(shouldHideContractContextHeader(["records", "entity_1", "new"])).toBe(false);
   });
 });

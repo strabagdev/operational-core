@@ -84,11 +84,11 @@ export function RecordListControls({
   }
 
   return (
-    <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto_160px] md:items-center">
+    <div className="grid gap-2 sm:grid-cols-[minmax(180px,1fr)_auto_150px] sm:items-center">
       <div className="relative">
         <input
           aria-label="Buscar registros"
-          className="h-10 w-full rounded-md border border-input bg-background px-3 pr-10 text-sm outline-none ring-ring focus-visible:ring-2"
+          className="h-9 w-full rounded-md border border-input bg-background px-3 pr-9 text-sm outline-none ring-ring focus-visible:ring-2 [&::-webkit-search-cancel-button]:hidden [&::-webkit-search-decoration]:hidden"
           name="q"
           onChange={(event) => setInputValue(event.target.value)}
           placeholder="Buscar registros..."
@@ -99,7 +99,7 @@ export function RecordListControls({
         {inputValue ? (
           <Button
             aria-label="Limpiar búsqueda"
-            className="absolute right-1 top-1 h-8 w-8 px-0"
+            className="absolute right-0.5 top-0.5 h-8 w-8 px-0"
             onClick={clearSearch}
             type="button"
             variant="ghost"
@@ -113,7 +113,7 @@ export function RecordListControls({
       </p>
       <select
         aria-label="Registros por página"
-        className="h-10 rounded-md border border-input bg-background px-3 text-sm"
+        className="h-9 rounded-md border border-input bg-background px-3 text-sm"
         name="pageSize"
         onChange={(event) => replaceWith({
           nextPageSize: event.target.value,

@@ -3,6 +3,7 @@ import { notFound, redirect } from "next/navigation";
 import { type EntityFieldType } from "@prisma/client";
 
 import { auth } from "@/auth";
+import { EntityIcon } from "@/components/entity-icon";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -125,7 +126,10 @@ export default async function EntityTypeDetailPage({
     <div className="grid max-w-5xl gap-6">
       <header className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold">{entityType.name}</h1>
+          <h1 className="flex items-center gap-2 text-2xl font-semibold">
+            <EntityIcon className="text-muted-foreground" icon={entityType.icon} />
+            {entityType.name}
+          </h1>
           <p className="text-sm text-muted-foreground">
             Configuración de tipo de entidad y campos dinámicos.
           </p>

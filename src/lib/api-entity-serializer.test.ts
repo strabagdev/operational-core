@@ -9,6 +9,7 @@ import {
 
 function entity(overrides: Record<string, unknown> = {}) {
   return {
+    icon: null,
     id: "entity_1",
     isActive: true,
     name: "Equipos",
@@ -48,9 +49,16 @@ describe("API entity serializers", () => {
   it("serializes entity summaries without Prisma internals", () => {
     expect(serializeApiEntitySummary(entity())).toEqual({
       active: true,
+      icon: null,
       id: "entity_1",
       name: "Equipos",
       slug: "equipos",
+    });
+  });
+
+  it("serializes entity icon keys for external clients", () => {
+    expect(serializeApiEntitySummary(entity({ icon: "warehouse" }))).toMatchObject({
+      icon: "warehouse",
     });
   });
 

@@ -2,6 +2,7 @@ import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
 
 import { auth } from "@/auth";
+import { EntityIcon } from "@/components/entity-icon";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -31,7 +32,7 @@ export default async function RecordsPage({
   }
 
   return (
-    <div className="grid max-w-5xl gap-6">
+    <div className="-mt-4 grid w-full gap-6">
       <header>
         <h1 className="text-2xl font-semibold">Registros</h1>
         <p className="text-sm text-muted-foreground">
@@ -39,12 +40,15 @@ export default async function RecordsPage({
         </p>
       </header>
 
-      <section className="grid gap-4 md:grid-cols-2">
+      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         {data.entityTypes.length > 0 ? (
           data.entityTypes.map((entityType) => (
             <Card key={entityType.id}>
               <CardHeader>
-                <CardTitle>{entityType.name}</CardTitle>
+                <CardTitle className="flex items-center gap-2">
+                  <EntityIcon className="text-muted-foreground" icon={entityType.icon} />
+                  {entityType.name}
+                </CardTitle>
                 <CardDescription>{entityType.description}</CardDescription>
               </CardHeader>
               <CardContent className="grid gap-4">

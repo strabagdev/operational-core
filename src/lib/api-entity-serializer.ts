@@ -5,6 +5,7 @@ import { orderEntityFields } from "@/lib/entity-field-order";
 import { getRelationConfig, parseFieldConfig } from "@/lib/field-validation";
 
 type ApiEntityType = {
+  icon?: string | null;
   id: string;
   isActive: boolean;
   name: string;
@@ -81,6 +82,7 @@ type ApiRecord = {
 export function serializeApiEntitySummary(entityType: ApiEntityType) {
   return {
     active: entityType.isActive,
+    icon: entityType.icon ?? null,
     id: entityType.id,
     name: entityType.name,
     slug: entityType.slug,

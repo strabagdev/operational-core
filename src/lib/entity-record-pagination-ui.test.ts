@@ -22,6 +22,10 @@ const importSheetSource = readFileSync(
   new URL("../app/app/contracts/[contractId]/records/[entityTypeId]/import-records-sheet.tsx", import.meta.url),
   "utf8",
 );
+const recordTypesPageSource = readFileSync(
+  new URL("../app/app/contracts/[contractId]/records/page.tsx", import.meta.url),
+  "utf8",
+);
 
 describe("entity record pagination UI", () => {
   it("offers the supported page sizes in the listing filter form", () => {
@@ -122,6 +126,46 @@ describe("entity record pagination UI", () => {
     expect(recordsPageSource).toContain("/export");
   });
 
+  it("uses a sticky operational bar with entity, controls and actions", () => {
+    expect(recordsPageSource).toContain("sticky top-0 z-40");
+    expect(recordsPageSource).toContain("bg-background/95");
+    expect(recordsPageSource).toContain("border-b border-border");
+    expect(recordsPageSource).not.toContain("{data.contract.name}");
+    expect(recordsPageSource).not.toContain("{data.contract.code}");
+    expect(recordsPageSource).toContain("EntityIcon");
+    expect(recordsPageSource).toContain("icon={data.entityType.icon}");
+    expect(recordsPageSource).toContain("{data.entityType.name}");
+    expect(recordsPageSource).toContain("{data.pagination.totalRecords}");
+    expect(recordsPageSource).toContain("text-xl font-semibold");
+    expect(recordsPageSource).toContain("RecordListControls");
+    expect(recordsPageSource).toContain("lg:flex-nowrap");
+    expect(recordsPageSource).toContain("ml-auto flex shrink-0 flex-nowrap items-center justify-end gap-1.5");
+    expect(recordsPageSource).not.toContain("Registros operacionales de este tipo de entidad.");
+  });
+
+  it("uses icon-only header actions with accessible labels and tooltips", () => {
+    expect(recordsPageSource).toContain("Download");
+    expect(recordsPageSource).toContain("FileSpreadsheet");
+    expect(recordsPageSource).toContain("Plus");
+    expect(recordsPageSource).toContain('aria-label="Descargar plantilla"');
+    expect(recordsPageSource).toContain('aria-label="Exportar datos"');
+    expect(recordsPageSource).toContain('aria-label="Crear registro"');
+    expect(recordsPageSource).toContain('role="tooltip"');
+    expect(importSheetSource).toContain("Upload");
+    expect(importSheetSource).toContain('aria-label="Importar Excel"');
+    expect(importSheetSource).toContain('size="icon"');
+    expect(importSheetSource).toContain('role="tooltip"');
+  });
+
+  it("keeps Excel import success feedback outside the permanent header flow", () => {
+    expect(importSheetSource).toContain('role="status"');
+    expect(importSheetSource).toContain("fixed right-4 top-4");
+    expect(importSheetSource).toContain("compactImportNotice(nextState)");
+    expect(importSheetSource).toContain("Cerrar mensaje de importación");
+    expect(importSheetSource).toContain("setTimeout(() => setNotice(null), 6000)");
+    expect(importSheetSource).toContain('`${created} creados · ${updated} actualizados`');
+  });
+
   it("preserves visual sort and direction in the Excel export link", () => {
     expect(recordsPageSource).toContain("function exportHref");
     expect(recordsPageSource).toContain("sort: data.sort");
@@ -136,7 +180,32 @@ describe("entity record pagination UI", () => {
   });
 
   it("lets the record listing use the available horizontal space", () => {
-    expect(recordsPageSource).toContain('className="grid w-full gap-6"');
+    expect(recordsPageSource).toContain('className="-mt-6 grid w-full gap-3"');
     expect(recordsPageSource).not.toContain('className="grid max-w-6xl gap-6"');
+  });
+
+  it("keeps record search and page size controls compact inside the operational bar", () => {
+    expect(recordListControlsSource).toContain("sm:grid-cols-[minmax(180px,1fr)_auto_150px]");
+    expect(recordListControlsSource).toContain("h-9 w-full");
+    expect(recordListControlsSource).toContain("h-9 rounded-md");
+    expect(recordsPageSource).not.toContain("pt-6");
+  });
+
+  it("keeps one styled clear action by hiding the native search cancel control", () => {
+    expect(recordListControlsSource).toContain('type="search"');
+    expect(recordListControlsSource).toContain('aria-label="Limpiar búsqueda"');
+    expect(recordListControlsSource).toContain("clearSearch");
+    expect(recordListControlsSource).toContain("[&::-webkit-search-cancel-button]:hidden");
+    expect(recordListControlsSource).toContain("[&::-webkit-search-decoration]:hidden");
+  });
+
+  it("uses three responsive columns for entity type cards on wide desktops", () => {
+    expect(recordTypesPageSource).toContain('className="-mt-4 grid w-full gap-6"');
+    expect(recordTypesPageSource).not.toContain('className="-mt-6 grid w-full gap-6"');
+    expect(recordTypesPageSource).toContain('className="grid gap-4 md:grid-cols-2 xl:grid-cols-3"');
+    expect(recordTypesPageSource).toContain("EntityIcon");
+    expect(recordTypesPageSource).toContain("Activos:");
+    expect(recordTypesPageSource).toContain("Total:");
+    expect(recordTypesPageSource).toContain("Abrir listado");
   });
 });
