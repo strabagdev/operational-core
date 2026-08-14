@@ -5,9 +5,25 @@ import {
   isSessionChunkCookieName,
   operationalCoreSessionCookieNames,
 } from "@/lib/auth-cookies";
+import {
+  apiCorsPreflightResponse,
+  applyApiCorsHeaders,
+} from "@/lib/api-cors";
 import { getAuthRouteDecision } from "@/lib/auth-route-policy";
 
 export function proxy(request: NextRequest) {
+  if (request.nextUrl.pathname.startsWith("/api/v1/")) {
+    if (request.method === "OPTIONS") {
+      return apiCorsPreflightResponse(request);
+    }
+
+    const response = NextResponse.next();
+
+    applyApiCorsHeaders(response.headers, request);
+
+    return response;
+  }
+
   const staleSessionChunks = request.cookies
     .getAll()
     .filter((cookie) => isSessionChunkCookieName(cookie.name));
@@ -42,5 +58,5 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/app/:path*"],
+  matcher: ["/app/:path*", "/api/v1/:path*"],
 };

@@ -41,6 +41,24 @@ Required for external API authentication:
 API_AUTH_SECRET="set-a-stable-generated-secret"
 ```
 
+Required for browser clients that call `/api/v1` from a different origin:
+
+```bash
+API_ALLOWED_ORIGINS="http://localhost:8081,http://localhost:19006,http://localhost:19102"
+```
+
+`API_ALLOWED_ORIGINS` is a comma-separated allowlist of exact origins. Opco does not use `Access-Control-Allow-Origin: *`. When a request includes an `Origin` header that exactly matches one of the configured values, `/api/v1` responses include:
+
+```http
+Access-Control-Allow-Origin: <authorized-origin>
+Vary: Origin
+Access-Control-Allow-Methods: GET,POST,PATCH,OPTIONS
+Access-Control-Allow-Headers: Authorization,Content-Type
+Access-Control-Max-Age: 600
+```
+
+Unauthorized origins still receive the normal API response or preflight status, but without `Access-Control-Allow-Origin`, so browsers block access. Native mobile clients are not governed by browser CORS, but Expo Web is.
+
 Do not commit real secret values.
 
 ## POST /api/v1/auth/login

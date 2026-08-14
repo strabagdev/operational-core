@@ -22,14 +22,15 @@ Create `.env` from `.env.example` and configure:
 DATABASE_URL="postgresql://USER:PASSWORD@HOST:PORT/DATABASE?schema=public"
 AUTH_SECRET="replace-with-a-secure-secret"
 API_AUTH_SECRET="replace-with-a-separate-secure-secret"
+API_ALLOWED_ORIGINS="http://localhost:8081,http://localhost:19006,http://localhost:19102"
 AUTH_URL="http://localhost:3000"
 ```
 
-`DATABASE_URL` is the only database connection source used by Prisma. In Railway, use the database URL provided by the environment instead of hard-coding local credentials. `AUTH_SECRET` is required and must be a stable generated value; the app fails at startup/build if it is missing or empty. `API_AUTH_SECRET` is required by the external `/api/v1` bearer-token endpoints and must be a separate stable generated value. Do not rely on generated or fallback secrets.
+`DATABASE_URL` is the only database connection source used by Prisma. In Railway, use the database URL provided by the environment instead of hard-coding local credentials. `AUTH_SECRET` is required and must be a stable generated value; the app fails at startup/build if it is missing or empty. `API_AUTH_SECRET` is required by the external `/api/v1` bearer-token endpoints and must be a separate stable generated value. Do not rely on generated or fallback secrets. `API_ALLOWED_ORIGINS` is a comma-separated list of exact browser origins allowed to call `/api/v1` with CORS; include the real Expo Web origin shown by the browser, for example `http://localhost:8081`, and any deployed web client origins.
 
 Auth.js v5 reads `AUTH_SECRET` and `AUTH_URL`. Do not define a competing `NEXTAUTH_SECRET`. If a legacy `NEXTAUTH_URL` exists locally, replace it with `AUTH_URL` when touching the file.
 
-The real database URL, auth secret, and API auth secret belong only in local or deployment environment variables; do not commit them.
+The real database URL, auth secret, API auth secret, and production allowed-origin list belong only in local or deployment environment variables; do not commit secret values.
 
 `AUTH_URL` must be present in the runtime environment used by `next start` and production deployments. Without it, Auth.js can reject local or deployed requests with `UntrustedHost` before credentials/session handling runs.
 
