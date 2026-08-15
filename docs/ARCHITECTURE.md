@@ -16,6 +16,8 @@ It is not an ERP. The Core should not own workflows, approvals, generic business
 
 `EntityType.icon` is optional and stores only a stable key from Opco's controlled Lucide-based catalog, such as `warehouse`. It is nullable for existing or unbranded entities. The database does not store SVG, HTML, or React component names.
 
+`EntityType.nature` is a required semantic classification with the stable enum values `MASTER`, `TRANSACTION`, and `REFERENCE`. Existing and newly created entity types default to `MASTER` unless an administrator explicitly chooses another value. Opco does not infer this value from the entity name, fields, icon, or records.
+
 `EntityField` defines active fields for an entity type. Field definitions include type, required, unique, searchable, multiple, sort order, optional JSON config, and active state.
 
 `FieldOption` stores active options for `SELECT` and `MULTISELECT` fields.
@@ -141,6 +143,12 @@ Contract-scoped API access derives organization, app, contract, and membership f
 Dynamic entity definitions and records are exposed through `/api/v1/contracts/:contractId/entities`. Record write endpoints reuse the same server-side validation layer used by the web UI instead of maintaining a parallel validation engine. `EntityField.key` is the external JSON key for record values.
 
 External record creation is persistently idempotent through `ApiIdempotencyKey`. The unique boundary is external app, operation, and `clientRequestId`; matching payload replays return the original record, while different payloads are rejected as conflicts. The idempotency row points back to the created `EntityRecord` after a successful transaction.
+
+## Entity Nature And Future Views
+
+`EntityType.nature` classifies what the data model represents inside the Core. It is metadata on the entity definition itself and is available to web administration screens and external API entity DTOs.
+
+A future `AppView.type` or equivalent view concept would classify how a client wants to present or compose operational data. That is separate from `EntityType.nature`: the same `MASTER` entity could appear in multiple app views, and a future transactional view could combine more than one entity type. The current repository does not implement `AppView`.
 
 ## Application Boundaries
 

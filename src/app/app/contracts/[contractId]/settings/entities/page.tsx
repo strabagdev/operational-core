@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { getContractEntityTypes } from "@/lib/entity-config";
+import { getEntityNatureLabel } from "@/lib/entity-nature";
 
 import { toggleEntityTypeAction } from "./actions";
 import { FormError } from "./form-error";
@@ -70,17 +71,28 @@ export default async function EntityTypesPage({
                     </CardTitle>
                     <CardDescription>{entityType.slug}</CardDescription>
                   </div>
-                  <span className="rounded-md border border-border px-2 py-1 text-xs font-medium">
-                    {entityType.isActive ? "Activo" : "Inactivo"}
-                  </span>
+                  <div className="flex flex-wrap justify-end gap-2">
+                    <span className="rounded-md border border-border bg-muted/40 px-2 py-1 text-xs font-medium">
+                      {getEntityNatureLabel(entityType.nature)}
+                    </span>
+                    <span className="rounded-md border border-border px-2 py-1 text-xs font-medium">
+                      {entityType.isActive ? "Activo" : "Inactivo"}
+                    </span>
+                  </div>
                 </div>
               </CardHeader>
               <CardContent className="grid gap-4">
-                <div className="grid gap-2 text-sm text-muted-foreground sm:grid-cols-3">
+                <div className="grid gap-2 text-sm text-muted-foreground sm:grid-cols-4">
                   <div>
                     Campos:{" "}
                     <span className="font-medium text-foreground">
                       {entityType._count.fields}
+                    </span>
+                  </div>
+                  <div>
+                    Naturaleza:{" "}
+                    <span className="font-medium text-foreground">
+                      {getEntityNatureLabel(entityType.nature)}
                     </span>
                   </div>
                   <div>

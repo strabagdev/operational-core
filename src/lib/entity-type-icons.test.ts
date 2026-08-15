@@ -33,7 +33,7 @@ const entityTypeCreate = vi.mocked(prisma.entityType.create);
 const entityTypeFindFirst = vi.mocked(prisma.entityType.findFirst);
 const entityTypeUpdate = vi.mocked(prisma.entityType.update);
 
-function formData(icon?: string) {
+function formData(icon?: string, nature?: string) {
   const form = new FormData();
 
   form.set("name", "Equipos");
@@ -42,6 +42,10 @@ function formData(icon?: string) {
 
   if (icon !== undefined) {
     form.set("icon", icon);
+  }
+
+  if (nature !== undefined) {
+    form.set("nature", nature);
   }
 
   return form;
@@ -85,6 +89,30 @@ describe("entity type icon input", () => {
   });
 });
 
+describe("entity type nature input", () => {
+  it("defaults missing nature to MASTER", () => {
+    expect(getEntityTypeInput(formData())).toMatchObject({
+      nature: "MASTER",
+    });
+  });
+
+  it("accepts the supported entity natures", () => {
+    expect(getEntityTypeInput(formData(undefined, "MASTER"))).toMatchObject({
+      nature: "MASTER",
+    });
+    expect(getEntityTypeInput(formData(undefined, "TRANSACTION"))).toMatchObject({
+      nature: "TRANSACTION",
+    });
+    expect(getEntityTypeInput(formData(undefined, "REFERENCE"))).toMatchObject({
+      nature: "REFERENCE",
+    });
+  });
+
+  it("rejects unsupported entity natures", () => {
+    expect(() => getEntityTypeInput(formData(undefined, "VIEW"))).toThrow();
+  });
+});
+
 describe("entity type icon persistence", () => {
   it("creates EntityType without icon as null", async () => {
     await createEntityType("contract_1", "user_1", getEntityTypeInput(formData()));
@@ -115,6 +143,32 @@ describe("entity type icon persistence", () => {
     }));
     expect(entityTypeUpdate).toHaveBeenNthCalledWith(3, expect.objectContaining({
       data: expect.objectContaining({ icon: null }),
+    }));
+  });
+});
+
+describe("entity type nature persistence", () => {
+  it("creates EntityType with default MASTER nature", async () => {
+    await createEntityType("contract_1", "user_1", getEntityTypeInput(formData()));
+
+    expect(entityTypeCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ nature: "MASTER" }),
+    }));
+  });
+
+  it("creates EntityType with an explicit nature", async () => {
+    await createEntityType("contract_1", "user_1", getEntityTypeInput(formData(undefined, "TRANSACTION")));
+
+    expect(entityTypeCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ nature: "TRANSACTION" }),
+    }));
+  });
+
+  it("edits EntityType nature", async () => {
+    await updateEntityType("contract_1", "entity_1", "user_1", getEntityTypeInput(formData(undefined, "REFERENCE")));
+
+    expect(entityTypeUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ nature: "REFERENCE" }),
     }));
   });
 });

@@ -24,6 +24,7 @@ import {
 import { keyify, slugify } from "./format";
 import { getReorderedEntityFieldUpdates } from "./entity-field-order";
 import { isEntityIconKey } from "./entity-icons";
+import { entityNatureValues } from "./entity-nature";
 import { prisma } from "./prisma";
 import { parseMoneyCurrency } from "./money";
 
@@ -49,6 +50,7 @@ export const entityTypeSchema = z.object({
     .refine((value) => value === undefined || isEntityIconKey(value), {
       message: "Selecciona un icono válido.",
     }),
+  nature: z.enum(entityNatureValues).default("MASTER"),
   isActive: z.boolean(),
 });
 
@@ -176,6 +178,7 @@ export function getEntityTypeInput(formData: FormData) {
     slug: formData.get("slug"),
     description: formData.get("description") || undefined,
     icon: formData.get("icon") || undefined,
+    nature: formData.get("nature") || undefined,
     isActive: parseFormBoolean(formData, "isActive"),
   });
 }
@@ -478,6 +481,7 @@ export async function createEntityType(
       slug: input.slug,
       description: input.description || null,
       icon: input.icon || null,
+      nature: input.nature,
       isActive: input.isActive,
     },
   });
@@ -502,6 +506,7 @@ export async function updateEntityType(
       slug: input.slug,
       description: input.description || null,
       icon: input.icon || null,
+      nature: input.nature,
       isActive: input.isActive,
     },
   });

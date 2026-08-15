@@ -151,6 +151,7 @@ function entity(overrides: Record<string, unknown> = {}) {
     id: "entity_1",
     isActive: true,
     name: "Equipos",
+    nature: "MASTER",
     slug: "equipos",
     ...overrides,
   } as never;
@@ -195,7 +196,7 @@ beforeEach(() => {
 describe("GET /api/v1/contracts/[contractId]/entities", () => {
   it("lists active entities for an authorized contract", async () => {
     entityTypeFindMany.mockResolvedValue([
-      { icon: "warehouse", id: "entity_1", isActive: true, name: "Equipos", slug: "equipos" },
+      { icon: "warehouse", id: "entity_1", isActive: true, name: "Equipos", nature: "REFERENCE", slug: "equipos" },
     ] as never);
 
     const response = await entitiesGET(await apiRequest("/api/v1/contracts/contract_1/entities"), {
@@ -207,7 +208,7 @@ describe("GET /api/v1/contracts/[contractId]/entities", () => {
       ok: true,
       data: {
         entities: [
-          { active: true, icon: "warehouse", id: "entity_1", name: "Equipos", slug: "equipos" },
+          { active: true, icon: "warehouse", id: "entity_1", name: "Equipos", nature: "REFERENCE", slug: "equipos" },
         ],
       },
     });
@@ -290,6 +291,7 @@ describe("GET /api/v1/contracts/[contractId]/entities/[entityTypeId]", () => {
       "personas",
     ]);
     expect(body.data.entity.icon).toBeNull();
+    expect(body.data.entity.nature).toBe("MASTER");
     expect(body.data.entity.fields[0]).toMatchObject({
       options: [{ active: true, label: "Activo", value: "activo" }],
       type: "SELECT",

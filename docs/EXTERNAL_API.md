@@ -279,6 +279,7 @@ Success response:
         "name": "Equipos",
         "slug": "equipos",
         "icon": "warehouse",
+        "nature": "MASTER",
         "active": true
       }
     ]
@@ -303,6 +304,7 @@ Success response:
       "name": "Equipos",
       "slug": "equipos",
       "icon": "warehouse",
+      "nature": "MASTER",
       "active": true,
       "fields": [
         {
@@ -328,6 +330,8 @@ Success response:
 ```
 
 The entity DTO uses `icon` as a nullable stable key from Opco's controlled entity-icon catalog. It is never SVG, HTML, or a React component name. Clients can map keys such as `warehouse` to their own local icon library. Entities without a configured icon return `icon: null`.
+
+The entity DTO uses `nature` as a required stable enum string. Current values are `MASTER`, `TRANSACTION`, and `REFERENCE`. This classifies the semantic nature of the entity type itself; it is not a view type and does not define client navigation, permissions, or workflows.
 
 The field DTO uses `EntityField.key` as the stable external key. Record DTOs use the same key inside `values`.
 

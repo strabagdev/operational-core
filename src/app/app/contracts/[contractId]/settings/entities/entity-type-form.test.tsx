@@ -32,6 +32,7 @@ describe("EntityTypeForm icon selector", () => {
           icon: "warehouse",
           isActive: true,
           name: "Bodega",
+          nature: "REFERENCE",
           slug: "bodega",
         }}
         submitLabel="Guardar tipo"
@@ -65,5 +66,38 @@ describe("EntityTypeForm icon selector", () => {
     expect(getEntityIconPickerFormValue(null)).toBe("");
     expect(getEntityIconPickerLabel("warehouse")).toBe("Bodega");
     expect(getEntityIconPickerLabel(null)).toBe("Sin icono");
+  });
+});
+
+describe("EntityTypeForm nature selector", () => {
+  it("renders the nature selector with MASTER selected by default", () => {
+    const html = renderToStaticMarkup(
+      <EntityTypeForm action={() => undefined} submitLabel="Crear tipo" />,
+    );
+
+    expect(html).toContain("Naturaleza");
+    expect(html).toContain('name="nature"');
+    expect(html).toContain('<option value="MASTER" selected="">Maestra</option>');
+    expect(html).toContain("Catálogo estable reutilizado por otros registros.");
+  });
+
+  it("renders the selected initial nature and description", () => {
+    const html = renderToStaticMarkup(
+      <EntityTypeForm
+        action={() => undefined}
+        initialValues={{
+          description: null,
+          icon: null,
+          isActive: true,
+          name: "Movimientos",
+          nature: "TRANSACTION",
+          slug: "movimientos",
+        }}
+        submitLabel="Guardar tipo"
+      />,
+    );
+
+    expect(html).toContain('<option value="TRANSACTION" selected="">Transaccional</option>');
+    expect(html).toContain("Evento u operación que ocurre en el tiempo.");
   });
 });

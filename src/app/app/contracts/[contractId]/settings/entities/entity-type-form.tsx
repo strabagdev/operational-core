@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Check, ChevronDown, Search } from "lucide-react";
+import type { EntityNature } from "@prisma/client";
 
 import { EntityIcon } from "@/components/entity-icon";
 import { Button } from "@/components/ui/button";
@@ -16,6 +17,7 @@ import {
   getEntityIconOption,
   type EntityIconKey,
 } from "@/lib/entity-icons";
+import { entityNatureOptions, getEntityNatureOption } from "@/lib/entity-nature";
 import { slugify } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -27,6 +29,7 @@ type EntityTypeFormProps = {
     slug: string;
     description?: string | null;
     icon?: string | null;
+    nature?: EntityNature | null;
     isActive: boolean;
   };
 };
@@ -39,6 +42,8 @@ export function EntityTypeForm({
   const [name, setName] = useState(initialValues?.name ?? "");
   const [slug, setSlug] = useState(initialValues?.slug ?? "");
   const [slugTouched, setSlugTouched] = useState(Boolean(initialValues?.slug));
+  const [nature, setNature] = useState<EntityNature>(initialValues?.nature ?? "MASTER");
+  const selectedNature = getEntityNatureOption(nature);
 
   return (
     <form action={action} className="grid gap-4">
@@ -87,6 +92,25 @@ export function EntityTypeForm({
         <legend>Icono opcional</legend>
         <EntityIconPicker initialIcon={initialValues?.icon ?? null} />
       </fieldset>
+
+      <label className="grid gap-2 text-sm font-medium">
+        Naturaleza
+        <select
+          className="h-10 rounded-md border border-input bg-background px-3 text-sm font-normal outline-none ring-ring focus-visible:ring-2"
+          name="nature"
+          onChange={(event) => setNature(event.target.value as EntityNature)}
+          value={nature}
+        >
+          {entityNatureOptions.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+        <span className="text-xs font-normal text-muted-foreground">
+          {selectedNature.description}
+        </span>
+      </label>
 
       <label className="flex items-center gap-2 text-sm font-medium">
         <input

@@ -37,6 +37,12 @@ enum EntityFieldType {
   RELATION
 }
 
+enum EntityNature {
+  MASTER
+  TRANSACTION
+  REFERENCE
+}
+
 enum AuditAction {
   CONTRACT_CREATED
   CONTRACT_UPDATED
@@ -183,6 +189,7 @@ model EntityType {
   slug        String
   description String?
   icon        String?
+  nature      EntityNature   @default(MASTER)
   isActive    Boolean        @default(true)
   contract    Contract       @relation(fields: [contractId], references: [id], onDelete: Cascade)
   fields      EntityField[]

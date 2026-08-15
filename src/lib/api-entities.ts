@@ -43,6 +43,7 @@ export async function getApiContractEntities(contractId: string) {
       icon: true,
       isActive: true,
       name: true,
+      nature: true,
       slug: true,
     },
     where: {
@@ -96,6 +97,7 @@ export async function getApiEntityDefinition(
       id: true,
       isActive: true,
       name: true,
+      nature: true,
       slug: true,
     },
     where: {

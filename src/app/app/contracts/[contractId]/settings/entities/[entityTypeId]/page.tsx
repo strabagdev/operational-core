@@ -16,6 +16,7 @@ import {
   getContractEntityTypes,
   getFieldOptionUsage,
 } from "@/lib/entity-config";
+import { getEntityNatureLabel } from "@/lib/entity-nature";
 import { parseFieldConfig } from "@/lib/field-validation";
 import {
   buildFieldEditorHref,
@@ -129,6 +130,9 @@ export default async function EntityTypeDetailPage({
           <h1 className="flex items-center gap-2 text-2xl font-semibold">
             <EntityIcon className="text-muted-foreground" icon={entityType.icon} />
             {entityType.name}
+            <span className="rounded-md border border-border bg-muted/40 px-2 py-1 text-xs font-medium text-muted-foreground">
+              {getEntityNatureLabel(entityType.nature)}
+            </span>
           </h1>
           <p className="text-sm text-muted-foreground">
             Configuración de tipo de entidad y campos dinámicos.

@@ -13,6 +13,7 @@ function entity(overrides: Record<string, unknown> = {}) {
     id: "entity_1",
     isActive: true,
     name: "Equipos",
+    nature: "MASTER" as const,
     slug: "equipos",
     ...overrides,
   };
@@ -52,13 +53,15 @@ describe("API entity serializers", () => {
       icon: null,
       id: "entity_1",
       name: "Equipos",
+      nature: "MASTER",
       slug: "equipos",
     });
   });
 
-  it("serializes entity icon keys for external clients", () => {
-    expect(serializeApiEntitySummary(entity({ icon: "warehouse" }))).toMatchObject({
+  it("serializes entity icon keys and nature for external clients", () => {
+    expect(serializeApiEntitySummary(entity({ icon: "warehouse", nature: "TRANSACTION" }))).toMatchObject({
       icon: "warehouse",
+      nature: "TRANSACTION",
     });
   });
 

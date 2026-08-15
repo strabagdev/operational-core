@@ -1,4 +1,4 @@
-import { Prisma, type EntityFieldType } from "@prisma/client";
+import { Prisma, type EntityFieldType, type EntityNature } from "@prisma/client";
 
 import { dateOnlyInputValue } from "@/lib/date-only";
 import { orderEntityFields } from "@/lib/entity-field-order";
@@ -9,6 +9,7 @@ type ApiEntityType = {
   id: string;
   isActive: boolean;
   name: string;
+  nature?: EntityNature;
   slug: string;
 };
 
@@ -85,6 +86,7 @@ export function serializeApiEntitySummary(entityType: ApiEntityType) {
     icon: entityType.icon ?? null,
     id: entityType.id,
     name: entityType.name,
+    nature: entityType.nature ?? "MASTER",
     slug: entityType.slug,
   };
 }
