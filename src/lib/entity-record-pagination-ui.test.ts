@@ -208,4 +208,15 @@ describe("entity record pagination UI", () => {
     expect(recordTypesPageSource).toContain("Total:");
     expect(recordTypesPageSource).toContain("Abrir listado");
   });
+
+  it("groups entity type cards by semantic nature without empty sections", () => {
+    expect(recordTypesPageSource).toContain('{ title: "Maestras", value: "MASTER" }');
+    expect(recordTypesPageSource).toContain('{ title: "Transaccionales", value: "TRANSACTION" }');
+    expect(recordTypesPageSource).toContain('{ title: "Referencia", value: "REFERENCE" }');
+    expect(recordTypesPageSource).toContain("entityTypes: data.entityTypes.filter((entityType) => entityType.nature === group.value)");
+    expect(recordTypesPageSource).toContain(".filter((group) => group.entityTypes.length > 0)");
+    expect(recordTypesPageSource).toContain("groupedEntityTypes.map");
+    expect(recordTypesPageSource).toContain("group.entityTypes.map");
+    expect(recordTypesPageSource).toContain("getEntityNatureLabel(entityType.nature)");
+  });
 });

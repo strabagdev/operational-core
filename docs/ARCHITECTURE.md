@@ -148,7 +148,27 @@ External record creation is persistently idempotent through `ApiIdempotencyKey`.
 
 `EntityType.nature` classifies what the data model represents inside the Core. It is metadata on the entity definition itself and is available to web administration screens and external API entity DTOs.
 
-A future `AppView.type` or equivalent view concept would classify how a client wants to present or compose operational data. That is separate from `EntityType.nature`: the same `MASTER` entity could appear in multiple app views, and a future transactional view could combine more than one entity type. The current repository does not implement `AppView`.
+`AppView.type` classifies how Opco Client should present or use data. It is separate from `EntityType.nature`: the same `MASTER` entity can appear in multiple app views, and a workflow view can combine a master entity with a transactional entity.
+
+`AppView` is scoped to a `Contract` and stores name, slug, optional icon, type, active state, JSON config, sort order, and timestamps. Slugs are unique inside a contract. `sortOrder` is a simple numeric order for future client navigation.
+
+Current `AppView.type` values:
+
+- `RECORDS`: generic listing/detail/edit experience for one `EntityType`; config stores `entityTypeId`.
+- `WORKFLOW`: specialized operation that can read one entity and write another; config stores `sourceEntityTypeId`, `targetEntityTypeId`, and a controlled `workflow` value. The only current workflow value is `attendance` (`Asistencia`). The attendance renderer is not implemented yet.
+- `BOARD`: grouped board for one `EntityType`; config stores `entityTypeId` and `groupByFieldKey`.
+- `DASHBOARD`: summary view over multiple entity types; config stores `entityTypeIds`.
+
+Although `AppView.config` is stored as JSON, it is not treated as arbitrary JSON. Server-side validators check the required shape for each type, verify every referenced `EntityType` belongs to the same contract, and for `BOARD` verify the grouping field exists and is active in that entity type.
+
+Example:
+
+- `Personas`: `nature = MASTER`
+- `Asistencias`: `nature = TRANSACTION`
+- `Directorio Personas`: `type = RECORDS`, `entityTypeId = Personas`
+- `Tomar asistencia`: `type = WORKFLOW`, `sourceEntityTypeId = Personas`, `targetEntityTypeId = Asistencias`, `workflow = attendance`
+
+The current audit system does not yet include dedicated actions for AppView configuration changes. AppView administration reuses contract authorization but does not write audit events in this stage.
 
 ## Application Boundaries
 

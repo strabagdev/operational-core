@@ -42,6 +42,13 @@ export default async function SettingsPage({
         </div>
         <div>
           <Button asChild variant="outline">
+            <Link href={`/app/contracts/${contract.id}/settings/views`}>
+              Experiencias
+            </Link>
+          </Button>
+        </div>
+        <div>
+          <Button asChild variant="outline">
             <Link href="/app/settings/contracts">
               Contratos
             </Link>

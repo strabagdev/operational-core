@@ -43,6 +43,13 @@ enum EntityNature {
   REFERENCE
 }
 
+enum AppViewType {
+  RECORDS
+  WORKFLOW
+  BOARD
+  DASHBOARD
+}
+
 enum AuditAction {
   CONTRACT_CREATED
   CONTRACT_UPDATED
@@ -141,6 +148,7 @@ model Contract {
   slug           String
   organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   entityTypes    EntityType[]
+  appViews       AppView[]
   auditEvents    AuditEvent[]
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @updatedAt
@@ -200,6 +208,24 @@ model EntityType {
 
   @@unique([contractId, name])
   @@unique([contractId, slug])
+}
+
+model AppView {
+  id         String      @id @default(cuid())
+  contractId String
+  name       String
+  slug       String
+  icon       String?
+  type       AppViewType
+  active     Boolean     @default(true)
+  config     Json
+  sortOrder  Int         @default(0)
+  contract   Contract    @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+
+  @@unique([contractId, slug])
+  @@index([contractId, sortOrder])
 }
 
 model EntityField {
