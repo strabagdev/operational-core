@@ -76,6 +76,7 @@ model User {
   sessions      Session[]
   memberships   Membership[]
   auditEvents   AuditEvent[]
+  appViewAccesses UserAppViewAccess[]
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
 }
@@ -149,6 +150,7 @@ model Contract {
   organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   entityTypes    EntityType[]
   appViews       AppView[]
+  userAppViewAccesses UserAppViewAccess[]
   auditEvents    AuditEvent[]
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @updatedAt
@@ -221,11 +223,27 @@ model AppView {
   config     Json
   sortOrder  Int         @default(0)
   contract   Contract    @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  userAccesses UserAppViewAccess[]
   createdAt  DateTime    @default(now())
   updatedAt  DateTime    @updatedAt
 
   @@unique([contractId, slug])
+  @@unique([contractId, id])
   @@index([contractId, sortOrder])
+}
+
+model UserAppViewAccess {
+  id        String   @id @default(cuid())
+  userId    String
+  contractId String
+  appViewId String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  contract  Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  appView   AppView  @relation(fields: [contractId, appViewId], references: [contractId, id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([userId, contractId, appViewId])
+  @@index([contractId, appViewId])
 }
 
 model EntityField {

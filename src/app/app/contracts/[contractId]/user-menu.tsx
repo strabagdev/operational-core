@@ -1,4 +1,3 @@
-import Link from "next/link";
 import type { ComponentProps } from "react";
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -6,7 +5,6 @@ import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
@@ -75,10 +73,6 @@ export function UserMenuContentItems({
       <DropdownMenuLabel>
         <UserMenuIdentity email={email} name={name} />
       </DropdownMenuLabel>
-      <DropdownMenuSeparator />
-      <DropdownMenuItem asChild>
-        <Link href="/app">Cambiar contrato</Link>
-      </DropdownMenuItem>
       <DropdownMenuSeparator />
       <ContractLogoutForm />
     </>

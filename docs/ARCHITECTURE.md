@@ -142,6 +142,8 @@ Contract-scoped API access derives organization, app, contract, and membership f
 
 Dynamic entity definitions and records are exposed through `/api/v1/contracts/:contractId/entities`. Record write endpoints reuse the same server-side validation layer used by the web UI instead of maintaining a parallel validation engine. `EntityField.key` is the external JSON key for record values.
 
+Client experiences are exposed through `/api/v1/contracts/:contractId/views`. The endpoint returns only active `AppView` rows assigned to the authenticated user through `UserAppViewAccess`.
+
 External record creation is persistently idempotent through `ApiIdempotencyKey`. The unique boundary is external app, operation, and `clientRequestId`; matching payload replays return the original record, while different payloads are rejected as conflicts. The idempotency row points back to the created `EntityRecord` after a successful transaction.
 
 ## Entity Nature And Future Views
@@ -151,6 +153,16 @@ External record creation is persistently idempotent through `ApiIdempotencyKey`.
 `AppView.type` classifies how Opco Client should present or use data. It is separate from `EntityType.nature`: the same `MASTER` entity can appear in multiple app views, and a workflow view can combine a master entity with a transactional entity.
 
 `AppView` is scoped to a `Contract` and stores name, slug, optional icon, type, active state, JSON config, sort order, and timestamps. Slugs are unique inside a contract. `sortOrder` is a simple numeric order for future client navigation.
+
+`UserAppViewAccess` assigns one `User` to one `AppView` inside one `Contract`. Its unique boundary is `userId`, `contractId`, and `appViewId`. The database enforces that the assigned `AppView` belongs to the same contract through a composite relation, and domain helpers verify the user belongs to the contract organization before creating assignments.
+
+The intended client flow is:
+
+```text
+User -> Contract -> UserAppViewAccess -> AppView -> renderer in Opco Client
+```
+
+An AppView assignment means the experience is visible/available to the user. It is not a complete data-permission boundary. Data authorization remains a separate concept: in this stage entity and record API access is still authorized by contract membership because granular entity permissions do not exist yet.
 
 Current `AppView.type` values:
 

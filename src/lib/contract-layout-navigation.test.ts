@@ -13,6 +13,14 @@ const layoutSource = readFileSync(
   new URL("../app/app/contracts/[contractId]/layout.tsx", import.meta.url),
   "utf8",
 );
+const settingsSource = readFileSync(
+  new URL("../app/app/contracts/[contractId]/settings/page.tsx", import.meta.url),
+  "utf8",
+);
+const globalAppSource = readFileSync(
+  new URL("../app/app/page.tsx", import.meta.url),
+  "utf8",
+);
 const contractContextHeaderSource = readFileSync(
   new URL("../app/app/contracts/[contractId]/contract-context-header.tsx", import.meta.url),
   "utf8",
@@ -81,18 +89,28 @@ describe("contract layout navigation", () => {
 
   it("keeps the theme toggle and user menu available on mobile", () => {
     expect(layoutSource).toContain("ThemeToggleButton");
+    expect(layoutSource).toContain("UserMenu");
     expect(layoutSource).toContain("ContractContextHeader");
-    expect(contractContextHeaderSource).toContain("<UserMenu");
     expect(layoutSource).toContain("md:hidden");
-    expect(contractContextHeaderSource).toContain("md:hidden");
+    expect(layoutSource).toContain('aria-label="Navegación del contrato"');
     expect(layoutSource).toContain("tooltipClassName");
+    expect(contractContextHeaderSource).not.toContain("<UserMenu");
   });
 
   it("moves the desktop user menu out of the header and into the rail", () => {
     expect(layoutSource).toContain("userEmail={session.user.email}");
     expect(layoutSource).toContain("userImage={session.user.image}");
     expect(layoutSource).toContain("userName={session.user.name}");
-    expect(contractContextHeaderSource).toContain('className="md:hidden"');
+    expect(contractContextHeaderSource).not.toContain("userEmail");
+    expect(contractContextHeaderSource).not.toContain("userImage");
+    expect(contractContextHeaderSource).not.toContain("userName");
+  });
+
+  it("keeps global controls outside the contract context header that can be hidden", () => {
+    expect(contractContextHeaderSource).toContain("shouldHideContractContextHeader(segments)");
+    expect(contractContextHeaderSource).toContain("return null");
+    expect(layoutSource).toContain("<ThemeToggleButton");
+    expect(layoutSource).toContain("<UserMenu");
   });
 
   it("keeps the global contract header independent from entity record listings", () => {
@@ -100,6 +118,16 @@ describe("contract layout navigation", () => {
     expect(contractContextHeaderSource).toContain("useSelectedLayoutSegments");
     expect(contractContextHeaderSource).toContain("contractCode");
     expect(contractContextHeaderSource).toContain("organizationName");
+  });
+
+  it("separates global contract administration from contract-context navigation", () => {
+    expect(settingsSource).not.toContain("Administrar contratos");
+    expect(settingsSource).not.toContain("Cambiar contrato");
+    expect(settingsSource).not.toContain('href="/app"');
+    expect(globalAppSource).toContain("Administrar contratos");
+    expect(globalAppSource).toContain('href="/app/settings/contracts"');
+    expect(globalAppSource).toContain("Selecciona un contrato para continuar.");
+    expect(globalAppSource).toContain("Abrir contrato");
   });
 
   it("hides the contract header only on record index and entity record listing routes", () => {

@@ -253,6 +253,89 @@ Status policy:
 
 This preserves organization isolation: changing a `contractId` cannot grant access to another organization's contract.
 
+## Client Views
+
+### GET /api/v1/contracts/:contractId/views
+
+Returns the active AppViews assigned to the authenticated user inside the requested contract. This endpoint powers Opco Client navigation and experience discovery.
+
+Required header:
+
+```http
+Authorization: Bearer <accessToken>
+```
+
+Success response:
+
+```json
+{
+  "ok": true,
+  "data": {
+    "views": [
+      {
+        "id": "view_id",
+        "name": "Maestro de Materiales",
+        "slug": "maestro-materiales",
+        "icon": "package",
+        "type": "RECORDS",
+        "config": {
+          "entityTypeId": "entity_type_id"
+        },
+        "sortOrder": 10
+      }
+    ]
+  }
+}
+```
+
+Only views that match all of these conditions are returned:
+
+- belong to the requested active contract;
+- are assigned to the authenticated user through `UserAppViewAccess`;
+- have `active = true`;
+- have a valid server-parseable config.
+
+If the user has contract access but no assigned active views, the endpoint returns:
+
+```json
+{
+  "ok": true,
+  "data": {
+    "views": []
+  }
+}
+```
+
+Views are ordered by `sortOrder`, then `name`.
+
+Config shapes by `type`:
+
+```json
+{
+  "RECORDS": {
+    "entityTypeId": "entity_type_id"
+  },
+  "WORKFLOW": {
+    "sourceEntityTypeId": "source_entity_type_id",
+    "targetEntityTypeId": "target_entity_type_id",
+    "workflow": "attendance"
+  },
+  "BOARD": {
+    "entityTypeId": "entity_type_id",
+    "groupByFieldKey": "estado"
+  },
+  "DASHBOARD": {
+    "entityTypeIds": ["entity_type_id"]
+  }
+}
+```
+
+The response does not include `createdAt`, `updatedAt`, assignment ids, users, or administrative metadata.
+
+If a stored AppView has invalid config, Opco omits that view from the response and logs a server-side diagnostic with the view id. This prevents one corrupted view from breaking the whole client navigation payload.
+
+Important: AppView access controls which experience appears to the user. It is not a full data-permission boundary. Entity and record endpoints continue to perform their own server-side authorization. In this stage, data access is still based on contract membership because granular entity permissions do not exist yet.
+
 ## Dynamic Entities
 
 All dynamic entity endpoints require:

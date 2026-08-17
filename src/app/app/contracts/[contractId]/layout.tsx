@@ -8,6 +8,7 @@ import { getAuthorizedContract } from "@/lib/contracts";
 
 import { ContractContextHeader } from "./contract-context-header";
 import { ContractNavigationRail } from "./contract-navigation-rail";
+import { UserMenu } from "./user-menu";
 
 export default async function ContractLayout({
   children,
@@ -61,23 +62,27 @@ export default async function ContractLayout({
           contractCode={contract.code}
           contractName={contract.name}
           organizationName={contract.organization.name}
-          userEmail={session.user.email}
-          userImage={session.user.image}
-          userName={session.user.name}
         />
 
-        <div className="border-b border-border px-4 py-3 md:hidden">
-          <nav className="flex gap-2 overflow-x-auto">
+        <div className="flex items-center gap-3 border-b border-border px-4 py-3 md:hidden">
+          <nav aria-label="Navegación del contrato" className="flex min-w-0 flex-1 gap-2 overflow-x-auto">
             {navigation.map((item) => (
               <Button asChild key={item.href} size="sm" variant="outline">
                 <Link href={item.href}>{item.label}</Link>
               </Button>
             ))}
+          </nav>
+          <div className="flex shrink-0 items-center gap-2">
             <ThemeToggleButton
               className="shrink-0 border border-border"
               tooltipClassName="left-auto right-0 top-[calc(100%+0.5rem)] translate-y-0"
             />
-          </nav>
+            <UserMenu
+              email={session.user.email}
+              image={session.user.image}
+              name={session.user.name}
+            />
+          </div>
         </div>
 
         <main className="flex-1 px-4 py-6 md:px-6">

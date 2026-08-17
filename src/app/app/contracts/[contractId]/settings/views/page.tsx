@@ -45,11 +45,18 @@ export default async function AppViewsPage({
             Configura las vistas que Opco Client podrá consumir en etapas posteriores.
           </p>
         </div>
-        <Button asChild>
-          <Link href={`/app/contracts/${contractId}/settings/views/new`}>
-            Crear experiencia
-          </Link>
-        </Button>
+        <div className="flex flex-wrap gap-2 sm:justify-end">
+          <Button asChild variant="outline">
+            <Link href={`/app/contracts/${contractId}/settings/views/access`}>
+              Asignar usuarios
+            </Link>
+          </Button>
+          <Button asChild>
+            <Link href={`/app/contracts/${contractId}/settings/views/new`}>
+              Crear experiencia
+            </Link>
+          </Button>
+        </div>
       </header>
 
       <ActionMessage error={error} notice={notice} />

@@ -46,7 +46,8 @@ describe("contract user menu", () => {
     expect(menuSource).toContain("<DropdownMenuContent");
     expect(menuSource).toContain("<UserMenuContentItems");
     expect(menuSource).toContain("<ContractLogoutForm />");
-    expect(menuSource).toContain("Cambiar contrato");
+    expect(menuSource).not.toContain("Cambiar contrato");
+    expect(menuSource).not.toContain('href="/app"');
     expect(logoutSource).toContain('action="/api/logout"');
     expect(logoutSource).toContain('method="post"');
     expect(logoutSource).toContain("Cerrar sesión");
