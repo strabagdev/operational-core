@@ -40,6 +40,7 @@ export const importableFieldTypes = new Set<EntityFieldType>([
   "BOOLEAN",
   "DATE",
   "DATETIME",
+  "TIME",
   "SELECT",
   "MULTISELECT",
 ]);
@@ -918,6 +919,8 @@ function excelValueToFormValues(field: ImportField, value: unknown) {
       return [parseDateCell(value, field, false)];
     case "DATETIME":
       return [parseDateCell(value, field, true)];
+    case "TIME":
+      return [String(value).trim()];
     case "SELECT":
       return [optionLabelToValue(field, String(value).trim())];
     case "MULTISELECT":

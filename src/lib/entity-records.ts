@@ -234,6 +234,7 @@ const sortableFieldTypes = new Set<EntityFieldType>([
   "MONEY",
   "DATE",
   "DATETIME",
+  "TIME",
   "BOOLEAN",
   "SELECT",
 ]);
@@ -520,6 +521,7 @@ const searchableTextFieldTypes = new Set([
   "EMAIL",
   "PHONE",
   "URL",
+  "TIME",
 ]);
 
 export function buildEntityRecordSearchWhere({

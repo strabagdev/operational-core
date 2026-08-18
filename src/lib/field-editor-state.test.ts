@@ -17,7 +17,7 @@ describe("field editor state helpers", () => {
   it("keeps the supported field type list aligned with Prisma without duplicates", () => {
     expect(supportedEntityFieldTypes).toEqual(Object.values(EntityFieldType));
     expect(new Set(supportedEntityFieldTypes).size).toBe(supportedEntityFieldTypes.length);
-    expect(supportedEntityFieldTypes).toHaveLength(16);
+    expect(supportedEntityFieldTypes).toHaveLength(17);
     expect(supportedEntityFieldTypes).not.toContain("JSON");
   });
 
@@ -32,6 +32,7 @@ describe("field editor state helpers", () => {
       BOOLEAN: "Sí / No",
       DATE: "Fecha",
       DATETIME: "Fecha y hora",
+      TIME: "Hora",
       SELECT: "Lista de opciones",
       MULTISELECT: "Selección múltiple",
       EMAIL: "Correo electrónico",
@@ -81,6 +82,7 @@ describe("field editor state helpers", () => {
     expect(fieldValidationControls.MULTISELECT).toEqual(["required"]);
     expect(fieldValidationControls.RELATION).toEqual(["required"]);
     expect(fieldValidationControls.INTEGER).toEqual(["required", "numberRange"]);
+    expect(fieldValidationControls.TIME).toEqual(["required"]);
     expect(fieldValidationControls.TEXT).toEqual(["required", "textLength", "regex"]);
     expect(fieldValidationControls.FILE).toEqual(["required"]);
     expect(fieldValidationControls.IMAGE).toEqual(["required"]);

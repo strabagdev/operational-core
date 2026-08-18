@@ -1,0 +1,1 @@
+ALTER TYPE "EntityFieldType" ADD VALUE 'TIME';

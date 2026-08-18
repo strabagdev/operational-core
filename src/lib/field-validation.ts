@@ -104,6 +104,7 @@ const defaultValueTypes = new Set<EntityFieldType>([
   "BOOLEAN",
   "DATE",
   "DATETIME",
+  "TIME",
   "SELECT",
   "MULTISELECT",
   "EMAIL",
@@ -132,6 +133,7 @@ export const configurableValidationMatrix: Record<
   BOOLEAN: ["required", "defaultValue"],
   DATE: ["required", "defaultValue"],
   DATETIME: ["required", "defaultValue"],
+  TIME: ["required", "defaultValue"],
   SELECT: ["required", "defaultValue"],
   MULTISELECT: ["required", "defaultValue"],
   RELATION: ["required"],
@@ -668,6 +670,9 @@ export function normalizeRawFieldValue(
     case "DATETIME":
       if (!rawValue) return { fieldId: field.id, dateValue: null };
       return { fieldId: field.id, dateValue: parseDateValue(rawValue, field.name) };
+    case "TIME":
+      if (!rawValue) return { fieldId: field.id, textValue: null };
+      return { fieldId: field.id, textValue: normalizeTimeValue(rawValue, field.id) };
     case "SELECT":
       if (!rawValue) return { fieldId: field.id, textValue: null };
       validateOptionValue(field, rawValue);
@@ -906,6 +911,28 @@ function parseDateValue(value: string, fieldName: string) {
   }
 
   return date;
+}
+
+export function normalizeTimeValue(value: unknown, fieldId = "defaultValue") {
+  if (typeof value !== "string") {
+    throw new FieldValidationError({ [fieldId]: ["Debe ser una hora válida en formato HH:mm."] });
+  }
+
+  const rawValue = value.trim();
+  const match = /^(\d{2}):(\d{2})$/.exec(rawValue);
+
+  if (!match) {
+    throw new FieldValidationError({ [fieldId]: ["Debe ser una hora válida en formato HH:mm."] });
+  }
+
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+
+  if (hours > 23 || minutes > 59) {
+    throw new FieldValidationError({ [fieldId]: ["Debe ser una hora válida en formato HH:mm."] });
+  }
+
+  return `${match[1]}:${match[2]}`;
 }
 
 function toJsonValue(value: unknown) {

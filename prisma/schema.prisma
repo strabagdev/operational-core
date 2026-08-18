@@ -27,6 +27,7 @@ enum EntityFieldType {
   BOOLEAN
   DATE
   DATETIME
+  TIME
   SELECT
   MULTISELECT
   EMAIL

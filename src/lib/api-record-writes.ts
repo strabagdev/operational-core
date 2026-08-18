@@ -446,6 +446,7 @@ function appendApiFieldValue(formData: FormData, field: ApiWriteField, value: un
     field.type === "URL" ||
     field.type === "DATE" ||
     field.type === "DATETIME" ||
+    field.type === "TIME" ||
     field.type === "SELECT"
   ) {
     if (typeof value !== "string") {

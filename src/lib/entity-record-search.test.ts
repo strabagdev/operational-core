@@ -305,6 +305,7 @@ describe("entity record server-side sorting", () => {
     ["MONEY", "money", "desc"],
     ["DATE", "date", "asc"],
     ["DATETIME", "datetime", "desc"],
+    ["TIME", "time", "asc"],
     ["BOOLEAN", "active", "asc"],
     ["SELECT", "status", "asc"],
   ] as const)("sorts %s visible fields DB-side before pagination", async (type, fieldId, direction) => {

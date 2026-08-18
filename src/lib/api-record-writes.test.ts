@@ -81,6 +81,16 @@ const entity = {
   slug: "equipos",
 } as never;
 
+const timeField = {
+  ...textField,
+  id: "field_hora",
+  key: "hora_inicio",
+  name: "Hora inicio",
+  required: false,
+  sortOrder: 3,
+  type: "TIME",
+} as const;
+
 function p2002() {
   return new Prisma.PrismaClientKnownRequestError("Unique constraint failed", {
     clientVersion: "6.19.3",
@@ -270,6 +280,66 @@ describe("api record writes", () => {
     expect(result.response.status).toBe(400);
     await expect(result.response.json()).resolves.toMatchObject({
       error: { code: "INACTIVE_FIELD" },
+      ok: false,
+    });
+    expect(prisma.entityRecord.create).not.toHaveBeenCalled();
+  });
+
+  it("writes TIME API values as canonical text and rejects invalid formats", async () => {
+    const entityWithTime = {
+      contractId: "contract_1",
+      fields: [textField, timeField],
+      id: "entity_1",
+      isActive: true,
+      name: "Equipos",
+      slug: "equipos",
+    } as never;
+
+    const created = await createApiEntityRecord({
+      appId: "app_1",
+      body: {
+        clientRequestId: "client-request-1",
+        values: { codigo: "EQ-001", hora_inicio: "08:30" },
+      },
+      contractId: "contract_1",
+      entity: entityWithTime,
+      userId: "user_1",
+    });
+
+    expect(created.ok).toBe(true);
+    expect(prisma.entityValue.createMany).toHaveBeenCalledWith({
+      data: expect.arrayContaining([
+        expect.objectContaining({
+          entityFieldId: "field_hora",
+          textValue: "08:30",
+        }),
+      ]),
+    });
+
+    vi.clearAllMocks();
+    vi.mocked(prisma.$transaction).mockImplementation((async (
+      callback: (tx: typeof prisma) => Promise<unknown>,
+    ) => callback(prisma)) as never);
+    vi.mocked(prisma.apiIdempotencyKey.create).mockResolvedValue({ id: "idem_2" } as never);
+    vi.mocked(prisma.entityField.findMany).mockResolvedValue([] as never);
+
+    const invalid = await createApiEntityRecord({
+      appId: "app_1",
+      body: {
+        clientRequestId: "client-request-2",
+        values: { codigo: "EQ-002", hora_inicio: "8:30" },
+      },
+      contractId: "contract_1",
+      entity: entityWithTime,
+      userId: "user_1",
+    });
+
+    expect(invalid.ok).toBe(false);
+    if (invalid.ok) {
+      throw new Error("Expected invalid TIME response.");
+    }
+    await expect(invalid.response.json()).resolves.toMatchObject({
+      error: { code: "INVALID_FIELD_VALUE" },
       ok: false,
     });
     expect(prisma.entityRecord.create).not.toHaveBeenCalled();

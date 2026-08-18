@@ -283,6 +283,7 @@ describe("entity import structure and values", () => {
       field({ id: "bool", name: "Booleano", type: "BOOLEAN" }),
       field({ id: "date", name: "Fecha", type: "DATE" }),
       field({ id: "datetime", name: "Fecha hora", type: "DATETIME" }),
+      field({ id: "time", name: "Hora", type: "TIME" }),
       field({
         id: "select",
         name: "Estado",
@@ -303,7 +304,7 @@ describe("entity import structure and values", () => {
       fields,
       file: await workbookFile(
         fields.map((item) => item.name),
-        [["abc", "10", 2.5, "Sí", "2026-01-02", "2026-01-02T10:00:00Z", "Activo", "A; B; A"]],
+        [["abc", "10", 2.5, "Sí", "2026-01-02", "2026-01-02T10:00:00Z", "08:30", "Activo", "A; B; A"]],
       ),
     });
     const result = await validateImportRows({ fields, rows });
@@ -316,6 +317,7 @@ describe("entity import structure and values", () => {
       { fieldId: "bool", booleanValue: true },
       { fieldId: "date" },
       { fieldId: "datetime" },
+      { fieldId: "time", textValue: "08:30" },
       { fieldId: "select", textValue: "activo" },
       { fieldId: "multi", jsonValue: ["a", "b"] },
     ]);
@@ -332,6 +334,7 @@ describe("entity import structure and values", () => {
       field({ id: "money", name: "Monto", type: "MONEY", config: { money: { currency: "UF" } } }),
       field({ id: "bool", name: "Booleano", type: "BOOLEAN" }),
       field({ id: "date", name: "Fecha", type: "DATE" }),
+      field({ id: "time", name: "Hora", type: "TIME" }),
       field({
         id: "select",
         name: "Estado",
@@ -356,6 +359,7 @@ describe("entity import structure and values", () => {
     manualFormData.set(fieldInputName("money"), "5269808713");
     manualFormData.set(fieldInputName("bool"), "true");
     manualFormData.set(fieldInputName("date"), "2026-01-21");
+    manualFormData.set(fieldInputName("time"), "14:45");
     manualFormData.set(fieldInputName("select"), "aprobado");
     manualFormData.append(fieldInputName("multi"), "aprobado");
     manualFormData.append(fieldInputName("multi"), "pendiente");
@@ -364,7 +368,7 @@ describe("entity import structure and values", () => {
       fields,
       file: await workbookFile(
         fields.map((item) => item.name),
-        [["Texto demo", 2147483647, 10.5, 5269808713, "true", "2026-01-21", "Aprobado", "Aprobado; Pendiente"]],
+        [["Texto demo", 2147483647, 10.5, 5269808713, "true", "2026-01-21", "14:45", "Aprobado", "Aprobado; Pendiente"]],
       ),
     });
     const manualValues = validateRecordValues({ fields, formData: manualFormData, mode: "create" });
@@ -397,6 +401,29 @@ describe("entity import structure and values", () => {
 
     expect(result.errors).toEqual([]);
     expect(result.validRows[0].values[0].decimalValue?.toString()).toBe("5269808713");
+  });
+
+  it("rejects invalid TIME values from Excel", async () => {
+    const fields = [field({ id: "time", name: "Hora inicio", type: "TIME" })];
+    const rows = await parseExcelRows({
+      fields,
+      file: await workbookFile(["Hora inicio"], [["08:30"], ["8:30"], ["24:00"]]),
+    });
+    const result = await validateImportRows({ fields, rows });
+
+    expect(result.validRows[0].values[0]).toMatchObject({ fieldId: "time", textValue: "08:30" });
+    expect(result.errors).toEqual([
+      {
+        row: 3,
+        field: "Hora inicio",
+        message: "Debe ser una hora válida en formato HH:mm.",
+      },
+      {
+        row: 4,
+        field: "Hora inicio",
+        message: "Debe ser una hora válida en formato HH:mm.",
+      },
+    ]);
   });
 
   it("applies the same INT4 range validation for Excel integer cells", async () => {

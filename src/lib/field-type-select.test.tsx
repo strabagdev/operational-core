@@ -36,7 +36,7 @@ describe("field type select", () => {
       expect(html).toContain(`value="${fieldType}"`);
     }
 
-    expect(html.match(/<option /g)).toHaveLength(16);
+    expect(html.match(/<option /g)).toHaveLength(17);
     expect(html).not.toContain("JSON");
     expect(html).not.toContain("disabled=\"\"");
   });

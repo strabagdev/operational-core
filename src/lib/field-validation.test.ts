@@ -197,6 +197,16 @@ describe("field validation", () => {
     ).toBe("1234.56");
   });
 
+  it("normalizes TIME values to canonical HH:mm and rejects invalid times", () => {
+    expect(normalizeRawFieldValue(field({ type: "TIME" }), ["08:05"]).textValue).toBe("08:05");
+    expect(normalizeRawFieldValue(field({ type: "TIME" }), [" 23:59 "]).textValue).toBe("23:59");
+    expect(normalizeRawFieldValue(field({ type: "TIME" }), [""]).textValue).toBeNull();
+
+    for (const invalid of ["8:30", "24:00", "12:60", "abc", "2026-08-18T10:00"]) {
+      expectFieldError(() => normalizeRawFieldValue(field({ type: "TIME" }), [invalid]));
+    }
+  });
+
   it("rejects select option from another field and deduplicates multiselect", () => {
     expect(() => validateRecordValues({
       fields: [field({ options: [{ value: "a" }], type: "SELECT" })],

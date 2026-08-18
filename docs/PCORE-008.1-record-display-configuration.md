@@ -32,7 +32,7 @@ Supported primary types:
 - `INTEGER`
 - `SELECT`
 
-Unsupported primary types include `TEXTAREA`, `DECIMAL`, `MONEY`, `BOOLEAN`, `DATE`, `DATETIME`, `MULTISELECT`, `RELATION`, `JSON`, `FILE`, and `IMAGE`.
+Unsupported primary types include `TEXTAREA`, `DECIMAL`, `MONEY`, `BOOLEAN`, `DATE`, `DATETIME`, `TIME`, `MULTISELECT`, `RELATION`, `JSON`, `FILE`, and `IMAGE`.
 
 If no primary is configured, the legacy fallback is used: first required `TEXT`, then first `TEXT`, then `Registro sin nombre`.
 

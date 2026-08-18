@@ -612,6 +612,7 @@ PATCH does not currently use `clientRequestId`; it is not idempotent in this sta
 | `BOOLEAN` | `boolean` or `null`. |
 | `DATE` | `YYYY-MM-DD` string or `null`. |
 | `DATETIME` | ISO 8601 timestamp string or `null`. |
+| `TIME` | `HH:mm` string or `null`. |
 | `MULTISELECT` | JSON array. Missing values return `[]`. |
 | `RELATION` | A clean record reference, an array of references for `MANY`, or `null`. |
 | `FILE`, `IMAGE` | Stored JSON value or `null`. Upload/storage behavior is not implemented by these read endpoints. |
@@ -630,7 +631,7 @@ Relation values are serialized as:
 
 | EntityField type | JSON input |
 | --- | --- |
-| `TEXT`, `TEXTAREA`, `EMAIL`, `PHONE`, `URL`, `DATE`, `DATETIME`, `SELECT` | `string` or `null`. |
+| `TEXT`, `TEXTAREA`, `EMAIL`, `PHONE`, `URL`, `DATE`, `DATETIME`, `TIME`, `SELECT` | `string` or `null`. |
 | `INTEGER` | integer `number` or `null`. |
 | `DECIMAL`, `MONEY` | decimal `string` or `number`, or `null`. |
 | `BOOLEAN` | `boolean` or `null`. |
@@ -639,6 +640,18 @@ Relation values are serialized as:
 | `FILE`, `IMAGE` | Not writable through the JSON API in this stage because upload/storage behavior is not implemented. |
 
 All relation target ids are validated server-side. The target record must belong to the configured target entity type inside the same contract.
+
+`TIME` values represent a local time of day without date or timezone. API clients must send canonical `HH:mm`, for example:
+
+```json
+{
+  "values": {
+    "hora_inicio": "08:30"
+  }
+}
+```
+
+Invalid hours, full dates, timestamps, and free text are rejected with the standard `INVALID_FIELD_VALUE` response. Opco clients should render `TIME` as a time picker/input and preserve the `HH:mm` contract.
 
 ### Dynamic Entity Errors
 

@@ -120,6 +120,41 @@ describe("record form options", () => {
     expect(html).toContain('value="2026-01-21"');
   });
 
+  it("renders TIME values with a native time input", () => {
+    const html = renderToStaticMarkup(
+      <RecordForm
+        action={async () => undefined}
+        fields={[
+          {
+            id: "field_time",
+            name: "Hora inicio",
+            description: null,
+            type: "TIME",
+            required: false,
+            config: null,
+            options: [],
+          },
+        ]}
+        relationOptions={{}}
+        submitLabel="Guardar cambios"
+        values={[
+          {
+            entityFieldId: "field_time",
+            textValue: "08:30",
+            integerValue: null,
+            decimalValue: null,
+            booleanValue: null,
+            dateValue: null,
+            jsonValue: null,
+          },
+        ]}
+      />,
+    );
+
+    expect(html).toContain('type="time"');
+    expect(html).toContain('value="08:30"');
+  });
+
   it("renders MONEY inputs with clean numeric values and currency indicator", () => {
     const html = renderToStaticMarkup(
       <RecordForm

@@ -139,6 +139,7 @@ describe("API entity serializers", () => {
       field({ id: "boolean", key: "booleano", type: "BOOLEAN" }),
       field({ id: "date", key: "fecha", type: "DATE" }),
       field({ id: "datetime", key: "fecha_hora", type: "DATETIME" }),
+      field({ id: "time", key: "hora_inicio", type: "TIME" }),
       field({ id: "select", key: "estado", type: "SELECT" }),
       field({ id: "multi", key: "etiquetas", type: "MULTISELECT" }),
       field({ id: "file", key: "archivo", type: "FILE" }),
@@ -154,6 +155,7 @@ describe("API entity serializers", () => {
           { booleanValue: false, entityFieldId: "boolean" },
           { dateValue: new Date("2026-08-13T12:34:56.000Z"), entityFieldId: "date" },
           { dateValue: new Date("2026-08-13T12:34:56.000Z"), entityFieldId: "datetime" },
+          { entityFieldId: "time", textValue: "08:30" },
           { entityFieldId: "select", textValue: "activo" },
           { entityFieldId: "multi", jsonValue: ["a", "b"] },
           { entityFieldId: "file", jsonValue: { name: "manual.pdf" } },
@@ -171,6 +173,7 @@ describe("API entity serializers", () => {
         etiquetas: ["a", "b"],
         fecha: "2026-08-13",
         fecha_hora: "2026-08-13T12:34:56.000Z",
+        hora_inicio: "08:30",
         texto: "Texto",
       },
     });

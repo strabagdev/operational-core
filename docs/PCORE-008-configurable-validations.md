@@ -66,7 +66,7 @@ For relation fields, relation metadata remains in the same config object:
 | INTEGER | required, minimum, maximum, defaultValue |
 | DECIMAL, MONEY | required, minimum, maximum, defaultValue |
 | BOOLEAN | required, defaultValue |
-| DATE, DATETIME | required, defaultValue |
+| DATE, DATETIME, TIME | required, defaultValue |
 | SELECT | required, defaultValue |
 | MULTISELECT | required, defaultValue |
 | RELATION | required |

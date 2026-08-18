@@ -78,6 +78,8 @@ Supported value columns are text, integer, decimal, boolean, date, and JSON. `MU
 
 `MONEY` represents a monetary value or financial unit. Its canonical value is numeric and is stored in the same decimal value channel used for numeric precision; symbols, currency labels, and unit suffixes are presentation only. The presentation currency/unit is defined by `EntityField.config.money.currency`, currently `CLP`, `USD`, `EUR`, or `UF`, with `CLP` as the fallback for existing fields without money config.
 
+`TIME` represents a local time of day without date or timezone. It is stored in the EAV `textValue` channel as canonical `HH:mm` because the current value model has no dedicated time column and adding one would not improve the field semantics for this architecture. Server-side validation always treats it as `TIME`, not generic `TEXT`; no fake dates are introduced. With canonical `HH:mm`, lexicographic sort matches time-of-day order.
+
 Changing `config.money.currency` does not convert existing values. It only changes how those numeric values are interpreted and displayed. Future APIs must expose the numeric value as data and the currency/unit through the field definition, not only a formatted string. Keep this rule separate from `INTEGER` and `DECIMAL`: they may share infrastructure, but `MONEY` has currency/unit presentation semantics.
 
 ## Semántica de fechas

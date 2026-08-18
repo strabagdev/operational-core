@@ -336,6 +336,10 @@ function getInputType(type: EntityFieldType) {
     return "datetime-local";
   }
 
+  if (type === "TIME") {
+    return "time";
+  }
+
   if (type === "EMAIL") {
     return "email";
   }

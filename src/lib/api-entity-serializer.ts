@@ -233,6 +233,7 @@ function serializeApiFieldValue({
     field.type === "EMAIL" ||
     field.type === "PHONE" ||
     field.type === "URL" ||
+    field.type === "TIME" ||
     field.type === "SELECT"
   ) {
     return value.textValue ?? null;

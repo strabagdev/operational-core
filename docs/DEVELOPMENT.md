@@ -255,7 +255,7 @@ The record list for an entity type exposes:
 - `Descargar plantilla`, which streams a server-generated workbook;
 - `Importar Excel`, which opens a Sheet for upload, validation, and all-or-nothing import.
 
-Supported import field types are `TEXT`, `TEXTAREA`, `EMAIL`, `PHONE`, `URL`, `INTEGER`, `DECIMAL`, `MONEY`, `BOOLEAN`, `DATE`, `DATETIME`, `SELECT`, and `MULTISELECT`.
+Supported import field types are `TEXT`, `TEXTAREA`, `EMAIL`, `PHONE`, `URL`, `INTEGER`, `DECIMAL`, `MONEY`, `BOOLEAN`, `DATE`, `DATETIME`, `TIME`, `SELECT`, and `MULTISELECT`.
 
 `RELATION`, `FILE`, and `IMAGE` are excluded from the workbook. If an active excluded field is required, the basic import is blocked instead of creating invalid records.
 
@@ -265,7 +265,7 @@ Use semicolons for `MULTISELECT` labels, for example:
 Seguridad; Operaciones; Mantención
 ```
 
-Text dates should use `YYYY-MM-DD`; date-time values should use ISO-style text.
+Text dates should use `YYYY-MM-DD`; date-time values should use ISO-style text; time-of-day values should use `HH:mm`.
 
 `DATE` values are calendar dates, not instants. Keep date-only parsing and display aligned with the architecture rule in `docs/ARCHITECTURE.md`; use the shared helper in `src/lib/date-only.ts` instead of ad hoc timezone-sensitive formatting.
 

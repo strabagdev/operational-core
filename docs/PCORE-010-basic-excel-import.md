@@ -33,6 +33,7 @@ Templates include active fields with these types:
 - `BOOLEAN`
 - `DATE`
 - `DATETIME`
+- `TIME`
 - `SELECT`
 - `MULTISELECT`
 
@@ -95,6 +96,7 @@ Type rules:
 - `BOOLEAN` accepts `Verdadero`, `Falso`, `true`, `false`, `Sí`, `No`, `1`, and `0`.
 - `DATE` accepts Excel dates or text in `YYYY-MM-DD`.
 - `DATETIME` accepts Excel date/time values or ISO-style text.
+- `TIME` accepts text in `HH:mm`.
 - `SELECT` uses the exact visible label of an active option.
 - `MULTISELECT` uses exact visible labels separated by semicolons, for example `Seguridad; Operaciones`.
 
