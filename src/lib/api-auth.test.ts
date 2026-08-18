@@ -219,6 +219,27 @@ describe("API auth bearer tokens", () => {
     });
   });
 
+  it("rejects existing bearer tokens for inactive users", async () => {
+    userFindUnique.mockResolvedValueOnce({
+      active: false,
+      email: "user@example.com",
+      id: "user_1",
+      name: "User One",
+    } as never);
+
+    const token = await signApiAccessToken({
+      app: testApp,
+      user: testUser,
+    });
+
+    await expect(getAuthenticatedApiUser(new Request("http://localhost/api/v1/me", {
+      headers: { authorization: `Bearer ${token}` },
+    }))).resolves.toEqual({
+      ok: false,
+      reason: "user-inactive",
+    });
+  });
+
   it("rejects tokens missing app claims", async () => {
     const token = await new SignJWT({
       email: "user@example.com",

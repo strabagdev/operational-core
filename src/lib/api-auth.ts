@@ -70,6 +70,7 @@ export type ApiAuthFailureReason =
   | "invalid-token"
   | "expired-token"
   | "user-not-found"
+  | "user-inactive"
   | "app-not-found"
   | "app-inactive"
   | "app-organization-mismatch"
@@ -156,6 +157,7 @@ const apiAuthErrorCodes = {
   "missing-token": "TOKEN_MISSING",
   "multiple-organizations": "MULTIPLE_ORGANIZATIONS_NOT_SUPPORTED",
   "user-not-found": "TOKEN_USER_NOT_FOUND",
+  "user-inactive": "TOKEN_USER_INACTIVE",
 } as const;
 
 function apiAuthFailureResponse(reason: ApiAuthFailureReason) {
@@ -200,6 +202,7 @@ export async function verifyApiCredentials(input: {
 }) {
   const user = await prisma.user.findUnique({
     select: {
+      active: true,
       email: true,
       id: true,
       name: true,
@@ -210,7 +213,7 @@ export async function verifyApiCredentials(input: {
     },
   });
 
-  if (!user?.passwordHash) {
+  if (!user?.passwordHash || user.active === false) {
     return null;
   }
 
@@ -427,6 +430,7 @@ export async function getAuthenticatedApiUser(request: Request): Promise<ApiAuth
 
   const user = await prisma.user.findUnique({
     select: {
+      active: true,
       email: true,
       id: true,
       name: true,
@@ -440,6 +444,13 @@ export async function getAuthenticatedApiUser(request: Request): Promise<ApiAuth
     return {
       ok: false,
       reason: "user-not-found",
+    };
+  }
+
+  if (user.active === false) {
+    return {
+      ok: false,
+      reason: "user-inactive",
     };
   }
 
@@ -496,7 +507,11 @@ export async function getAuthenticatedApiUser(request: Request): Promise<ApiAuth
     },
     ok: true,
     token: verifiedToken.payload,
-    user,
+    user: {
+      email: user.email,
+      id: user.id,
+      name: user.name,
+    },
   };
 }
 

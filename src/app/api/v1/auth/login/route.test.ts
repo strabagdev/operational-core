@@ -247,6 +247,31 @@ describe("POST /api/v1/auth/login", () => {
         message: "Aplicacion no valida",
       },
     });
+  }, 20000);
+
+  it("returns 401 for an inactive user without revealing account state", async () => {
+    userFindUnique.mockResolvedValueOnce({
+      active: false,
+      email: "user@example.com",
+      id: "user_1",
+      name: "User One",
+      passwordHash: await bcrypt.hash("secret123", 12),
+    } as never);
+
+    const response = await POST(loginRequest({
+      clientId: "opco_app_client_1",
+      email: "user@example.com",
+      password: "secret123",
+    }));
+
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({
+      ok: false,
+      error: {
+        code: "INVALID_CREDENTIALS",
+        message: "Credenciales invalidas",
+      },
+    });
   });
 
   it("returns 403 for an inactive app", async () => {

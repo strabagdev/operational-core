@@ -28,6 +28,8 @@ AUTH_URL="http://localhost:3000"
 
 `DATABASE_URL` is the only database connection source used by Prisma. In Railway, use the database URL provided by the environment instead of hard-coding local credentials. `AUTH_SECRET` is required and must be a stable generated value; the app fails at startup/build if it is missing or empty. `API_AUTH_SECRET` is required by the external `/api/v1` bearer-token endpoints and must be a separate stable generated value. Do not rely on generated or fallback secrets. `API_ALLOWED_ORIGINS` is a comma-separated list of exact browser origins allowed to call `/api/v1` with CORS; include the real Expo Web origin shown by the browser, for example `http://localhost:8081`, and any deployed web client origins.
 
+Local development may use Railway's public TCP proxy host, for example `*.proxy.rlwy.net`, because the app is connecting from outside Railway. In Railway runtime, when the application and PostgreSQL service live in the same project and environment, prefer Railway private networking or reference variables for the internal database connection when available. Do not change `DATABASE_URL` automatically in code; manage that choice in Railway environment variables.
+
 Auth.js v5 reads `AUTH_SECRET` and `AUTH_URL`. Do not define a competing `NEXTAUTH_SECRET`. If a legacy `NEXTAUTH_URL` exists locally, replace it with `AUTH_URL` when touching the file.
 
 The real database URL, auth secret, API auth secret, and production allowed-origin list belong only in local or deployment environment variables; do not commit secret values.

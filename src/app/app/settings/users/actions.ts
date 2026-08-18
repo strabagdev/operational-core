@@ -2,15 +2,21 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { MembershipRole } from "@prisma/client";
 
 import { safeAppRedirectPath, withActionMessage } from "@/lib/action-redirects";
 import { requireAuthenticatedUser } from "@/lib/auth-guards";
 import {
-  addUserToOrganization,
-  getUserFormInput,
-  removeMembershipForAdmin,
-  updateMembershipRoleForAdmin,
+  createUserForAdmin,
+  deleteUserForAdmin,
+  getAppViewAccessInputForUser,
+  getCreateUserFormInput,
+  getDeleteUserConfirmation,
+  getUpdateUserFormInput,
+  isPrismaConnectivityError,
+  isUserAdminDatabaseConnectionError,
+  setUserActiveForAdmin,
+  updateUserExperiencesForAdmin,
+  updateUserForAdmin,
   userAdminFriendlyError,
 } from "@/lib/user-admin";
 
@@ -30,69 +36,127 @@ function withMessage(path: string, key: "error" | "notice", message: string) {
   return withActionMessage(path, key, message);
 }
 
-export async function addUserAction(formData: FormData) {
+function logUserAdminActionError(action: string, error: unknown) {
+  if (isUserAdminDatabaseConnectionError(error) || isPrismaConnectivityError(error)) {
+    console.error(`[user-admin] ${action} failed with database connectivity error.`, error);
+  }
+}
+
+export async function createUserAction(formData: FormData) {
   const userId = await requireUserId();
   const returnTo = redirectPath(formData, "returnTo");
   const successTo = redirectPath(formData, "successTo");
-  let notice = "Usuario agregado.";
 
   try {
-    const result = await addUserToOrganization(userId, getUserFormInput(formData));
-    notice = result.existingUser
-      ? "Este usuario ya existe. Se agregará a esta organización."
-      : notice;
+    await createUserForAdmin(userId, getCreateUserFormInput(formData));
   } catch (error) {
+    logUserAdminActionError("createUserAction", error);
     redirect(withMessage(returnTo, "error", userAdminFriendlyError(error)));
   }
 
   revalidatePath(usersPath);
-  redirect(withMessage(successTo, "notice", notice));
+  redirect(withMessage(successTo, "notice", "Usuario creado."));
 }
 
-export async function updateMembershipRoleAction(
-  membershipId: string,
-  role: MembershipRole,
+export async function updateUserAction(targetUserId: string, formData: FormData) {
+  const userId = await requireUserId();
+  const returnTo = redirectPath(formData, "returnTo");
+  const successTo = redirectPath(formData, "successTo");
+
+  try {
+    const result = await updateUserForAdmin({
+      adminUserId: userId,
+      input: getUpdateUserFormInput(formData),
+      userId: targetUserId,
+    });
+
+    if (!result) {
+      redirect(withMessage(returnTo, "error", "No se encontró el usuario."));
+    }
+  } catch (error) {
+    logUserAdminActionError("updateUserAction", error);
+    redirect(withMessage(returnTo, "error", userAdminFriendlyError(error)));
+  }
+
+  revalidatePath(usersPath);
+  revalidatePath(`${usersPath}/${targetUserId}`);
+  redirect(withMessage(successTo, "notice", "Usuario actualizado."));
+}
+
+export async function setUserActiveAction(
+  targetUserId: string,
+  active: boolean,
   formData: FormData,
 ) {
   const userId = await requireUserId();
   const returnTo = redirectPath(formData, "returnTo");
 
   try {
-    const membership = await updateMembershipRoleForAdmin({
+    const result = await setUserActiveForAdmin({
+      active,
       adminUserId: userId,
-      membershipId,
-      role,
+      userId: targetUserId,
     });
 
-    if (!membership) {
-      redirect(withMessage(returnTo, "error", "No se encontró la membresía."));
+    if (!result) {
+      redirect(withMessage(returnTo, "error", "No se encontró el usuario."));
     }
   } catch (error) {
+    logUserAdminActionError("setUserActiveAction", error);
     redirect(withMessage(returnTo, "error", userAdminFriendlyError(error)));
   }
 
   revalidatePath(usersPath);
-  redirect(withMessage(returnTo, "notice", "Rol actualizado."));
+  revalidatePath(`${usersPath}/${targetUserId}`);
+  redirect(withMessage(returnTo, "notice", active ? "Usuario activado." : "Usuario desactivado."));
 }
 
-export async function removeMembershipAction(membershipId: string, formData: FormData) {
+export async function updateUserExperiencesAction(targetUserId: string, formData: FormData) {
   const userId = await requireUserId();
   const returnTo = redirectPath(formData, "returnTo");
+  const { appViewIds, contractId } = getAppViewAccessInputForUser(formData);
 
   try {
-    const membership = await removeMembershipForAdmin({
+    const result = await updateUserExperiencesForAdmin({
       adminUserId: userId,
-      membershipId,
+      appViewIds,
+      contractId,
+      targetUserId,
     });
 
-    if (!membership) {
-      redirect(withMessage(returnTo, "error", "No se encontró la membresía."));
+    if (!result) {
+      redirect(withMessage(returnTo, "error", "No tienes permiso para administrar asignaciones."));
     }
   } catch (error) {
+    logUserAdminActionError("updateUserExperiencesAction", error);
     redirect(withMessage(returnTo, "error", userAdminFriendlyError(error)));
   }
 
   revalidatePath(usersPath);
-  revalidatePath("/app");
-  redirect(withMessage(returnTo, "notice", "Usuario quitado de la organización."));
+  revalidatePath(`${usersPath}/${targetUserId}`);
+  redirect(withMessage(returnTo, "notice", "Experiencias actualizadas."));
+}
+
+export async function deleteUserAction(targetUserId: string, formData: FormData) {
+  const userId = await requireUserId();
+  const returnTo = redirectPath(formData, "returnTo");
+  const successTo = redirectPath(formData, "successTo");
+
+  try {
+    const result = await deleteUserForAdmin({
+      adminUserId: userId,
+      confirmationText: getDeleteUserConfirmation(formData),
+      userId: targetUserId,
+    });
+
+    if (!result) {
+      redirect(withMessage(returnTo, "error", "No se encontró el usuario."));
+    }
+  } catch (error) {
+    logUserAdminActionError("deleteUserAction", error);
+    redirect(withMessage(returnTo, "error", userAdminFriendlyError(error)));
+  }
+
+  revalidatePath(usersPath);
+  redirect(withMessage(successTo, "notice", "Usuario eliminado permanentemente."));
 }

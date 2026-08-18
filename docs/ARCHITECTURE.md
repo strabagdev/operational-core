@@ -10,6 +10,20 @@ It is not an ERP. The Core should not own workflows, approvals, generic business
 
 `Contract` is the operational context. Authenticated app routes use the contract id in the URL, but server-side helpers always validate the session, membership, contract status, and resource ownership before returning data.
 
+## User Administration
+
+`User.active` is the account-level access switch. Active users can authenticate through the Auth.js credentials flow and through `/api/v1/auth/login`; inactive users remain in the database for history and administration but cannot obtain a new login session or API token. Protected API requests also re-read the user on every Bearer token validation, so an already-issued API token stops working after the user becomes inactive.
+
+Disabling a user is the normal offboarding operation. It updates only `User.active = false` and preserves `User`, `Membership`, `AuditEvent`, and `UserAppViewAccess` rows. This keeps operational history and assigned configuration visible.
+
+Permanent deletion is intentionally narrow. A user can be physically deleted only when server-side `canDeleteUser` confirms that the user belongs to the administrator's organization and has no organization-scoped audit history. Administrative rows such as `Membership`, Auth.js sessions/accounts, and `UserAppViewAccess` may be removed through database cascades as part of deleting a history-free user. Operational history must never be deleted merely to make a user deletable.
+
+User creation and editing derive organization server-side from the authenticated ADMIN context. Client-submitted `organizationId`, `userId`, or `role` values are never trusted without re-reading membership and organization ownership. Email is normalized to lowercase, must be unique, and passwords are always stored as bcrypt hashes. Editing a user does not require a password; an empty password field preserves the existing hash.
+
+The organization must always keep at least one active `ADMIN`. Demotion, deactivation, and permanent deletion of an ADMIN all check for another active ADMIN before mutating data.
+
+User experience assignment reuses `UserAppViewAccess`. The user detail screen lists AppViews by contract and lets administrators assign or remove active views that belong to the same organization. It does not create a parallel permission system.
+
 ## Configurable Models
 
 `EntityType` defines a record category inside one contract, such as Personas, Equipos, Empresas, or Documentos.

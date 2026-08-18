@@ -1,11 +1,11 @@
 import { PrismaAdapter } from "@auth/prisma-adapter";
-import bcrypt from "bcrypt";
 import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 
 import { getAuthCookieOptions } from "@/lib/auth-cookies";
 import { applyAuthenticatedUserToToken } from "@/lib/auth-token";
 import { prisma } from "@/lib/prisma";
+import { authorizeWebCredentials } from "@/lib/web-auth";
 
 function requiredEnv(name: string) {
   const value = process.env[name];
@@ -35,40 +35,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         password: { label: "Password", type: "password" },
       },
       async authorize(credentials) {
-        const email =
-          typeof credentials.email === "string"
-            ? credentials.email.trim().toLowerCase()
-            : "";
-        const password =
-          typeof credentials.password === "string" ? credentials.password : "";
-
-        if (!email || !password) {
-          return null;
-        }
-
-        const user = await prisma.user.findUnique({
-          where: { email },
-        });
-
-        if (!user?.passwordHash) {
-          return null;
-        }
-
-        const isValidPassword = await bcrypt.compare(
-          password,
-          user.passwordHash,
-        );
-
-        if (!isValidPassword) {
-          return null;
-        }
-
-        return {
-          id: user.id,
-          name: user.name,
-          email: user.email,
-          image: user.image,
-        };
+        return authorizeWebCredentials(credentials);
       },
     }),
   ],
@@ -76,10 +43,19 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     async jwt({ token, user }) {
       return applyAuthenticatedUserToToken(token, user);
     },
-    session({ session, token }) {
+    async session({ session, token }) {
       const userId = typeof token.id === "string" ? token.id : undefined;
 
       if (!session.user || !userId) {
+        return { ...session, user: undefined };
+      }
+
+      const user = await prisma.user.findUnique({
+        select: { active: true },
+        where: { id: userId },
+      });
+
+      if (!user?.active) {
         return { ...session, user: undefined };
       }
 

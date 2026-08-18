@@ -1,33 +1,23 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { MoreHorizontal } from "lucide-react";
+import { Edit, Power, PowerOff, Trash2 } from "lucide-react";
 
 import { auth } from "@/auth";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
 import {
-  Card,
-  CardContent,
-} from "@/components/ui/card";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { buildUsersHref, type UserAdminSearchParams } from "@/lib/user-admin-navigation";
-import { getUserAdministration } from "@/lib/user-admin";
-import {
-  addUserAction,
-  removeMembershipAction,
-  updateMembershipRoleAction,
-} from "./actions";
-import { UserFormSheet } from "./user-form-sheet";
+  getUserAdministration,
+  isPrismaConnectivityError,
+  isUserAdminDatabaseConnectionError,
+} from "@/lib/user-admin";
+
+import { setUserActiveAction } from "./actions";
+import { UserAdminDatabaseConnectionState } from "./database-connection-state";
 
 export default async function UserAdministrationPage({
   searchParams,
 }: {
-  searchParams: Promise<UserAdminSearchParams>;
+  searchParams: Promise<{ error?: string; notice?: string }>;
 }) {
   const session = await auth();
 
@@ -35,22 +25,23 @@ export default async function UserAdministrationPage({
     redirect("/login");
   }
 
-  const params = await searchParams;
-  const basePath = "/app/settings/users";
-  const data = await getUserAdministration({
-    userId: session.user.id,
-  });
-  const closeHref = buildUsersHref(basePath, params, {
-    addUser: undefined,
-    error: undefined,
-    notice: undefined,
-  });
-  const addHref = buildUsersHref(basePath, params, {
-    addUser: "1",
-    error: undefined,
-    notice: undefined,
-  });
-  const sheetOrganizations = data.organization ? [data.organization] : [];
+  const { error, notice } = await searchParams;
+  let data: Awaited<ReturnType<typeof getUserAdministration>> | null = null;
+  let databaseConnectionFailed = false;
+
+  try {
+    data = await getUserAdministration({ userId: session.user.id });
+  } catch (loadError) {
+    if (
+      isUserAdminDatabaseConnectionError(loadError) ||
+      isPrismaConnectivityError(loadError)
+    ) {
+      console.error("[user-admin] Failed to load user administration.", loadError);
+      databaseConnectionFailed = true;
+    } else {
+      throw loadError;
+    }
+  }
 
   return (
     <main className="mx-auto grid min-h-screen w-full max-w-6xl gap-6 px-6 py-10">
@@ -58,7 +49,7 @@ export default async function UserAdministrationPage({
         <div>
           <h1 className="text-2xl font-semibold">Usuarios</h1>
           <p className="text-sm text-muted-foreground">
-            Administra usuarios y roles de tu organización.
+            Administra usuarios, estado, roles y experiencias de tu organización.
           </p>
         </div>
         <div className="flex flex-wrap gap-2 sm:justify-end">
@@ -66,106 +57,91 @@ export default async function UserAdministrationPage({
             <Link href="/app">Volver</Link>
           </Button>
           <Button asChild>
-            <Link href={addHref}>Agregar usuario</Link>
+            <Link href="/app/settings/users/new">Nuevo usuario</Link>
           </Button>
         </div>
       </header>
 
-      {params.error ? (
-        <Card>
-          <CardContent className="pt-6">
-            <p className="text-sm text-destructive">{params.error}</p>
-          </CardContent>
-        </Card>
-      ) : null}
-      {params.notice ? (
-        <Card>
-          <CardContent className="pt-6">
-            <p className="text-sm text-muted-foreground">{params.notice}</p>
-          </CardContent>
-        </Card>
-      ) : null}
+      <ActionMessage error={error} notice={notice} />
 
-      {data.organization ? (
+      {databaseConnectionFailed ? (
+        <UserAdminDatabaseConnectionState retryHref="/app/settings/users" />
+      ) : data?.organization ? (
         <section className="grid gap-3">
-          {data.memberships.length > 0 ? (
-            data.memberships.map((membership) => {
-              const nextRole = membership.role === "ADMIN" ? "MEMBER" : "ADMIN";
-
-              return (
-                <Card key={membership.id}>
-                  <CardContent className="grid gap-4 pt-6 md:grid-cols-[1fr_auto] md:items-center">
-                    <div className="grid gap-2">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <h2 className="text-base font-semibold">
-                          {membership.user.name ?? "Usuario sin nombre"}
-                        </h2>
-                        <span className="rounded-md border border-border px-2 py-1 text-xs font-medium">
-                          {membership.role}
-                        </span>
-                        <span className="rounded-md border border-border px-2 py-1 text-xs font-medium">
-                          Activo
-                        </span>
-                      </div>
-                      <div className="grid gap-1 text-sm text-muted-foreground md:grid-cols-2">
-                        <span>Email: {membership.user.email}</span>
-                        <span>Organización: {data.organization.name}</span>
-                        <span>
-                          Incorporación: {membership.createdAt.toLocaleDateString("es-CL")}
-                        </span>
-                      </div>
-                    </div>
-                    <div className="flex flex-wrap gap-2 md:justify-end">
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button
-                            aria-label={`Más acciones para ${membership.user.email}`}
-                            size="icon"
-                            variant="outline"
-                          >
-                            <MoreHorizontal aria-hidden="true" className="h-4 w-4" />
+          <div className="overflow-x-auto rounded-md border border-border">
+            <table className="w-full min-w-[860px] border-collapse text-sm">
+              <thead className="bg-muted/40 text-left text-xs font-medium uppercase text-muted-foreground">
+                <tr>
+                  <th className="px-4 py-3">Nombre</th>
+                  <th className="px-4 py-3">Email</th>
+                  <th className="px-4 py-3">Rol</th>
+                  <th className="px-4 py-3">Estado</th>
+                  <th className="px-4 py-3">Experiencias asignadas</th>
+                  <th className="px-4 py-3 text-right">Acciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.users.length > 0 ? (
+                  data.users.map((user) => (
+                    <tr className="border-t border-border" key={user.id}>
+                      <td className="px-4 py-3 font-medium">
+                        {user.name ?? "Usuario sin nombre"}
+                      </td>
+                      <td className="px-4 py-3 text-muted-foreground">{user.email}</td>
+                      <td className="px-4 py-3">
+                        <Badge>{user.role}</Badge>
+                      </td>
+                      <td className="px-4 py-3">
+                        <Badge>{user.active ? "Activo" : "Inactivo"}</Badge>
+                      </td>
+                      <td className="max-w-[320px] px-4 py-3 text-muted-foreground">
+                        {user.appViewAccesses.length > 0
+                          ? user.appViewAccesses
+                              .map((access) => `${access.contract.name}: ${access.appView.name}`)
+                              .join(", ")
+                          : "Sin experiencias"}
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex justify-end gap-2">
+                          <Button asChild size="icon" title="Ver / Editar" variant="outline">
+                            <Link href={`/app/settings/users/${user.id}`}>
+                              <Edit aria-hidden="true" className="h-4 w-4" />
+                            </Link>
                           </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuLabel>Acciones</DropdownMenuLabel>
-                          <DropdownMenuItem asChild>
-                            <form
-                              action={updateMembershipRoleAction.bind(
-                                null,
-                                membership.id,
-                                nextRole,
-                              )}
+                          <form action={setUserActiveAction.bind(null, user.id, !user.active)}>
+                            <input name="returnTo" type="hidden" value="/app/settings/users" />
+                            <Button
+                              size="icon"
+                              title={user.active ? "Desactivar" : "Activar"}
+                              type="submit"
+                              variant="outline"
                             >
-                              <input name="returnTo" type="hidden" value={closeHref} />
-                              <button className="w-full text-left" type="submit">
-                                Cambiar a {nextRole}
-                              </button>
-                            </form>
-                          </DropdownMenuItem>
-                          <DropdownMenuItem asChild>
-                            <form action={removeMembershipAction.bind(null, membership.id)}>
-                              <input name="returnTo" type="hidden" value={closeHref} />
-                              <button className="w-full text-left text-destructive" type="submit">
-                                Quitar de la organización
-                              </button>
-                            </form>
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </div>
-                  </CardContent>
-                </Card>
-              );
-            })
-          ) : (
-            <Card>
-              <CardContent className="pt-6">
-                <p className="text-sm text-muted-foreground">
-                  No hay usuarios en esta organización.
-                </p>
-              </CardContent>
-            </Card>
-          )}
+                              {user.active ? (
+                                <PowerOff aria-hidden="true" className="h-4 w-4" />
+                              ) : (
+                                <Power aria-hidden="true" className="h-4 w-4" />
+                              )}
+                            </Button>
+                          </form>
+                          <Button asChild size="icon" title="Eliminar" variant="outline">
+                            <Link href={`/app/settings/users/${user.id}#delete-user`}>
+                              <Trash2 aria-hidden="true" className="h-4 w-4" />
+                            </Link>
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td className="px-4 py-6 text-muted-foreground" colSpan={6}>
+                      No hay usuarios en esta organización.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         </section>
       ) : (
         <Card>
@@ -176,16 +152,30 @@ export default async function UserAdministrationPage({
           </CardContent>
         </Card>
       )}
-
-      {params.addUser === "1" && sheetOrganizations.length > 0 ? (
-        <UserFormSheet
-          action={addUserAction}
-          closeHref={closeHref}
-          organizations={sheetOrganizations}
-          returnTo={addHref}
-          successTo={closeHref}
-        />
-      ) : null}
     </main>
+  );
+}
+
+function ActionMessage({ error, notice }: { error?: string; notice?: string }) {
+  if (!error && !notice) {
+    return null;
+  }
+
+  return (
+    <Card>
+      <CardContent className="pt-6">
+        <p className={error ? "text-sm text-destructive" : "text-sm text-muted-foreground"}>
+          {error ?? notice}
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
+function Badge({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="inline-flex rounded-md border border-border px-2 py-1 text-xs font-medium">
+      {children}
+    </span>
   );
 }
