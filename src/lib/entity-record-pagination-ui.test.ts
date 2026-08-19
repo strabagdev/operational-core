@@ -199,14 +199,19 @@ describe("entity record pagination UI", () => {
     expect(recordListControlsSource).toContain("[&::-webkit-search-decoration]:hidden");
   });
 
-  it("uses three responsive columns for entity type cards on wide desktops", () => {
+  it("uses compact entity type cards with four responsive columns on very wide desktops", () => {
     expect(recordTypesPageSource).toContain('className="-mt-4 grid w-full gap-6"');
     expect(recordTypesPageSource).not.toContain('className="-mt-6 grid w-full gap-6"');
-    expect(recordTypesPageSource).toContain('className="grid gap-4 md:grid-cols-2 xl:grid-cols-3"');
+    expect(recordTypesPageSource).toContain('className="grid gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4"');
+    expect(recordTypesPageSource).toContain('CardHeader className="px-4 py-3"');
+    expect(recordTypesPageSource).toContain('CardContent className="flex items-center justify-between gap-3 px-4 pb-4 pt-0"');
     expect(recordTypesPageSource).toContain("EntityIcon");
-    expect(recordTypesPageSource).toContain("Activos:");
-    expect(recordTypesPageSource).toContain("Total:");
-    expect(recordTypesPageSource).toContain("Abrir listado");
+    expect(recordTypesPageSource).not.toContain("Activos:");
+    expect(recordTypesPageSource).not.toContain("Total:");
+    expect(recordTypesPageSource).toContain("registros");
+    expect(recordTypesPageSource).toContain('className="h-8 px-3 text-xs"');
+    expect(recordTypesPageSource).toContain("Abrir");
+    expect(recordTypesPageSource).not.toContain("Abrir listado");
   });
 
   it("groups entity type cards by semantic nature without empty sections", () => {

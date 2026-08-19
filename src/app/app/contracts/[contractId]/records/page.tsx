@@ -55,51 +55,43 @@ export default async function RecordsPage({
       </header>
 
       {data.entityTypes.length > 0 ? (
-        <div className="grid gap-8">
+        <div className="grid gap-6">
           {groupedEntityTypes.map((group) => (
-            <section className="grid gap-3" key={group.value}>
-              <header className="flex items-center gap-3 border-b border-border pb-2">
+            <section className="grid gap-2" key={group.value}>
+              <header className="flex items-center gap-3 border-b border-border pb-1.5">
                 <h2 className="text-base font-semibold">{group.title}</h2>
                 <span className="rounded-md border border-border bg-muted/40 px-2 py-0.5 text-xs text-muted-foreground">
                   {group.entityTypes.length}
                 </span>
               </header>
 
-              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
                 {group.entityTypes.map((entityType) => (
                   <Card key={entityType.id}>
-                    <CardHeader>
+                    <CardHeader className="px-4 py-3">
                       <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0 space-y-1">
-                          <CardTitle className="flex items-center gap-2">
+                        <div className="min-w-0 space-y-0.5">
+                          <CardTitle className="flex items-center gap-2 text-base">
                             <EntityIcon className="text-muted-foreground" icon={entityType.icon} />
                             {entityType.name}
                           </CardTitle>
                           <CardDescription>{entityType.description}</CardDescription>
                         </div>
-                        <span className="shrink-0 rounded-md border border-border bg-muted/40 px-2 py-1 text-xs font-medium text-muted-foreground">
+                        <span className="shrink-0 rounded-md border border-border bg-muted/40 px-2 py-0.5 text-xs font-medium text-muted-foreground">
                           {getEntityNatureLabel(entityType.nature)}
                         </span>
                       </div>
                     </CardHeader>
-                    <CardContent className="grid gap-4">
-                      <div className="grid gap-2 text-sm text-muted-foreground sm:grid-cols-2">
-                        <div>
-                          Activos:{" "}
-                          <span className="font-medium text-foreground">
-                            {entityType.records.length}
-                          </span>
-                        </div>
-                        <div>
-                          Total:{" "}
-                          <span className="font-medium text-foreground">
-                            {entityType._count.records}
-                          </span>
-                        </div>
+                    <CardContent className="flex items-center justify-between gap-3 px-4 pb-4 pt-0">
+                      <div className="text-sm text-muted-foreground">
+                        <span className="font-medium text-foreground">
+                          {entityType._count.records}
+                        </span>{" "}
+                        registros
                       </div>
-                      <Button asChild variant="outline">
+                      <Button asChild className="h-8 px-3 text-xs" size="sm" variant="outline">
                         <Link href={`/app/contracts/${contractId}/records/${entityType.id}`}>
-                          Abrir listado
+                          Abrir
                         </Link>
                       </Button>
                     </CardContent>

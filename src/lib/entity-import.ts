@@ -559,7 +559,7 @@ export async function parseExcelRows({
 
   for (let rowNumber = 2; rowNumber <= worksheet.rowCount; rowNumber += 1) {
     const row = worksheet.getRow(rowNumber);
-    const values = rowValues(row).slice(0, headers.length).map(cellToImportValue);
+    const values = importRowValues({ fields, hasRecordId, headers, row });
     const recordId = hasRecordId ? String(values[0] ?? "").trim() : "";
     const fieldValues = hasRecordId ? values.slice(1) : values;
 
@@ -869,6 +869,116 @@ function rowValues(row: ExcelJS.Row) {
 
 function cellToHeader(value: unknown) {
   return String(cellToImportValue(value) ?? "").trim();
+}
+
+function importRowValues({
+  fields,
+  hasRecordId,
+  headers,
+  row,
+}: {
+  fields: ImportField[];
+  hasRecordId: boolean;
+  headers: string[];
+  row: ExcelJS.Row;
+}) {
+  return headers.map((_, index) => {
+    const fieldIndex = hasRecordId ? index - 1 : index;
+    const field = fieldIndex >= 0 ? fields[fieldIndex] : undefined;
+    const preserveText = field?.type === "TEXT" || field?.type === "TEXTAREA";
+
+    return cellToImportValueFromCell(row.getCell(index + 1), preserveText);
+  });
+}
+
+function cellToImportValueFromCell(cell: ExcelJS.Cell, preserveText: boolean): unknown {
+  if (!preserveText) {
+    return cellToImportValue(cell.value);
+  }
+
+  return textCellToImportValue(cell);
+}
+
+function textCellToImportValue(cell: ExcelJS.Cell) {
+  const value = cell.value;
+
+  if (value === null || value === undefined) {
+    return "";
+  }
+
+  if (value instanceof Date) {
+    return cellToImportValue(value);
+  }
+
+  if (typeof value === "object") {
+    const record = value as { formula?: unknown; result?: unknown; text?: string; richText?: Array<{ text?: string }> };
+
+    if (record.formula !== undefined) {
+      return cellToImportValue(value);
+    }
+
+    if (record.text !== undefined || Array.isArray(record.richText)) {
+      return cellToImportValue(value);
+    }
+  }
+
+  if (typeof value === "number") {
+    return formatNumericTextCell(value, cell.numFmt) ?? cell.text;
+  }
+
+  return cell.text || cellToImportValue(value);
+}
+
+function formatNumericTextCell(value: number, numFmt?: string) {
+  if (!numFmt || !Number.isFinite(value)) {
+    return null;
+  }
+
+  const normalizedFormat = numFmt.replace(/"/g, "");
+  const station = /^([0#]+)\+([0#]+)([,.]([0#]+))?$/.exec(normalizedFormat);
+
+  if (station) {
+    return formatStationNumber(value, {
+      decimalPlaces: station[4]?.length ?? 0,
+      decimalSeparator: station[3]?.[0] ?? ".",
+      leftDigits: station[1].length,
+      rightDigits: station[2].length,
+    });
+  }
+
+  const paddedInteger = /^(\+?)(0+)$/.exec(normalizedFormat);
+
+  if (paddedInteger && Number.isInteger(value)) {
+    return `${paddedInteger[1]}${String(Math.abs(value)).padStart(paddedInteger[2].length, "0")}`;
+  }
+
+  return null;
+}
+
+function formatStationNumber(
+  value: number,
+  {
+    decimalPlaces,
+    decimalSeparator,
+    leftDigits,
+    rightDigits,
+  }: {
+    decimalPlaces: number;
+    decimalSeparator: string;
+    leftDigits: number;
+    rightDigits: number;
+  },
+) {
+  const sign = value < 0 ? "-" : "";
+  const absolute = Math.abs(value);
+  const fixed = absolute.toFixed(decimalPlaces);
+  const [integerPart = "0", decimalPart = ""] = fixed.split(".");
+  const integer = Number.parseInt(integerPart, 10);
+  const left = Math.floor(integer / 1000);
+  const right = integer % 1000;
+  const decimal = decimalPlaces > 0 ? `${decimalSeparator}${decimalPart}` : "";
+
+  return `${sign}${String(left).padStart(leftDigits, "0")}+${String(right).padStart(rightDigits, "0")}${decimal}`;
 }
 
 function cellToImportValue(value: unknown): unknown {

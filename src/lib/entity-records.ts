@@ -16,6 +16,7 @@ import {
   getRecordListFields,
   isEmptySerializedValue,
   normalizeRawFieldValue,
+  parseFieldConfig,
   validateRecordValues,
   validateRelationInputs,
   type RelationInput,
@@ -263,7 +264,7 @@ export function resolveEntityRecordSort({
 
   if (sortKey?.startsWith("field:")) {
     const fieldId = sortKey.slice("field:".length);
-    const visibleSortableFields = listFields ?? getRecordListFields(fields);
+    const visibleSortableFields = getSortableFieldCandidates(fields, listFields);
     const field = visibleSortableFields.find(
       (item) => item.id === fieldId && sortableFieldTypes.has(item.type),
     );
@@ -278,11 +279,75 @@ export function resolveEntityRecordSort({
     }
   }
 
+  if (!sortKey) {
+    const primaryField = getConfiguredPrimaryField(fields);
+
+    if (primaryField) {
+      const primarySort = resolveEntityRecordSort({
+        fields,
+        listFields: [primaryField],
+        sortKey: `field:${primaryField.id}`,
+        direction: normalizedDirection,
+      });
+
+      if (primarySort.explicit) {
+        return {
+          ...primarySort,
+          explicit: false,
+        };
+      }
+    }
+  }
+
   return {
     key: "displayName",
     direction: "desc",
     explicit: false,
   };
+}
+
+export function resolvePrimaryDisplaySortKey({
+  fields,
+  primaryField,
+}: {
+  fields: FieldWithOptions[];
+  primaryField?: FieldWithOptions | null;
+}): EntityRecordSortKey {
+  if (!primaryField) {
+    return "displayName";
+  }
+
+  if (!parseFieldConfig(primaryField.config).display.primary) {
+    return "displayName";
+  }
+
+  const primarySort = resolveEntityRecordSort({
+    fields,
+    listFields: [primaryField],
+    sortKey: `field:${primaryField.id}`,
+  });
+
+  return primarySort.explicit ? primarySort.key : "displayName";
+}
+
+function getConfiguredPrimaryField(fields: FieldWithOptions[]) {
+  return orderEntityFields(fields).find(
+    (field) => parseFieldConfig(field.config).display.primary === true,
+  );
+}
+
+function getSortableFieldCandidates(
+  fields: FieldWithOptions[],
+  listFields?: FieldWithOptions[],
+) {
+  const candidates = listFields ? [...listFields] : getRecordListFields(fields);
+  const configuredPrimary = getConfiguredPrimaryField(fields);
+
+  if (configuredPrimary && !candidates.some((field) => field.id === configuredPrimary.id)) {
+    candidates.push(configuredPrimary);
+  }
+
+  return candidates;
 }
 
 export async function getEntityRecordIdsForSort({

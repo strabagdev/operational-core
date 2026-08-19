@@ -326,6 +326,58 @@ describe("entity import structure and values", () => {
     );
   });
 
+  it.each(["TEXT", "TEXTAREA"] as const)(
+    "preserves literal Excel text for %s fields without numeric parsing",
+    async (type) => {
+      const fields = [field({ id: "text", name: "Texto", type })];
+      const samples = [
+        "0+304,43",
+        "00123",
+        "+123",
+        "0007",
+        "12-AB",
+        "1.000,50",
+        "08:30",
+      ];
+      const rows = await parseExcelRows({
+        fields,
+        file: await workbookFile(["Texto"], samples.map((value) => [value])),
+      });
+      const result = await validateImportRows({ fields, rows });
+
+      expect(result.errors).toEqual([]);
+      expect(result.validRows.map((row) => row.values[0].textValue)).toEqual(samples);
+    },
+  );
+
+  it("preserves formatted numeric-looking Excel cells when importing into TEXT", async () => {
+    const fields = [field({ id: "text", name: "Texto", type: "TEXT" })];
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet("Plantilla");
+
+    sheet.addRow(["Texto"]);
+    sheet.getCell("A2").value = 304.43;
+    sheet.getCell("A2").numFmt = "0+000,00";
+    sheet.getCell("A3").value = 123;
+    sheet.getCell("A3").numFmt = "00000";
+    sheet.getCell("A4").value = 7;
+    sheet.getCell("A4").numFmt = "0000";
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    const file = new File([buffer], "plantilla.xlsx", {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    });
+    const rows = await parseExcelRows({ fields, file });
+    const result = await validateImportRows({ fields, rows });
+
+    expect(result.errors).toEqual([]);
+    expect(result.validRows.map((row) => row.values[0].textValue)).toEqual([
+      "0+304,43",
+      "00123",
+      "0007",
+    ]);
+  });
+
   it("normalizes manual input and Excel rows to equivalent EntityValue payloads", async () => {
     const fields = [
       field({ id: "text", name: "Texto", type: "TEXT" }),

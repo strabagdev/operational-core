@@ -11,6 +11,7 @@ import {
   getEntityRecords,
   getPrimaryDisplayField,
   getRecordListFields,
+  resolvePrimaryDisplaySortKey,
   resolveEntityRecordSort,
 } from "@/lib/entity-records";
 
@@ -66,6 +67,10 @@ export default async function EntityRecordsPage({
   const primaryField = getPrimaryDisplayField(data.entityType.fields);
   const listFields = getRecordListFields(data.entityType.fields);
   const displayHeader = primaryField?.name ?? "Nombre";
+  const displaySortKey = resolvePrimaryDisplaySortKey({
+    fields: data.entityType.fields,
+    primaryField,
+  });
   const fieldsById = new Map(data.entityType.fields.map((field) => [field.id, field]));
   const basePath = `/app/contracts/${contractId}/records/${entityTypeId}`;
   const sortableFields = listFields.filter((field) =>
@@ -182,7 +187,7 @@ export default async function EntityRecordsPage({
               currentSort: data.sort,
               pageSize: data.pagination.pageSize,
               query: q,
-              sortKey: "displayName",
+              sortKey: displaySortKey,
             })}
             entityTypeId={entityTypeId}
             key={`${entityTypeId}:${q ?? ""}:${tableRecords.map((record) => record.id).join("|")}`}
