@@ -42,6 +42,7 @@ function record(values: unknown[] = [], outgoingRelations: unknown[] = []) {
     displayName: "EQ-001",
     id: "record_1",
     outgoingRelations,
+    updatedAt: new Date("2026-08-19T18:32:10.123Z"),
     values,
   } as never;
 }
@@ -164,6 +165,7 @@ describe("API entity serializers", () => {
     ).toEqual({
       displayName: "EQ-001",
       id: "record_1",
+      updatedAt: "2026-08-19T18:32:10.123Z",
       values: {
         archivo: { name: "manual.pdf" },
         booleano: false,
@@ -208,6 +210,7 @@ describe("API entity serializers", () => {
     ).toEqual({
       displayName: "EQ-001",
       id: "record_1",
+      updatedAt: "2026-08-19T18:32:10.123Z",
       values: {
         responsables: [
           {
@@ -218,5 +221,15 @@ describe("API entity serializers", () => {
         ],
       },
     });
+  });
+
+  it("serializes record updatedAt as an ISO UTC string", () => {
+    const serialized = serializeApiEntityRecord({
+      fields: [field()],
+      record: record([{ entityFieldId: "field_text", textValue: "EQ-001" }]),
+    });
+
+    expect(serialized.updatedAt).toBe("2026-08-19T18:32:10.123Z");
+    expect(new Date(serialized.updatedAt).toISOString()).toBe(serialized.updatedAt);
   });
 });

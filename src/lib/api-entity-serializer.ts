@@ -77,6 +77,7 @@ type ApiRecord = {
   displayName: string;
   id: string;
   outgoingRelations?: ApiRelation[];
+  updatedAt: Date;
   values: ApiFieldValue[];
 };
 
@@ -176,6 +177,7 @@ export function serializeApiEntityRecord({
   return {
     displayName: record.displayName,
     id: record.id,
+    updatedAt: record.updatedAt.toISOString(),
     values: Object.fromEntries(
       activeFields.map((field) => [
         field.key,

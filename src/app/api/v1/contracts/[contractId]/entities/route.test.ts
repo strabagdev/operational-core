@@ -94,6 +94,10 @@ const app = {
   name: "Bodega",
   slug: "bodega",
 };
+const recordUpdatedAt = new Date("2026-08-19T18:32:10.123Z");
+const recordUpdatedAtIso = recordUpdatedAt.toISOString();
+const laterRecordUpdatedAt = new Date("2026-08-19T18:33:10.123Z");
+const laterRecordUpdatedAtIso = laterRecordUpdatedAt.toISOString();
 
 async function apiRequest(path: string, userId = "user_1") {
   const token = await signApiAccessToken({
@@ -182,8 +186,8 @@ beforeEach(() => {
   } as never);
   contractFindFirst.mockResolvedValue(contract() as never);
   entityFieldFindMany.mockResolvedValue([] as never);
-  entityRecordCreate.mockResolvedValue({ displayName: "EQ-001", id: "record_1" } as never);
-  entityRecordUpdate.mockResolvedValue({ displayName: "EQ-001", id: "record_1" } as never);
+  entityRecordCreate.mockResolvedValue({ displayName: "EQ-001", id: "record_1", updatedAt: recordUpdatedAt } as never);
+  entityRecordUpdate.mockResolvedValue({ displayName: "EQ-001", id: "record_1", updatedAt: laterRecordUpdatedAt } as never);
   entityRelationCreateMany.mockResolvedValue({ count: 0 } as never);
   entityRelationDeleteMany.mockResolvedValue({ count: 0 } as never);
   entityRelationFindMany.mockResolvedValue([] as never);
@@ -334,6 +338,7 @@ describe("GET /api/v1/contracts/[contractId]/entities/[entityTypeId]/records", (
           displayName: "EQ-001",
           id: "record_1",
           outgoingRelations: [],
+          updatedAt: recordUpdatedAt,
           values: [
             { entityFieldId: "code", textValue: "EQ-001" },
             { decimalValue: new Prisma.Decimal("123.45"), entityFieldId: "amount" },
@@ -355,6 +360,7 @@ describe("GET /api/v1/contracts/[contractId]/entities/[entityTypeId]/records", (
           {
             displayName: "EQ-001",
             id: "record_1",
+            updatedAt: recordUpdatedAtIso,
             values: {
               codigo: "EQ-001",
               monto: "123.45",
@@ -419,6 +425,7 @@ describe("POST /api/v1/contracts/[contractId]/entities/[entityTypeId]/records", 
       displayName: "EQ-001",
       id: "record_1",
       outgoingRelations: [],
+      updatedAt: recordUpdatedAt,
       values: [{ entityFieldId: "field_codigo", textValue: "EQ-001" }],
     } as never);
 
@@ -435,16 +442,20 @@ describe("POST /api/v1/contracts/[contractId]/entities/[entityTypeId]/records", 
     );
 
     expect(response.status).toBe(201);
-    expect(await response.json()).toEqual({
+    const json = await response.json();
+
+    expect(json).toEqual({
       ok: true,
       data: {
         record: {
           displayName: "EQ-001",
           id: "record_1",
+          updatedAt: recordUpdatedAtIso,
           values: { codigo: "EQ-001" },
         },
       },
     });
+    expect(new Date(json.data.record.updatedAt).toISOString()).toBe(json.data.record.updatedAt);
     expect(entityRecordCreate).toHaveBeenCalledWith({
       data: { displayName: "EQ-001", entityTypeId: "entity_1" },
     });
@@ -478,6 +489,7 @@ describe("GET /api/v1/contracts/[contractId]/entities/[entityTypeId]/records/[re
           targetRecordId: "person_1",
         },
       ],
+      updatedAt: recordUpdatedAt,
       values: [],
     } as never);
 
@@ -493,12 +505,15 @@ describe("GET /api/v1/contracts/[contractId]/entities/[entityTypeId]/records/[re
     );
 
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({
+    const json = await response.json();
+
+    expect(json).toEqual({
       ok: true,
       data: {
         record: {
           displayName: "EQ-001",
           id: "record_1",
+          updatedAt: recordUpdatedAtIso,
           values: {
             responsable: {
               displayName: "Persona 1",
@@ -547,6 +562,7 @@ describe("PATCH /api/v1/contracts/[contractId]/entities/[entityTypeId]/records/[
         displayName: "EQ-001",
         id: "record_1",
         outgoingRelations: [],
+        updatedAt: recordUpdatedAt,
         values: [
           { entityFieldId: "field_codigo", textValue: "EQ-001" },
           { entityFieldId: "field_nota", textValue: "Anterior" },
@@ -556,6 +572,7 @@ describe("PATCH /api/v1/contracts/[contractId]/entities/[entityTypeId]/records/[
         displayName: "EQ-001",
         id: "record_1",
         outgoingRelations: [],
+        updatedAt: laterRecordUpdatedAt,
         values: [
           { entityFieldId: "field_codigo", textValue: "EQ-001" },
           { entityFieldId: "field_nota", textValue: "Nueva" },
@@ -579,12 +596,15 @@ describe("PATCH /api/v1/contracts/[contractId]/entities/[entityTypeId]/records/[
     );
 
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({
+    const json = await response.json();
+
+    expect(json).toEqual({
       ok: true,
       data: {
         record: {
           displayName: "EQ-001",
           id: "record_1",
+          updatedAt: laterRecordUpdatedAtIso,
           values: {
             codigo: "EQ-001",
             nota: "Nueva",
@@ -592,6 +612,8 @@ describe("PATCH /api/v1/contracts/[contractId]/entities/[entityTypeId]/records/[
         },
       },
     });
+    expect(new Date(json.data.record.updatedAt).toISOString()).toBe(json.data.record.updatedAt);
+    expect(json.data.record.updatedAt).not.toBe(recordUpdatedAtIso);
     expect(entityValueCreateMany).toHaveBeenCalledWith({
       data: expect.arrayContaining([
         expect.objectContaining({ entityFieldId: "field_codigo", textValue: "EQ-001" }),
