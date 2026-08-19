@@ -152,7 +152,11 @@ Historical audit actions such as `RECORD_STATUS_CHANGED` and `RECORD_ARCHIVED` m
 
 ## External API
 
-The external API lives under `/api/v1` and uses JSON response envelopes. It is separate from the Auth.js web session flow: API clients authenticate with Bearer JWT access tokens signed by `API_AUTH_SECRET`, not with web cookies or `AUTH_SECRET`.
+The external API lives under `/api/v1` and uses JSON response envelopes. It is separate from the Auth.js web session flow: API clients authenticate protected resources with Bearer JWT access tokens signed by `API_AUTH_SECRET`, not with Auth.js cookies or `AUTH_SECRET`.
+
+External API sessions are extended with `ApiRefreshToken`. Access tokens remain short-lived JWTs with a 1 hour lifetime. Refresh tokens are 30 day opaque random tokens, stored server-side only as an HMAC-SHA256 hash, and rotated on every `/api/v1/auth/refresh` call. A reused rotated token revokes the whole `familyId`, which gives the client a clear session-compromise signal without keeping refresh tokens readable in the database.
+
+Web and native clients use different refresh-token transports. Web receives `opco_api_refresh_token` as `HttpOnly; Secure; SameSite=None; Path=/api/v1/auth`, and `/api/v1/auth/refresh` plus `/api/v1/auth/logout` validate `Origin` against `API_ALLOWED_ORIGINS` before accepting the cookie. Native clients send `X-Opco-Client-Platform: native` and receive/send the refresh token in JSON so Android/iOS can store it in SecureStore. The platform header only selects transport; authorization still comes from the persisted token, user, app, and organization checks.
 
 Contract-scoped API access derives organization, app, contract, and membership from the database on every protected request. Clients cannot choose organization or role through request payloads.
 

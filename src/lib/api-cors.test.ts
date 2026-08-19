@@ -7,6 +7,7 @@ import {
   applyApiCorsHeaders,
   getApiCorsHeaders,
   getAuthorizedApiCorsOrigin,
+  isAuthorizedApiOrigin,
   parseApiAllowedOrigins,
 } from "./api-cors";
 
@@ -62,6 +63,8 @@ describe("API CORS helpers", () => {
     expect(getAuthorizedApiCorsOrigin(request({ origin: secondAllowedOrigin }), env)).toBe(secondAllowedOrigin);
     expect(getAuthorizedApiCorsOrigin(request({ origin: `${allowedOrigin}.evil.test` }), env)).toBeNull();
     expect(getAuthorizedApiCorsOrigin(request({ origin: deniedOrigin }), env)).toBeNull();
+    expect(isAuthorizedApiOrigin(request({ origin: allowedOrigin }), env)).toBe(true);
+    expect(isAuthorizedApiOrigin(request({ origin: deniedOrigin }), env)).toBe(false);
   });
 
   it("adds CORS headers only with ACAO for authorized origins", () => {
@@ -70,9 +73,10 @@ describe("API CORS helpers", () => {
     });
 
     expect(headers.get("Access-Control-Allow-Origin")).toBe(allowedOrigin);
+    expect(headers.get("Access-Control-Allow-Credentials")).toBe("true");
     expect(headers.get("Vary")).toBe("Origin");
     expect(headers.get("Access-Control-Allow-Methods")).toBe("GET,POST,PATCH,OPTIONS");
-    expect(headers.get("Access-Control-Allow-Headers")).toBe("Authorization,Content-Type");
+    expect(headers.get("Access-Control-Allow-Headers")).toBe("Authorization,Content-Type,X-Opco-Client-Platform");
     expect(headers.get("Access-Control-Max-Age")).toBe("600");
 
     const deniedHeaders = getApiCorsHeaders(request({ origin: deniedOrigin }), {
@@ -80,6 +84,7 @@ describe("API CORS helpers", () => {
     });
 
     expect(deniedHeaders.get("Access-Control-Allow-Origin")).toBeNull();
+    expect(deniedHeaders.get("Access-Control-Allow-Credentials")).toBeNull();
     expect(deniedHeaders.get("Vary")).toBe("Origin");
   });
 
@@ -93,6 +98,7 @@ describe("API CORS helpers", () => {
 
     expect(response.status).toBe(204);
     expect(response.headers.get("Access-Control-Allow-Origin")).toBe(allowedOrigin);
+    expect(response.headers.get("Access-Control-Allow-Credentials")).toBe("true");
     expect(response.headers.get("Access-Control-Allow-Headers")).toContain("Authorization");
     expect(response.headers.get("Vary")).toBe("Origin");
   });
@@ -121,7 +127,8 @@ describe("API CORS proxy integration", () => {
 
     expect(response.status).toBe(204);
     expect(response.headers.get("Access-Control-Allow-Origin")).toBe(secondAllowedOrigin);
-    expect(response.headers.get("Access-Control-Allow-Headers")).toBe("Authorization,Content-Type");
+    expect(response.headers.get("Access-Control-Allow-Credentials")).toBe("true");
+    expect(response.headers.get("Access-Control-Allow-Headers")).toBe("Authorization,Content-Type,X-Opco-Client-Platform");
     expect(response.headers.get("Vary")).toBe("Origin");
   });
 

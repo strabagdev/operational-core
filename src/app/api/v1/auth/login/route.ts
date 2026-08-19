@@ -3,6 +3,9 @@ import { z } from "zod";
 import {
   apiAccessTokenExpiresIn,
   ApiAuthConfigurationError,
+  apiRefreshTokenCookieHeader,
+  getApiRefreshTokenTransport,
+  issueApiRefreshToken,
   resolveApiLoginExternalApp,
   signApiAccessToken,
   verifyApiCredentials,
@@ -53,12 +56,26 @@ export async function POST(request: Request) {
       app: appResult.app,
       user,
     });
-
-    return success({
+    const issuedRefreshToken = await issueApiRefreshToken({
+      app: appResult.app,
+      user,
+    });
+    const isNative = getApiRefreshTokenTransport(request) === "native";
+    const response = success({
       accessToken,
       expiresIn: apiAccessTokenExpiresIn,
+      ...(isNative ? { refreshToken: issuedRefreshToken.refreshToken } : {}),
       tokenType: "Bearer",
     });
+
+    if (!isNative) {
+      response.headers.append(
+        "Set-Cookie",
+        apiRefreshTokenCookieHeader(issuedRefreshToken.refreshToken),
+      );
+    }
+
+    return response;
   } catch (error) {
     if (error instanceof ApiAuthConfigurationError) {
       return internalError(

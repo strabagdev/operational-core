@@ -26,13 +26,15 @@ API_ALLOWED_ORIGINS="http://localhost:8081,http://localhost:19006,http://localho
 AUTH_URL="http://localhost:3000"
 ```
 
-`DATABASE_URL` is the only database connection source used by Prisma. In Railway, use the database URL provided by the environment instead of hard-coding local credentials. `AUTH_SECRET` is required and must be a stable generated value; the app fails at startup/build if it is missing or empty. `API_AUTH_SECRET` is required by the external `/api/v1` bearer-token endpoints and must be a separate stable generated value. Do not rely on generated or fallback secrets. `API_ALLOWED_ORIGINS` is a comma-separated list of exact browser origins allowed to call `/api/v1` with CORS; include the real Expo Web origin shown by the browser, for example `http://localhost:8081`, and any deployed web client origins.
+`DATABASE_URL` is the only database connection source used by Prisma. In Railway, use the database URL provided by the environment instead of hard-coding local credentials. `AUTH_SECRET` is required and must be a stable generated value; the app fails at startup/build if it is missing or empty. `API_AUTH_SECRET` is required by the external `/api/v1` bearer-token endpoints and must be a separate stable generated value. It also keys the HMAC-SHA256 hashes used for API refresh tokens, so rotating it invalidates outstanding external API sessions. Do not rely on generated or fallback secrets. `API_ALLOWED_ORIGINS` is a comma-separated list of exact browser origins allowed to call `/api/v1` with CORS credentials; include the real Expo Web origin shown by the browser, for example `http://localhost:8081`, and any deployed web client origins.
 
 Local development may use Railway's public TCP proxy host, for example `*.proxy.rlwy.net`, because the app is connecting from outside Railway. In Railway runtime, when the application and PostgreSQL service live in the same project and environment, prefer Railway private networking or reference variables for the internal database connection when available. Do not change `DATABASE_URL` automatically in code; manage that choice in Railway environment variables.
 
 Auth.js v5 reads `AUTH_SECRET` and `AUTH_URL`. Do not define a competing `NEXTAUTH_SECRET`. If a legacy `NEXTAUTH_URL` exists locally, replace it with `AUTH_URL` when touching the file.
 
 The real database URL, auth secret, API auth secret, and production allowed-origin list belong only in local or deployment environment variables; do not commit secret values.
+
+External API access tokens last 1 hour. Refresh tokens last 30 days and are rotated on every refresh. Web clients use the HttpOnly `opco_api_refresh_token` cookie under `/api/v1/auth`; native clients identify transport with `X-Opco-Client-Platform: native` and should store the returned refresh token in SecureStore. Refresh/logout Web calls require an authorized `Origin`, and browser clients must send credentials. Expired refresh-token rows do not affect correctness and can be cleaned later by a maintenance job; no local cron is required.
 
 `AUTH_URL` must be present in the runtime environment used by `next start` and production deployments. Without it, Auth.js can reject local or deployed requests with `UntrustedHost` before credentials/session handling runs.
 

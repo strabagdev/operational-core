@@ -79,6 +79,7 @@ model User {
   memberships   Membership[]
   auditEvents   AuditEvent[]
   appViewAccesses UserAppViewAccess[]
+  apiRefreshTokens ApiRefreshToken[]
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
 }
@@ -170,10 +171,32 @@ model ExternalApp {
   active         Boolean      @default(true)
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   idempotencyKeys ApiIdempotencyKey[]
+  refreshTokens  ApiRefreshToken[]
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 
   @@unique([organizationId, slug])
+}
+
+model ApiRefreshToken {
+  id                String      @id @default(cuid())
+  userId            String
+  externalAppId     String
+  tokenHash         String      @unique
+  familyId          String
+  expiresAt         DateTime
+  revokedAt         DateTime?
+  replacedByTokenId String?
+  createdAt         DateTime    @default(now())
+  lastUsedAt        DateTime?
+  user              User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  externalApp       ExternalApp @relation(fields: [externalAppId], references: [id], onDelete: Cascade)
+
+  @@index([userId, externalAppId])
+  @@index([familyId])
+  @@index([expiresAt])
+  @@index([revokedAt])
+  @@index([replacedByTokenId])
 }
 
 model ApiIdempotencyKey {

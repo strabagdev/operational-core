@@ -8,6 +8,9 @@ import { POST } from "./route";
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    apiRefreshToken: {
+      create: vi.fn(),
+    },
     externalApp: {
       findUnique: vi.fn(),
     },
@@ -20,14 +23,15 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
+const apiRefreshTokenCreate = vi.mocked(prisma.apiRefreshToken.create);
 const externalAppFindUnique = vi.mocked(prisma.externalApp.findUnique);
 const membershipFindMany = vi.mocked(prisma.membership.findMany);
 const userFindUnique = vi.mocked(prisma.user.findUnique);
 
-function loginRequest(body: unknown) {
+function loginRequest(body: unknown, headers?: HeadersInit) {
   return new Request("http://localhost/api/v1/auth/login", {
     body: JSON.stringify(body),
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...headers },
     method: "POST",
   });
 }
@@ -36,6 +40,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   process.env.API_AUTH_SECRET = "test-api-auth-secret";
   membershipFindMany.mockResolvedValue([{ organizationId: "org_1" }] as never);
+  apiRefreshTokenCreate.mockResolvedValue({ id: "refresh_1" } as never);
   externalAppFindUnique.mockResolvedValue({
     active: true,
     clientId: "opco_app_client_1",
@@ -47,7 +52,7 @@ beforeEach(() => {
 });
 
 describe("POST /api/v1/auth/login", () => {
-  it("returns a one-hour bearer token for valid credentials", async () => {
+  it("returns a one-hour bearer token and HttpOnly refresh cookie for web credentials", async () => {
     userFindUnique.mockResolvedValueOnce({
       email: "user@example.com",
       id: "user_1",
@@ -74,6 +79,24 @@ describe("POST /api/v1/auth/login", () => {
     expect(body.data.tokenType).toBe("Bearer");
     expect(body.data.expiresIn).toBe(3600);
     expect(body.data.accessToken).toEqual(expect.any(String));
+    expect(body.data).not.toHaveProperty("refreshToken");
+    expect(response.headers.get("Set-Cookie")).toMatch(/^opco_api_refresh_token=opco_rt_/);
+    expect(response.headers.get("Set-Cookie")).toContain("HttpOnly");
+    expect(response.headers.get("Set-Cookie")).toContain("Secure");
+    expect(response.headers.get("Set-Cookie")).toContain("SameSite=None");
+    expect(response.headers.get("Set-Cookie")).toContain("Path=/api/v1/auth");
+    expect(response.headers.get("Set-Cookie")).toContain("Max-Age=2592000");
+    expect(apiRefreshTokenCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        expiresAt: expect.any(Date),
+        externalAppId: "app_1",
+        familyId: expect.any(String),
+        tokenHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+        userId: "user_1",
+      }),
+      select: { id: true },
+    }));
+    expect(apiRefreshTokenCreate.mock.calls[0]?.[0]?.data.tokenHash).not.toContain("opco_rt_");
     expect(userFindUnique).toHaveBeenCalledWith(expect.objectContaining({
       where: { email: "user@example.com" },
     }));
@@ -91,6 +114,32 @@ describe("POST /api/v1/auth/login", () => {
       type: "access",
     });
     expect(verified.payload.exp).toBeGreaterThan(Math.floor(Date.now() / 1000));
+  });
+
+  it("returns the refresh token in JSON for native credentials without setting a cookie", async () => {
+    userFindUnique.mockResolvedValueOnce({
+      email: "user@example.com",
+      id: "user_1",
+      name: "User One",
+      passwordHash: await bcrypt.hash("secret123", 12),
+    } as never);
+
+    const response = await POST(loginRequest({
+      clientId: "opco_app_client_1",
+      email: "user@example.com",
+      password: "secret123",
+    }, {
+      "X-Opco-Client-Platform": "native",
+    }));
+    const body = await response.json() as {
+      data: {
+        refreshToken: string;
+      };
+    };
+
+    expect(response.status).toBe(200);
+    expect(body.data.refreshToken).toMatch(/^opco_rt_/);
+    expect(response.headers.get("Set-Cookie")).toBeNull();
   });
 
   it("returns 401 without revealing whether the email exists", async () => {

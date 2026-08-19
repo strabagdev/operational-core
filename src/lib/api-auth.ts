@@ -1,4 +1,5 @@
 import bcrypt from "bcrypt";
+import { createHmac, randomBytes, randomUUID } from "node:crypto";
 import { errors, jwtVerify, SignJWT } from "jose";
 
 import {
@@ -8,9 +9,12 @@ import {
   notFound,
   unauthorized,
 } from "@/lib/api-response";
+import { isAuthorizedApiOrigin } from "@/lib/api-cors";
 import { prisma } from "@/lib/prisma";
 
 export const apiAccessTokenExpiresIn = 60 * 60;
+export const apiRefreshTokenCookieName = "opco_api_refresh_token";
+export const apiRefreshTokenExpiresIn = 30 * 24 * 60 * 60;
 export const apiAccessTokenType = "access";
 export const apiJwtAlgorithm = "HS256";
 
@@ -140,6 +144,41 @@ export type ApiLoginClientResult =
       response: Response;
     };
 
+export type ApiRefreshTokenTransport = "native" | "web";
+
+export type ApiRefreshTokenIssueResult = {
+  expiresAt: Date;
+  refreshToken: string;
+  tokenId: string;
+};
+
+export type ApiRefreshFailureReason =
+  | "missing-refresh-token"
+  | "invalid-refresh-token"
+  | "expired-refresh-token"
+  | "revoked-refresh-token"
+  | "refresh-token-reused"
+  | "csrf-origin-invalid"
+  | "user-not-found"
+  | "user-inactive"
+  | "app-not-found"
+  | "app-inactive"
+  | "app-organization-mismatch"
+  | "multiple-organizations";
+
+export type ApiRefreshResult =
+  | {
+      accessToken: string;
+      app: ApiAuthenticatedApp;
+      issuedRefreshToken: ApiRefreshTokenIssueResult;
+      ok: true;
+      user: ApiAuthenticatedUser;
+    }
+  | {
+      ok: false;
+      reason: ApiRefreshFailureReason;
+    };
+
 export class ApiAuthConfigurationError extends Error {
   constructor(message = "API_AUTH_SECRET is required. Define it in .env.") {
     super(message);
@@ -158,6 +197,21 @@ const apiAuthErrorCodes = {
   "multiple-organizations": "MULTIPLE_ORGANIZATIONS_NOT_SUPPORTED",
   "user-not-found": "TOKEN_USER_NOT_FOUND",
   "user-inactive": "TOKEN_USER_INACTIVE",
+} as const;
+
+const apiRefreshErrorCodes = {
+  "app-inactive": "REFRESH_APP_INACTIVE",
+  "app-not-found": "REFRESH_APP_INVALID",
+  "app-organization-mismatch": "REFRESH_APP_INVALID",
+  "csrf-origin-invalid": "REFRESH_ORIGIN_INVALID",
+  "expired-refresh-token": "REFRESH_TOKEN_EXPIRED",
+  "invalid-refresh-token": "REFRESH_TOKEN_INVALID",
+  "missing-refresh-token": "REFRESH_TOKEN_MISSING",
+  "multiple-organizations": "MULTIPLE_ORGANIZATIONS_NOT_SUPPORTED",
+  "refresh-token-reused": "REFRESH_TOKEN_REUSED",
+  "revoked-refresh-token": "REFRESH_TOKEN_REVOKED",
+  "user-inactive": "REFRESH_USER_INACTIVE",
+  "user-not-found": "REFRESH_USER_NOT_FOUND",
 } as const;
 
 function apiAuthFailureResponse(reason: ApiAuthFailureReason) {
@@ -182,6 +236,25 @@ function apiAuthConfigurationFailureResponse() {
   );
 }
 
+export function apiRefreshFailureResponse(reason: ApiRefreshFailureReason) {
+  if (reason === "app-inactive") {
+    return forbidden("Aplicacion inactiva", apiRefreshErrorCodes[reason]);
+  }
+
+  if (reason === "csrf-origin-invalid") {
+    return forbidden("Origin no autorizado", apiRefreshErrorCodes[reason]);
+  }
+
+  if (reason === "multiple-organizations") {
+    return conflict(
+      "El usuario pertenece a multiples organizaciones",
+      apiRefreshErrorCodes[reason],
+    );
+  }
+
+  return unauthorized("Refresh token no valido", apiRefreshErrorCodes[reason]);
+}
+
 export function getApiAuthSecret() {
   const secret = process.env.API_AUTH_SECRET;
 
@@ -194,6 +267,69 @@ export function getApiAuthSecret() {
 
 export function normalizeApiLoginEmail(email: string) {
   return email.trim().toLowerCase();
+}
+
+export function getApiRefreshTokenTransport(request: Request): ApiRefreshTokenTransport {
+  return request.headers.get("x-opco-client-platform")?.toLowerCase() === "native"
+    ? "native"
+    : "web";
+}
+
+export function generateApiRefreshToken() {
+  return `opco_rt_${randomBytes(32).toString("base64url")}`;
+}
+
+export function hashApiRefreshToken(token: string) {
+  return createHmac("sha256", Buffer.from(getApiAuthSecret()))
+    .update(token)
+    .digest("hex");
+}
+
+export function apiRefreshTokenCookieHeader(token: string) {
+  return [
+    `${apiRefreshTokenCookieName}=${encodeURIComponent(token)}`,
+    "HttpOnly",
+    "Secure",
+    "SameSite=None",
+    "Path=/api/v1/auth",
+    `Max-Age=${apiRefreshTokenExpiresIn}`,
+  ].join("; ");
+}
+
+export function apiRefreshTokenCookieDeletionHeader() {
+  return [
+    `${apiRefreshTokenCookieName}=`,
+    "HttpOnly",
+    "Secure",
+    "SameSite=None",
+    "Path=/api/v1/auth",
+    "Max-Age=0",
+    "Expires=Thu, 01 Jan 1970 00:00:00 GMT",
+  ].join("; ");
+}
+
+export function extractApiRefreshTokenCookie(request: Request) {
+  const cookie = request.headers.get("cookie");
+
+  if (!cookie) {
+    return null;
+  }
+
+  for (const part of cookie.split(";")) {
+    const [rawName, ...rawValue] = part.trim().split("=");
+
+    if (rawName === apiRefreshTokenCookieName) {
+      return decodeURIComponent(rawValue.join("="));
+    }
+  }
+
+  return null;
+}
+
+export function requireApiRefreshCookieOrigin(request: Request) {
+  return isAuthorizedApiOrigin(request)
+    ? { ok: true as const }
+    : { ok: false as const, reason: "csrf-origin-invalid" as const };
 }
 
 export async function verifyApiCredentials(input: {
@@ -319,6 +455,241 @@ export async function resolveApiLoginExternalApp({
     },
     ok: true,
   };
+}
+
+export async function issueApiRefreshToken({
+  app,
+  familyId = randomUUID(),
+  user,
+}: {
+  app: ApiAuthenticatedApp;
+  familyId?: string;
+  user: ApiAuthenticatedUser;
+}): Promise<ApiRefreshTokenIssueResult> {
+  const refreshToken = generateApiRefreshToken();
+  const expiresAt = new Date(Date.now() + apiRefreshTokenExpiresIn * 1000);
+  const record = await prisma.apiRefreshToken.create({
+    data: {
+      expiresAt,
+      externalAppId: app.id,
+      familyId,
+      tokenHash: hashApiRefreshToken(refreshToken),
+      userId: user.id,
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  return {
+    expiresAt,
+    refreshToken,
+    tokenId: record.id,
+  };
+}
+
+function buildApiRefreshTokenIssue() {
+  const refreshToken = generateApiRefreshToken();
+
+  return {
+    expiresAt: new Date(Date.now() + apiRefreshTokenExpiresIn * 1000),
+    refreshToken,
+    tokenHash: hashApiRefreshToken(refreshToken),
+  };
+}
+
+export async function rotateApiRefreshToken(token: string): Promise<ApiRefreshResult> {
+  const tokenHash = hashApiRefreshToken(token);
+  const storedToken = await prisma.apiRefreshToken.findUnique({
+    include: {
+      externalApp: true,
+      user: true,
+    },
+    where: {
+      tokenHash,
+    },
+  });
+
+  if (!storedToken) {
+    return {
+      ok: false,
+      reason: "invalid-refresh-token",
+    };
+  }
+
+  const now = new Date();
+
+  if (storedToken.revokedAt) {
+    if (storedToken.replacedByTokenId) {
+      await prisma.apiRefreshToken.updateMany({
+        data: {
+          revokedAt: now,
+        },
+        where: {
+          familyId: storedToken.familyId,
+          revokedAt: null,
+        },
+      });
+
+      return {
+        ok: false,
+        reason: "refresh-token-reused",
+      };
+    }
+
+    return {
+      ok: false,
+      reason: "revoked-refresh-token",
+    };
+  }
+
+  if (storedToken.expiresAt <= now) {
+    return {
+      ok: false,
+      reason: "expired-refresh-token",
+    };
+  }
+
+  if (!storedToken.user) {
+    return {
+      ok: false,
+      reason: "user-not-found",
+    };
+  }
+
+  if (storedToken.user.active === false) {
+    return {
+      ok: false,
+      reason: "user-inactive",
+    };
+  }
+
+  if (!storedToken.externalApp) {
+    return {
+      ok: false,
+      reason: "app-not-found",
+    };
+  }
+
+  if (storedToken.externalApp.active === false) {
+    return {
+      ok: false,
+      reason: "app-inactive",
+    };
+  }
+
+  const organization = await getApiUserOrganization(storedToken.user.id);
+
+  if (!organization.ok) {
+    return {
+      ok: false,
+      reason: organization.reason,
+    };
+  }
+
+  if (storedToken.externalApp.organizationId !== organization.organizationId) {
+    return {
+      ok: false,
+      reason: "app-organization-mismatch",
+    };
+  }
+
+  const user = {
+    email: storedToken.user.email,
+    id: storedToken.user.id,
+    name: storedToken.user.name,
+  };
+  const app = {
+    clientId: storedToken.externalApp.clientId,
+    id: storedToken.externalApp.id,
+    name: storedToken.externalApp.name,
+    slug: storedToken.externalApp.slug,
+  };
+  const pendingRefreshToken = buildApiRefreshTokenIssue();
+  const rotation = await prisma.$transaction(async (tx) => {
+    const revoked = await tx.apiRefreshToken.updateMany({
+      data: {
+        lastUsedAt: now,
+        revokedAt: now,
+      },
+      where: {
+        id: storedToken.id,
+        replacedByTokenId: null,
+        revokedAt: null,
+      },
+    });
+
+    if (revoked.count !== 1) {
+      await tx.apiRefreshToken.updateMany({
+        data: {
+          revokedAt: now,
+        },
+        where: {
+          familyId: storedToken.familyId,
+          revokedAt: null,
+        },
+      });
+
+      return null;
+    }
+
+    const record = await tx.apiRefreshToken.create({
+      data: {
+        expiresAt: pendingRefreshToken.expiresAt,
+        externalAppId: app.id,
+        familyId: storedToken.familyId,
+        tokenHash: pendingRefreshToken.tokenHash,
+        userId: user.id,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    await tx.apiRefreshToken.update({
+      data: {
+        replacedByTokenId: record.id,
+      },
+      where: {
+        id: storedToken.id,
+      },
+    });
+
+    return record;
+  });
+
+  if (!rotation) {
+    return {
+      ok: false,
+      reason: "refresh-token-reused",
+    };
+  }
+
+  return {
+    accessToken: await signApiAccessToken({ app, user }),
+    app,
+    issuedRefreshToken: {
+      expiresAt: pendingRefreshToken.expiresAt,
+      refreshToken: pendingRefreshToken.refreshToken,
+      tokenId: rotation.id,
+    },
+    ok: true,
+    user,
+  };
+}
+
+export async function revokeApiRefreshToken(token: string) {
+  const tokenHash = hashApiRefreshToken(token);
+
+  await prisma.apiRefreshToken.updateMany({
+    data: {
+      revokedAt: new Date(),
+    },
+    where: {
+      revokedAt: null,
+      tokenHash,
+    },
+  });
 }
 
 export async function signApiAccessToken({
