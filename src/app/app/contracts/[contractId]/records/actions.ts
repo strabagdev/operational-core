@@ -299,6 +299,7 @@ export async function importEntityRecordsAction(
       }
 
       const result = await validateImportFile({
+        contractId: context.contract.id,
         entityTypeId: context.entityType.id,
         fields: context.importableFields,
         file,

@@ -13,10 +13,12 @@ import {
 import {
   FieldValidationError,
   fieldInputName,
+  getRelationConfig,
   getRecordDisplayName,
   isEmptySerializedValue,
-  parseFieldConfig,
+  validateRelationInputs,
   validateRecordValues,
+  type RelationInput,
   type SerializedFieldValue,
 } from "./field-validation";
 import { orderEntityFields } from "./entity-field-order";
@@ -27,6 +29,7 @@ export const ENTITY_IMPORT_LIMITS = {
   maxRows: 5000,
 } as const;
 export const RECORD_ID_HEADER = "__record_id";
+export const RELATION_IMPORT_EXPORT_SEPARATOR = " | ";
 
 export const importableFieldTypes = new Set<EntityFieldType>([
   "TEXT",
@@ -43,13 +46,11 @@ export const importableFieldTypes = new Set<EntityFieldType>([
   "TIME",
   "SELECT",
   "MULTISELECT",
+  "RELATION",
 ]);
 
 const structureErrorMessage =
   "La estructura del archivo no coincide con los campos actuales de esta entidad. Descarga una nueva plantilla e inténtalo nuevamente.";
-const relationRequiredMessage =
-  "Esta entidad contiene relaciones obligatorias que todavía no pueden importarse mediante plantilla.";
-
 type ImportField = EntityField & {
   options: Array<{
     id: string;
@@ -87,6 +88,7 @@ type ValidImportRow = {
   rowNumber: number;
   recordId?: string;
   values: SerializedFieldValue[];
+  relations: RelationInput[];
   displayName: string;
 };
 
@@ -94,10 +96,23 @@ type ImportPersistencePlan = {
   auditChanges: Prisma.AuditChangeCreateManyInput[];
   auditEvents: Prisma.AuditEventCreateManyInput[];
   records: Prisma.EntityRecordCreateManyInput[];
+  relations: Prisma.EntityRelationCreateManyInput[];
+  relationFieldIds: string[];
   values: Prisma.EntityValueCreateManyInput[];
   updatedRecords: Array<{ id: string; displayName: string }>;
   updatedRecordIds: string[];
 };
+
+type RelationTargetMatch = {
+  id: string;
+  displayName: string;
+  entityTypeId: string;
+};
+
+export type RelationTargetLookup = (
+  field: ImportField,
+  displayNames: string[],
+) => Promise<Map<string, RelationTargetMatch[]>>;
 
 export class EntityImportUserError extends Error {
   constructor(message: string) {
@@ -178,7 +193,7 @@ export function getImportableFields(fields: ImportField[]) {
 }
 
 export function assertEntityImportable(fields: ImportField[]) {
-  assertNoRequiredRelationFields(fields);
+  void fields;
 }
 
 export async function generateEntityTemplate({
@@ -248,6 +263,18 @@ export async function generateEntityExport({
       entityTypeId: context.entityType.id,
     },
     include: {
+      outgoingRelations: {
+        include: {
+          targetRecord: {
+            select: {
+              displayName: true,
+              entityTypeId: true,
+              id: true,
+            },
+          },
+        },
+        orderBy: { targetRecord: { displayName: "asc" } },
+      },
       values: {
         include: {
           entityField: {
@@ -280,8 +307,12 @@ export async function generateEntityExport({
       record.id,
       ...fields.map((field) => {
         const value = record.values.find((item) => item.entityFieldId === field.id);
+        const relationValue = (record.outgoingRelations ?? [])
+          .filter((relation) => relation.sourceFieldId === field.id)
+          .map((relation) => relation.targetRecord.displayName)
+          .join(RELATION_IMPORT_EXPORT_SEPARATOR);
 
-        return value ? exportEntityValue(field, value) : "";
+        return field.type === "RELATION" ? relationValue : value ? exportEntityValue(field, value) : "";
       }),
     ]);
   }
@@ -315,12 +346,14 @@ export function templateFileName(entityName: string) {
 }
 
 export async function validateImportFile({
+  contractId,
   entityTypeId,
   fields,
   file,
   existingUniqueValues,
   existingRecords,
 }: {
+  contractId?: string;
   entityTypeId?: string;
   fields: ImportField[];
   file: File;
@@ -335,6 +368,9 @@ export async function validateImportFile({
     rows,
     existingUniqueValues,
     existingRecords: recordsForValidation,
+    relationTargetLookup: contractId
+      ? (field, displayNames) => getRelationTargetsByDisplayName(contractId, field, displayNames)
+      : undefined,
   });
 
   return {
@@ -373,6 +409,8 @@ export async function importEntityRecords({
     rows,
     existingRecords,
     existingUniqueValues: (field) => getExistingUniqueValuesByRecord(context.entityType.id, field),
+    relationTargetLookup: (field, displayNames) =>
+      getRelationTargetsByDisplayName(context.contract.id, field, displayNames),
   });
 
   if (validation.errors.length > 0) {
@@ -403,12 +441,28 @@ export async function importEntityRecords({
       });
     }
 
+    if (plan.updatedRecordIds.length > 0 && plan.relationFieldIds.length > 0) {
+      await tx.entityRelation.deleteMany({
+        where: {
+          sourceRecordId: { in: plan.updatedRecordIds },
+          sourceFieldId: { in: plan.relationFieldIds },
+        },
+      });
+    }
+
     if (plan.records.length > 0) {
       await tx.entityRecord.createMany({ data: plan.records });
     }
 
     if (plan.values.length > 0) {
       await tx.entityValue.createMany({ data: plan.values });
+    }
+
+    if (plan.relations.length > 0) {
+      await tx.entityRelation.createMany({
+        data: plan.relations,
+        skipDuplicates: true,
+      });
     }
 
     if (plan.auditEvents.length > 0) {
@@ -446,11 +500,13 @@ export function buildImportPersistencePlan({
 }): ImportPersistencePlan {
   const records: Prisma.EntityRecordCreateManyInput[] = [];
   const values: Prisma.EntityValueCreateManyInput[] = [];
+  const relations: Prisma.EntityRelationCreateManyInput[] = [];
   const auditEvents: Prisma.AuditEventCreateManyInput[] = [];
   const auditChanges: Prisma.AuditChangeCreateManyInput[] = [];
   const updatedRecords: Array<{ id: string; displayName: string }> = [];
   const updatedRecordIds: string[] = [];
   const existingById = new Map(existingRecords.map((record) => [record.id, record]));
+  const relationFieldIds = fields.filter((field) => field.type === "RELATION").map((field) => field.id);
 
   for (const row of rows) {
     const recordId = row.recordId ?? randomUUID();
@@ -481,6 +537,16 @@ export function buildImportPersistencePlan({
         dateValue: value.dateValue ?? null,
         jsonValue: value.jsonValue ?? Prisma.JsonNull,
       });
+    }
+
+    for (const relation of row.relations ?? []) {
+      for (const targetRecordId of relation.targetRecordIds) {
+        relations.push({
+          sourceRecordId: recordId,
+          sourceFieldId: relation.fieldId,
+          targetRecordId,
+        });
+      }
     }
 
     const changes = buildValueChanges({
@@ -521,7 +587,16 @@ export function buildImportPersistencePlan({
     }
   }
 
-  return { auditChanges, auditEvents, records, updatedRecords, updatedRecordIds, values };
+  return {
+    auditChanges,
+    auditEvents,
+    records,
+    relationFieldIds,
+    relations,
+    updatedRecords,
+    updatedRecordIds,
+    values,
+  };
 }
 
 export async function parseExcelRows({
@@ -604,16 +679,24 @@ export async function validateImportRows({
   rows,
   existingUniqueValues,
   existingRecords,
+  relationTargetLookup,
 }: {
   fields: ImportField[];
   rows: ParsedImportRow[];
   existingUniqueValues?: ExistingUniqueValuesProvider;
   existingRecords?: ExistingRecord[];
+  relationTargetLookup?: RelationTargetLookup;
 }) {
   const errors: EntityImportError[] = [];
   const candidateRows: ValidImportRow[] = [];
   const existingById = new Map((existingRecords ?? []).map((record) => [record.id, record]));
   const seenRecordIds = new Set<string>();
+  const relationTargets = await resolveImportRelationTargets({
+    errors,
+    fields,
+    relationTargetLookup,
+    rows,
+  });
 
   for (const row of rows) {
     const formData = new FormData();
@@ -643,6 +726,10 @@ export async function validateImportRows({
 
     try {
       for (const field of fields) {
+        if (field.type === "RELATION") {
+          continue;
+        }
+
         for (const value of excelValueToFormValues(field, row.valuesByHeader.get(field.name))) {
           formData.append(fieldInputName(field.id), value);
         }
@@ -666,9 +753,18 @@ export async function validateImportRows({
     }
 
     let values: SerializedFieldValue[];
+    let relations: RelationInput[];
 
     try {
+      appendResolvedRelationValues({
+        errors,
+        fieldTargets: relationTargets,
+        fields,
+        formData,
+        row,
+      });
       values = validateRecordValues({ fields, formData, mode: recordId ? "edit" : "create" });
+      relations = validateRelationInputs({ fields, formData });
     } catch (error) {
       if (error instanceof FieldValidationError) {
         for (const [fieldId, messages] of Object.entries(error.fieldErrors)) {
@@ -692,6 +788,7 @@ export async function validateImportRows({
         rowNumber: row.rowNumber,
         recordId,
         values,
+        relations,
         displayName: getRecordDisplayName(fields, values),
       });
     }
@@ -789,20 +886,153 @@ function normalizeExistingUniqueValues(values: Map<string, string> | Set<string>
   return new Map(Array.from(values).map((signature) => [signature, "__external__"]));
 }
 
-function assertNoRequiredRelationFields(fields: ImportField[]) {
-  const hasRequiredRelationField = fields.some((field) => {
-    if (!field.isActive || field.type !== "RELATION") {
-      return false;
+type ResolvedRelationTargetsByField = Map<string, Map<string, RelationTargetMatch[]>>;
+
+async function resolveImportRelationTargets({
+  errors,
+  fields,
+  relationTargetLookup,
+  rows,
+}: {
+  errors: EntityImportError[];
+  fields: ImportField[];
+  relationTargetLookup?: RelationTargetLookup;
+  rows: ParsedImportRow[];
+}): Promise<ResolvedRelationTargetsByField> {
+  const relationFields = fields.filter((field) => field.type === "RELATION");
+  const targetsByField = new Map<string, Map<string, RelationTargetMatch[]>>();
+
+  for (const field of relationFields) {
+    const displayNames = Array.from(
+      new Set(
+        rows.flatMap((row) =>
+          relationDisplayNamesFromCell(row.valuesByHeader.get(field.name)),
+        ),
+      ),
+    );
+
+    if (displayNames.length === 0) {
+      targetsByField.set(field.id, new Map());
+      continue;
     }
 
-    const config = parseFieldConfig(field.config);
+    if (!relationTargetLookup) {
+      for (const row of rows) {
+        if (relationDisplayNamesFromCell(row.valuesByHeader.get(field.name)).length > 0) {
+          errors.push({
+            row: row.rowNumber,
+            field: field.name,
+            message: "No fue posible resolver registros relacionados para este campo.",
+          });
+        }
+      }
+      targetsByField.set(field.id, new Map());
+      continue;
+    }
 
-    return config.validation.required ?? field.required;
-  });
-
-  if (hasRequiredRelationField) {
-    throw new EntityImportUserError(relationRequiredMessage);
+    targetsByField.set(field.id, await relationTargetLookup(field, displayNames));
   }
+
+  return targetsByField;
+}
+
+function appendResolvedRelationValues({
+  errors,
+  fieldTargets,
+  fields,
+  formData,
+  row,
+}: {
+  errors: EntityImportError[];
+  fieldTargets: ResolvedRelationTargetsByField;
+  fields: ImportField[];
+  formData: FormData;
+  row: ParsedImportRow;
+}) {
+  for (const field of fields.filter((item) => item.type === "RELATION")) {
+    const names = relationDisplayNamesFromCell(row.valuesByHeader.get(field.name));
+    const name = fieldInputName(field.id);
+    const targets = fieldTargets.get(field.id) ?? new Map();
+
+    formData.delete(name);
+
+    for (const displayName of names) {
+      const matches = targets.get(displayName) ?? [];
+
+      if (matches.length === 0) {
+        errors.push({
+          row: row.rowNumber,
+          field: field.name,
+          message: `No existe un registro relacionado con displayName “${displayName}”.`,
+        });
+        continue;
+      }
+
+      if (matches.length > 1) {
+        errors.push({
+          row: row.rowNumber,
+          field: field.name,
+          message: `El displayName “${displayName}” es ambiguo para ${field.name}.`,
+        });
+        continue;
+      }
+
+      formData.append(name, matches[0].id);
+    }
+  }
+}
+
+function relationDisplayNamesFromCell(value: unknown) {
+  if (isBlankCellValue(value)) {
+    return [];
+  }
+
+  return Array.from(
+    new Set(
+      String(value)
+        .split(/\s*\|\s*/)
+        .map((item) => item.trim())
+        .filter(Boolean),
+    ),
+  );
+}
+
+async function getRelationTargetsByDisplayName(
+  contractId: string,
+  field: ImportField,
+  displayNames: string[],
+) {
+  const config = getRelationConfig(field.config);
+
+  if (!config.targetEntityTypeId || displayNames.length === 0) {
+    return new Map<string, RelationTargetMatch[]>();
+  }
+
+  const targets = await prisma.entityRecord.findMany({
+    where: {
+      displayName: { in: displayNames },
+      entityType: {
+        id: config.targetEntityTypeId,
+        contractId,
+      },
+    },
+    select: {
+      id: true,
+      displayName: true,
+      entityTypeId: true,
+    },
+    orderBy: [{ displayName: "asc" }, { id: "asc" }],
+  });
+  const byDisplayName = new Map<string, RelationTargetMatch[]>();
+
+  for (const target of targets) {
+    byDisplayName.set(target.displayName, [
+      ...(byDisplayName.get(target.displayName) ?? []),
+      target,
+    ]);
+  }
+
+  return byDisplayName;
 }
 
 function assertNoDuplicateFieldNames(fields: ImportField[]) {
@@ -1043,6 +1273,8 @@ function excelValueToFormValues(field: ImportField, value: unknown) {
             .map((label) => optionLabelToValue(field, label)),
         ),
       );
+    case "RELATION":
+      return relationDisplayNamesFromCell(value);
     default:
       return [String(value).trim()];
   }

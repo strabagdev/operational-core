@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   ENTITY_IMPORT_LIMITS,
   EntityImportUserError,
+  RELATION_IMPORT_EXPORT_SEPARATOR,
   RECORD_ID_HEADER,
   assertEntityImportable,
   buildImportPersistencePlan,
@@ -30,7 +31,7 @@ function field(overrides: Record<string, unknown> = {}): ImportTestField {
     required: Boolean(overrides.required ?? false),
     isUnique: Boolean(overrides.isUnique ?? false),
     searchable: false,
-    multiple: false,
+    multiple: Boolean(overrides.multiple ?? false),
     sortOrder: Number(overrides.sortOrder ?? 1),
     config: overrides.config ?? null,
     isActive: Boolean(overrides.isActive ?? true),
@@ -95,18 +96,49 @@ function existingRecord(
   };
 }
 
+function relationField(overrides: Record<string, unknown> = {}) {
+  return field({
+    id: "department",
+    name: "Departamento",
+    type: "RELATION",
+    required: false,
+    config: {
+      targetEntityTypeId: "departments",
+      relationKind: overrides.multiple ? "MANY" : "ONE",
+    },
+    multiple: Boolean(overrides.multiple ?? false),
+    ...overrides,
+  });
+}
+
+function relationLookup(
+  matchesByDisplayName: Record<string, Array<{ id: string; entityTypeId?: string }>>,
+) {
+  return async () =>
+    new Map(
+      Object.entries(matchesByDisplayName).map(([displayName, matches]) => [
+        displayName,
+        matches.map((match) => ({
+          id: match.id,
+          displayName,
+          entityTypeId: match.entityTypeId ?? "departments",
+        })),
+      ]),
+    );
+}
+
 describe("entity import template", () => {
-  it("includes active supported fields and excludes inactive/relation/file/image fields without reordering remaining fields", () => {
+  it("includes active supported fields including relations and excludes inactive/file/image fields without reordering remaining fields", () => {
     const fields = getImportableFields([
       field({ id: "name", name: "Nombre", type: "TEXT", sortOrder: 1 }),
       field({ id: "old", name: "Antiguo", type: "TEXT", isActive: false }),
-      field({ id: "rel", name: "Empresa", type: "RELATION" }),
+      field({ id: "rel", name: "Empresa", type: "RELATION", sortOrder: 2 }),
       field({ id: "file", name: "Archivo", type: "FILE" }),
       field({ id: "image", name: "Imagen", type: "IMAGE" }),
-      field({ id: "email", name: "Correo", type: "EMAIL", sortOrder: 2 }),
+      field({ id: "email", name: "Correo", type: "EMAIL", sortOrder: 3 }),
     ]);
 
-    expect(fields.map((item) => item.name)).toEqual(["Nombre", "Correo"]);
+    expect(fields.map((item) => item.name)).toEqual(["Nombre", "Empresa", "Correo"]);
   });
 
   it("orders fields by sortOrder and ignores display listOrder compatibility data", () => {
@@ -127,13 +159,13 @@ describe("entity import template", () => {
     ).toThrow(EntityImportUserError);
   });
 
-  it("blocks basic import when an active required relation exists", () => {
+  it("allows required relations because they are imported by displayName", () => {
     expect(() =>
       assertEntityImportable([
         field({ id: "name", name: "Nombre" }),
         field({ id: "rel", name: "Empresa", type: "RELATION", required: true }),
       ]),
-    ).toThrow("Esta entidad contiene relaciones obligatorias");
+    ).not.toThrow();
   });
 
   it("does not block basic import for required file or image fields", () => {
@@ -325,6 +357,141 @@ describe("entity import structure and values", () => {
       "2026-01-02T00:00:00.000Z",
     );
   });
+
+  it("resolves a RELATION displayName to the targetRecordId", async () => {
+    const fields = [field({ id: "name", name: "Nombre" }), relationField()];
+    const rows = await parseExcelRows({
+      fields,
+      file: await workbookFile(["Nombre", "Departamento"], [["Ana", "Oficina Técnica"]]),
+    });
+    const result = await validateImportRows({
+      fields,
+      rows,
+      relationTargetLookup: relationLookup({
+        "Oficina Técnica": [{ id: "target_department_1" }],
+      }),
+    });
+
+    expect(result.errors).toEqual([]);
+    expect(result.validRows[0].relations).toEqual([
+      { fieldId: "department", targetRecordIds: ["target_department_1"] },
+    ]);
+  });
+
+  it("rejects missing relation targets by displayName", async () => {
+    const fields = [relationField()];
+    const rows = await parseExcelRows({
+      fields,
+      file: await workbookFile(["Departamento"], [["No existe"]]),
+    });
+    const result = await validateImportRows({
+      fields,
+      rows,
+      relationTargetLookup: relationLookup({}),
+    });
+
+    expect(result.validRows).toHaveLength(0);
+    expect(result.errors).toEqual([
+      {
+        row: 2,
+        field: "Departamento",
+        message: "No existe un registro relacionado con displayName “No existe”.",
+      },
+    ]);
+  });
+
+  it("rejects ambiguous relation displayNames", async () => {
+    const fields = [relationField()];
+    const rows = await parseExcelRows({
+      fields,
+      file: await workbookFile(["Departamento"], [["Duplicado"]]),
+    });
+    const result = await validateImportRows({
+      fields,
+      rows,
+      relationTargetLookup: relationLookup({
+        Duplicado: [{ id: "target_1" }, { id: "target_2" }],
+      }),
+    });
+
+    expect(result.validRows).toHaveLength(0);
+    expect(result.errors).toEqual([
+      {
+        row: 2,
+        field: "Departamento",
+        message: "El displayName “Duplicado” es ambiguo para Departamento.",
+      },
+    ]);
+  });
+
+  it("rejects relation targets outside the current contract or configured entity", async () => {
+    const fields = [relationField()];
+    const rows = await parseExcelRows({
+      fields,
+      file: await workbookFile(["Departamento"], [["Otro contrato"]]),
+    });
+    const result = await validateImportRows({
+      fields,
+      rows,
+      relationTargetLookup: relationLookup({}),
+    });
+
+    expect(result.errors).toEqual([
+      {
+        row: 2,
+        field: "Departamento",
+        message: "No existe un registro relacionado con displayName “Otro contrato”.",
+      },
+    ]);
+  });
+
+  it("resolves multiple RELATION displayNames with a stable pipe separator", async () => {
+    const fields = [relationField({ multiple: true, name: "Departamentos" })];
+    const rows = await parseExcelRows({
+      fields,
+      file: await workbookFile(
+        ["Departamentos"],
+        [[`Oficina Técnica${RELATION_IMPORT_EXPORT_SEPARATOR}Minería | Bodega`]],
+      ),
+    });
+    const result = await validateImportRows({
+      fields,
+      rows,
+      relationTargetLookup: relationLookup({
+        "Oficina Técnica": [{ id: "target_1" }],
+        Minería: [{ id: "target_2" }],
+        Bodega: [{ id: "target_3" }],
+      }),
+    });
+
+    expect(result.errors).toEqual([]);
+    expect(result.validRows[0].relations).toEqual([
+      { fieldId: "department", targetRecordIds: ["target_1", "target_2", "target_3"] },
+    ]);
+  });
+
+  it.each(["MASTER", "TRANSACTION", "REFERENCE"] as const)(
+    "uses the same relation import behavior for %s targets",
+    async (nature) => {
+      const fields = [relationField()];
+      const rows = await parseExcelRows({
+        fields,
+        file: await workbookFile(["Departamento"], [["Oficina Técnica"]]),
+      });
+      const result = await validateImportRows({
+        fields,
+        rows,
+        relationTargetLookup: relationLookup({
+          "Oficina Técnica": [{ id: `target_${nature.toLowerCase()}` }],
+        }),
+      });
+
+      expect(result.errors).toEqual([]);
+      expect(result.validRows[0].relations[0].targetRecordIds).toEqual([
+        `target_${nature.toLowerCase()}`,
+      ]);
+    },
+  );
 
   it.each(["TEXT", "TEXTAREA"] as const)(
     "preserves literal Excel text for %s fields without numeric parsing",
@@ -721,6 +888,7 @@ describe("entity import persistence plan", () => {
     return Array.from({ length: count }, (_, index) => ({
       rowNumber: index + 2,
       displayName: `Persona ${index + 1}`,
+      relations: [],
       values: [
         { fieldId: "name", textValue: `Persona ${index + 1}` },
         { fieldId: "rut", textValue: `RUT-${index + 1}` },
@@ -773,6 +941,7 @@ describe("entity import persistence plan", () => {
         {
           rowNumber: 2,
           displayName: "Registro sin nombre",
+          relations: [],
           values: [{ fieldId: "name", textValue: null }],
         },
       ],
@@ -806,6 +975,7 @@ describe("entity import persistence plan", () => {
           rowNumber: 2,
           recordId: "record_1",
           displayName: "Ana",
+          relations: [],
           values: [
             { fieldId: "name", textValue: "Ana" },
             { fieldId: "cargo", textValue: "Jefa" },
@@ -834,6 +1004,7 @@ describe("entity import persistence plan", () => {
       rowNumber: index + 2,
       recordId: `record_${index}`,
       displayName: `Persona ${index} editada`,
+      relations: [],
       values: [{ fieldId: "name", textValue: `Persona ${index} editada` }],
     }));
     const existingRecords = Array.from({ length: 400 }, (_, index) =>

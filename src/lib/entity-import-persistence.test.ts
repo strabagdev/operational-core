@@ -1,7 +1,11 @@
 import ExcelJS from "exceljs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { generateEntityExport, importEntityRecords } from "./entity-import";
+import {
+  RELATION_IMPORT_EXPORT_SEPARATOR,
+  generateEntityExport,
+  importEntityRecords,
+} from "./entity-import";
 import { prisma } from "./prisma";
 
 const mocks = vi.hoisted(() => ({
@@ -41,7 +45,7 @@ function importField(overrides: Record<string, unknown> = {}) {
     required: Boolean(overrides.required ?? true),
     isUnique: Boolean(overrides.isUnique ?? false),
     searchable: Boolean(overrides.searchable ?? false),
-    multiple: false,
+    multiple: Boolean(overrides.multiple ?? false),
     sortOrder: Number(overrides.sortOrder ?? 1),
     config: overrides.config ?? null,
     isActive: Boolean(overrides.isActive ?? true),
@@ -92,6 +96,10 @@ function tx() {
     entityRecord: {
       create: vi.fn(),
       createMany: vi.fn(async ({ data }) => ({ count: data.length })),
+    },
+    entityRelation: {
+      createMany: vi.fn(async ({ data }) => ({ count: data.length })),
+      deleteMany: vi.fn(async () => ({ count: 1 })),
     },
     entityValue: {
       createMany: vi.fn(async ({ data }) => ({ count: data.length })),
@@ -228,6 +236,95 @@ describe("entity import persistence", () => {
     });
     expect(entityRecordFindMany.mock.calls[1]?.[0]).not.toHaveProperty("take");
     expect(entityRecordFindMany.mock.calls[1]?.[0]).not.toHaveProperty("skip");
+  });
+
+  it("exports RELATION fields as target displayName values without technical ids", async () => {
+    const fields = [
+      importField({
+        id: "field_department",
+        name: "Departamento",
+        type: "RELATION",
+        required: false,
+        config: { targetEntityTypeId: "departments", relationKind: "ONE" },
+      }),
+      importField({
+        id: "field_departments",
+        name: "Departamentos",
+        type: "RELATION",
+        required: false,
+        multiple: true,
+        sortOrder: 2,
+        config: { targetEntityTypeId: "departments", relationKind: "MANY" },
+      }),
+    ];
+
+    mocks.getAuthorizedRecordEntityType.mockResolvedValue(importContext(fields));
+    entityRecordFindMany
+      .mockResolvedValueOnce([{ id: "record_1" }] as never)
+      .mockResolvedValueOnce([
+        {
+          id: "record_1",
+          displayName: "Persona 1",
+          values: [],
+          outgoingRelations: [
+            {
+              sourceFieldId: "field_department",
+              targetRecord: {
+                displayName: "Oficina Técnica",
+                entityTypeId: "departments",
+                id: "target_record_1",
+              },
+              targetRecordId: "target_record_1",
+            },
+            {
+              sourceFieldId: "field_departments",
+              targetRecord: {
+                displayName: "Minería",
+                entityTypeId: "departments",
+                id: "target_record_2",
+              },
+              targetRecordId: "target_record_2",
+            },
+            {
+              sourceFieldId: "field_departments",
+              targetRecord: {
+                displayName: "Bodega",
+                entityTypeId: "departments",
+                id: "target_record_3",
+              },
+              targetRecordId: "target_record_3",
+            },
+          ],
+        },
+      ] as never);
+
+    const result = await generateEntityExport({
+      contractId: "contract_1",
+      entityTypeId: "entity_1",
+      userId: "user_1",
+    });
+    const workbook = new ExcelJS.Workbook();
+
+    await workbook.xlsx.load(result?.buffer as never);
+
+    expect(workbook.worksheets[0].getRow(2).values).toMatchObject([
+      undefined,
+      "record_1",
+      "Oficina Técnica",
+      `Minería${RELATION_IMPORT_EXPORT_SEPARATOR}Bodega`,
+    ]);
+    expect(JSON.stringify(workbook.worksheets[0].getRow(2).values)).not.toContain("target_record");
+    expect(entityRecordFindMany.mock.calls[1]?.[0]).toMatchObject({
+      include: expect.objectContaining({
+        outgoingRelations: expect.objectContaining({
+          include: expect.objectContaining({
+            targetRecord: expect.objectContaining({
+              select: expect.objectContaining({ displayName: true }),
+            }),
+          }),
+        }),
+      }),
+    });
   });
 
   it.each([
@@ -512,6 +609,62 @@ describe("entity import persistence", () => {
       entityFieldId: "field_estado",
       jsonValue: ["operativo", "mantencion"],
     });
+    expectConfigurationDelegatesNotTouched(currentTx);
+  });
+
+  it("imports RELATION displayNames as EntityRelation targetRecordId rows", async () => {
+    const relationField = importField({
+      id: "field_department",
+      name: "Departamento",
+      key: "departamento",
+      type: "RELATION",
+      required: false,
+      config: { targetEntityTypeId: "departments", relationKind: "ONE" },
+    });
+    const currentTx = tx();
+
+    mocks.getAuthorizedRecordEntityType.mockResolvedValue(importContext([relationField]));
+    entityRecordFindMany.mockResolvedValueOnce([
+      {
+        id: "target_department_1",
+        displayName: "Oficina Técnica",
+        entityTypeId: "departments",
+      },
+    ] as never);
+    transaction.mockImplementation(async (callback) => callback(currentTx as never));
+
+    await expect(
+      importEntityRecords({
+        contractId: "contract_1",
+        entityTypeId: "entity_1",
+        file: await workbookFile(1, ["Departamento"], [["Oficina Técnica"]]),
+        userId: "user_1",
+      }),
+    ).resolves.toEqual({ createdCount: 1, importedCount: 1, updatedCount: 0 });
+
+    expect(entityRecordFindMany).toHaveBeenCalledWith({
+      where: {
+        displayName: { in: ["Oficina Técnica"] },
+        entityType: {
+          id: "departments",
+          contractId: "contract_1",
+        },
+      },
+      select: {
+        id: true,
+        displayName: true,
+        entityTypeId: true,
+      },
+      orderBy: [{ displayName: "asc" }, { id: "asc" }],
+    });
+    expect(currentTx.entityValue.createMany).not.toHaveBeenCalled();
+    expect(currentTx.entityRelation.createMany.mock.calls[0][0].data).toEqual([
+      {
+        sourceRecordId: expect.any(String),
+        sourceFieldId: "field_department",
+        targetRecordId: "target_department_1",
+      },
+    ]);
     expectConfigurationDelegatesNotTouched(currentTx);
   });
 

@@ -36,12 +36,12 @@ Templates include active fields with these types:
 - `TIME`
 - `SELECT`
 - `MULTISELECT`
+- `RELATION`
 
 ## Excluded Fields
 
 These fields are excluded from templates and import parsing:
 
-- `RELATION`
 - `FILE`
 - `IMAGE`
 
@@ -99,6 +99,7 @@ Type rules:
 - `TIME` accepts text in `HH:mm`.
 - `SELECT` uses the exact visible label of an active option.
 - `MULTISELECT` uses exact visible labels separated by semicolons, for example `Seguridad; Operaciones`.
+- `RELATION` uses the target record `displayName`. Multiple relation values are separated by ` | `, for example `Oficina Técnica | Minería | Bodega`.
 
 Formula cells are not executed. If a calculated simple result is present, the result is used; otherwise the file is rejected as unreadable.
 
@@ -112,10 +113,13 @@ Rows are normalized into the same field input shape used by manual record creati
 - numeric minimum/maximum;
 - regex;
 - active option validation;
+- relation target validation in the same contract and configured target entity type;
 - default values during creation;
 - unique checks.
 
 Unique values are checked inside the file and against existing non-archived records in the same entity type.
+
+Relation cells are rejected when the target `displayName` does not exist or matches more than one target record. Import does not create related records automatically.
 
 ## Policy
 
@@ -141,12 +145,11 @@ Successful import creates:
 
 - `EntityRecord`;
 - `EntityValue`;
+- `EntityRelation` for relation fields;
 - `AuditEvent`;
 - `AuditChange` entries through the same audit helpers used by manual creation.
 
 Imported `EntityRecord` rows are created without a technical status. Any business state must come from an imported dynamic field, such as a `SELECT` field named Estado.
-
-No `EntityRelation` rows are created in this version.
 
 ## Security
 
@@ -166,7 +169,7 @@ No uploaded file is stored permanently.
 
 Potential follow-ups:
 
-- relation import;
+- Excel data validation/dropdown lists for relation fields when the target record count is practical for workbook limits;
 - CSV import;
 - manual column mapping;
 - error export;

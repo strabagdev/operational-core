@@ -19,7 +19,6 @@ import {
   deserializeEntityValue,
   getAuthorizedEntityRecord,
   getIncomingRecordRelations,
-  getRecordRelations,
   getRelationOptions,
 } from "@/lib/entity-records";
 import {
@@ -61,12 +60,6 @@ export default async function EntityRecordDetailPage({
     entityTypeId,
     session.user.id,
   );
-  const outgoingRelations = await getRecordRelations(
-    contractId,
-    entityTypeId,
-    recordId,
-    session.user.id,
-  );
   const incomingRelations = await getIncomingRecordRelations(
     contractId,
     entityTypeId,
@@ -84,7 +77,6 @@ export default async function EntityRecordDetailPage({
   if (
     !data ||
     !relationOptions ||
-    !outgoingRelations ||
     !incomingRelations ||
     !auditHistory
   ) {
@@ -187,34 +179,9 @@ export default async function EntityRecordDetailPage({
           ) : (
             <RecordReadView
               fields={data.entityType.fields}
+              relations={data.record.outgoingRelations}
               values={data.record.values}
             />
-          )}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Relaciones</CardTitle>
-        </CardHeader>
-        <CardContent className="grid gap-3">
-          {outgoingRelations.length > 0 ? (
-            outgoingRelations.map((relation) => (
-              <div className="grid gap-1 text-sm" key={relation.id}>
-                <div className="font-medium">{relation.sourceField.name}</div>
-                <Link
-                  className="text-primary underline-offset-4 hover:underline"
-                  href={`/app/contracts/${contractId}/records/${relation.targetRecord.entityTypeId}/${relation.targetRecord.id}`}
-                >
-                  {relation.targetRecord.displayName} ·{" "}
-                  {relation.targetRecord.entityType.name}
-                </Link>
-              </div>
-            ))
-          ) : (
-            <p className="text-sm text-muted-foreground">
-              Este registro no tiene relaciones salientes.
-            </p>
           )}
         </CardContent>
       </Card>
@@ -290,6 +257,7 @@ export default async function EntityRecordDetailPage({
 
 function RecordReadView({
   fields,
+  relations,
   values,
 }: {
   fields: Array<{
@@ -308,6 +276,12 @@ function RecordReadView({
     dateValue: Date | null;
     jsonValue: Prisma.JsonValue | null;
   }>;
+  relations: Array<{
+    sourceFieldId: string;
+    targetRecord: {
+      displayName: string;
+    };
+  }>;
 }) {
   if (fields.length === 0) {
     return (
@@ -321,7 +295,11 @@ function RecordReadView({
     <dl className="grid gap-4">
       {fields.map((field) => {
         const value = values.find((item) => item.entityFieldId === field.id);
-        const displayValue = value
+        const relationValue = relations
+          .filter((relation) => relation.sourceFieldId === field.id)
+          .map((relation) => relation.targetRecord.displayName)
+          .join(", ");
+        const displayValue = field.type === "RELATION" ? relationValue : value
           ? deserializeEntityValue({
               ...value,
               jsonValue: value.jsonValue,

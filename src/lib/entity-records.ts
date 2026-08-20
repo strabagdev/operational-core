@@ -718,7 +718,18 @@ export async function getAuthorizedEntityRecord(
           },
         },
       },
-      outgoingRelations: true,
+      outgoingRelations: {
+        include: {
+          targetRecord: {
+            select: {
+              displayName: true,
+              entityTypeId: true,
+              id: true,
+            },
+          },
+        },
+        orderBy: { targetRecord: { displayName: "asc" } },
+      },
     },
   });
 
