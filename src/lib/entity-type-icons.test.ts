@@ -164,11 +164,28 @@ describe("entity type nature persistence", () => {
     }));
   });
 
-  it("edits EntityType nature", async () => {
+  it.each([
+    ["MASTER", "REFERENCE"],
+    ["REFERENCE", "MASTER"],
+    ["MASTER", "TRANSACTION"],
+    ["TRANSACTION", "REFERENCE"],
+  ] as const)("persists EntityType nature from %s to %s", async (_from, to) => {
+    await updateEntityType("contract_1", "entity_1", "user_1", getEntityTypeInput(formData(undefined, to)));
+
+    expect(entityTypeUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ nature: to }),
+    }));
+  });
+
+  it("only updates EntityType metadata when nature changes", async () => {
     await updateEntityType("contract_1", "entity_1", "user_1", getEntityTypeInput(formData(undefined, "REFERENCE")));
 
     expect(entityTypeUpdate).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({ nature: "REFERENCE" }),
+      data: expect.not.objectContaining({
+        fields: expect.anything(),
+        records: expect.anything(),
+        relations: expect.anything(),
+      }),
     }));
   });
 });

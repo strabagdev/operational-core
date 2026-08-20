@@ -111,6 +111,7 @@ export async function updateEntityTypeAction(
   }
 
   revalidatePath(entityTypePath(contractId, entityTypeId));
+  redirect(withMessage(entityTypePath(contractId, entityTypeId), "notice", "Tipo actualizado."));
 }
 
 export async function toggleEntityTypeAction(

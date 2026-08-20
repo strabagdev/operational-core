@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useFormStatus } from "react-dom";
 import { Check, ChevronDown, Search } from "lucide-react";
 import type { EntityNature } from "@prisma/client";
 
@@ -34,16 +35,67 @@ type EntityTypeFormProps = {
   };
 };
 
+export type EntityTypeFormSnapshot = {
+  description: string;
+  icon: string;
+  isActive: boolean;
+  name: string;
+  nature: EntityNature;
+  slug: string;
+};
+
+export function getInitialEntityTypeFormSnapshot(
+  initialValues: EntityTypeFormProps["initialValues"],
+): EntityTypeFormSnapshot {
+  return {
+    description: initialValues?.description ?? "",
+    icon: initialValues?.icon ?? "",
+    isActive: initialValues?.isActive ?? true,
+    name: initialValues?.name ?? "",
+    nature: initialValues?.nature ?? "MASTER",
+    slug: initialValues?.slug ?? "",
+  };
+}
+
+export function isEntityTypeFormDirty(
+  current: EntityTypeFormSnapshot,
+  initial: EntityTypeFormSnapshot,
+) {
+  return (
+    current.description !== initial.description ||
+    current.icon !== initial.icon ||
+    current.isActive !== initial.isActive ||
+    current.name !== initial.name ||
+    current.nature !== initial.nature ||
+    current.slug !== initial.slug
+  );
+}
+
 export function EntityTypeForm({
   action,
   submitLabel,
   initialValues,
 }: EntityTypeFormProps) {
-  const [name, setName] = useState(initialValues?.name ?? "");
-  const [slug, setSlug] = useState(initialValues?.slug ?? "");
+  const initialSnapshot = getInitialEntityTypeFormSnapshot(initialValues);
+  const [name, setName] = useState(initialSnapshot.name);
+  const [slug, setSlug] = useState(initialSnapshot.slug);
+  const [description, setDescription] = useState(initialSnapshot.description);
+  const [icon, setIcon] = useState(initialSnapshot.icon);
   const [slugTouched, setSlugTouched] = useState(Boolean(initialValues?.slug));
-  const [nature, setNature] = useState<EntityNature>(initialValues?.nature ?? "MASTER");
+  const [nature, setNature] = useState<EntityNature>(initialSnapshot.nature);
+  const [isActive, setIsActive] = useState(initialSnapshot.isActive);
   const selectedNature = getEntityNatureOption(nature);
+  const dirty = isEntityTypeFormDirty(
+    {
+      description,
+      icon,
+      isActive,
+      name,
+      nature,
+      slug,
+    },
+    initialSnapshot,
+  );
 
   return (
     <form action={action} className="grid gap-4">
@@ -83,14 +135,18 @@ export function EntityTypeForm({
         Descripción
         <textarea
           className="min-h-24 rounded-md border border-input bg-background px-3 py-2 text-sm outline-none ring-ring focus-visible:ring-2"
-          defaultValue={initialValues?.description ?? ""}
           name="description"
+          onChange={(event) => setDescription(event.target.value)}
+          value={description}
         />
       </label>
 
       <fieldset className="grid gap-2 text-sm font-medium">
         <legend>Icono opcional</legend>
-        <EntityIconPicker initialIcon={initialValues?.icon ?? null} />
+        <EntityIconPicker
+          onIconChange={(nextIcon) => setIcon(getEntityIconPickerFormValue(nextIcon))}
+          selectedIcon={icon || null}
+        />
       </fieldset>
 
       <label className="grid gap-2 text-sm font-medium">
@@ -114,15 +170,16 @@ export function EntityTypeForm({
 
       <label className="flex items-center gap-2 text-sm font-medium">
         <input
+          checked={isActive}
           className="h-4 w-4"
-          defaultChecked={initialValues?.isActive ?? true}
           name="isActive"
+          onChange={(event) => setIsActive(event.target.checked)}
           type="checkbox"
         />
         Activo
       </label>
 
-      <Button type="submit">{submitLabel}</Button>
+      <EntityTypeSubmitButton dirty={dirty} label={submitLabel} />
     </form>
   );
 }
@@ -162,15 +219,20 @@ export function getEntityIconPickerFormValue(icon: string | null | undefined) {
   return icon ?? "";
 }
 
-function EntityIconPicker({ initialIcon }: { initialIcon: string | null }) {
-  const [selectedIcon, setSelectedIcon] = useState(initialIcon);
+function EntityIconPicker({
+  onIconChange,
+  selectedIcon,
+}: {
+  onIconChange: (icon: EntityIconKey | null) => void;
+  selectedIcon: string | null;
+}) {
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
   const options = getEntityIconPickerOptions(query);
   const selectedLabel = getEntityIconPickerLabel(selectedIcon);
 
   function selectIcon(icon: EntityIconKey | null) {
-    setSelectedIcon(icon);
+    onIconChange(icon);
     setQuery("");
     setOpen(false);
   }
@@ -234,5 +296,21 @@ function EntityIconPicker({ initialIcon }: { initialIcon: string | null }) {
         </div>
       </DropdownMenuContent>
     </DropdownMenu>
+  );
+}
+
+function EntityTypeSubmitButton({
+  dirty,
+  label,
+}: {
+  dirty: boolean;
+  label: string;
+}) {
+  const { pending } = useFormStatus();
+
+  return (
+    <Button disabled={pending || !dirty} type="submit">
+      {pending ? "Guardando..." : label}
+    </Button>
   );
 }

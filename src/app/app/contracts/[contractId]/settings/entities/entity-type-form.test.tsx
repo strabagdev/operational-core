@@ -6,6 +6,8 @@ import {
   getEntityIconPickerFormValue,
   getEntityIconPickerLabel,
   getEntityIconPickerOptions,
+  getInitialEntityTypeFormSnapshot,
+  isEntityTypeFormDirty,
 } from "./entity-type-form";
 
 describe("EntityTypeForm icon selector", () => {
@@ -99,5 +101,32 @@ describe("EntityTypeForm nature selector", () => {
 
     expect(html).toContain('<option value="TRANSACTION" selected="">Transaccional</option>');
     expect(html).toContain("Evento u operación que ocurre en el tiempo.");
+  });
+
+  it("enables save when only nature changes", () => {
+    const initial = getInitialEntityTypeFormSnapshot({
+      description: null,
+      icon: null,
+      isActive: true,
+      name: "Personas",
+      nature: "MASTER",
+      slug: "personas",
+    });
+
+    expect(isEntityTypeFormDirty({ ...initial, nature: "REFERENCE" }, initial)).toBe(true);
+    expect(isEntityTypeFormDirty({ ...initial, nature: "TRANSACTION" }, initial)).toBe(true);
+  });
+
+  it("does not mark unchanged entity type metadata as dirty", () => {
+    const initial = getInitialEntityTypeFormSnapshot({
+      description: "Catálogo",
+      icon: "warehouse",
+      isActive: true,
+      name: "Bodegas",
+      nature: "REFERENCE",
+      slug: "bodegas",
+    });
+
+    expect(isEntityTypeFormDirty(initial, initial)).toBe(false);
   });
 });
