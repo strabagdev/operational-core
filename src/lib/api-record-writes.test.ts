@@ -391,4 +391,33 @@ describe("api record writes", () => {
       where: { id: "record_1" },
     });
   });
+
+  it("updates displayName when the primary field value changes in PATCH", async () => {
+    vi.mocked(prisma.entityRecord.findFirst).mockResolvedValueOnce({
+      displayName: "EQ-001",
+      id: "record_1",
+      outgoingRelations: [],
+      values: [
+        { entityFieldId: "field_codigo", textValue: "EQ-001" },
+        { entityFieldId: "field_nota", textValue: "Anterior" },
+      ],
+    } as never);
+
+    const result = await patchApiEntityRecord({
+      appId: "app_1",
+      body: {
+        values: { codigo: "EQ-002" },
+      },
+      contractId: "contract_1",
+      entity,
+      recordId: "record_1",
+      userId: "user_1",
+    });
+
+    expect(result).toEqual({ ok: true, recordId: "record_1" });
+    expect(prisma.entityRecord.update).toHaveBeenCalledWith({
+      data: { displayName: "EQ-002" },
+      where: { id: "record_1" },
+    });
+  });
 });

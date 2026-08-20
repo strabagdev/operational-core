@@ -5,10 +5,12 @@ import { getAuthorizedContract } from "./contracts";
 import {
   buildMergedFieldConfig,
   buildMergedFieldDisplayConfig,
+  getRecordDisplayName,
   parseFieldConfig,
   type FieldDisplayConfig,
   type FieldErrorMap,
   type FieldValidationRules,
+  type SerializedFieldValue,
 } from "./field-validation";
 import {
   multipleFieldTypes,
@@ -22,7 +24,7 @@ import {
   type FieldOptionDraft,
 } from "./field-editor-state";
 import { keyify, slugify } from "./format";
-import { getReorderedEntityFieldUpdates } from "./entity-field-order";
+import { getReorderedEntityFieldUpdates, orderEntityFields } from "./entity-field-order";
 import { isEntityIconKey } from "./entity-icons";
 import { entityNatureValues } from "./entity-nature";
 import { prisma } from "./prisma";
@@ -32,6 +34,7 @@ const slugRegex = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const keyRegex = /^[a-z][a-z0-9_]*$/;
 const relationKinds = ["ONE", "MANY"] as const;
 type PrismaClientLike = typeof prisma | Prisma.TransactionClient;
+const displayNameRecalculationBatchSize = 500;
 
 export const entityTypeSchema = z.object({
   name: z.string().trim().min(2, "El nombre debe tener al menos 2 caracteres."),
@@ -555,7 +558,7 @@ export async function createEntityField(
       await unsetPrimaryFields(tx, authorized.entityType.fields);
     }
 
-    return tx.entityField.create({
+    const field = await tx.entityField.create({
       data: {
         entityTypeId: authorized.entityType.id,
         name: input.name,
@@ -571,6 +574,16 @@ export async function createEntityField(
         isActive: input.isActive,
       },
     });
+
+    if (input.display.primary) {
+      await recalculateEntityTypeDisplayNames(
+        tx,
+        authorized.entityType.id,
+        withPrimaryDisplayNameField(authorized.entityType.fields, field),
+      );
+    }
+
+    return field;
   });
 }
 
@@ -633,6 +646,23 @@ export async function createEntityFieldWithOptions(
       });
     }
 
+    if (input.display.primary) {
+      await recalculateEntityTypeDisplayNames(
+        tx,
+        authorized.entityType.id,
+        withPrimaryDisplayNameField(authorized.entityType.fields, {
+          ...field,
+          options: options.map((option, index) => ({
+            id: option.id ?? `new_option_${index}`,
+            label: option.label,
+            value: option.value,
+            sortOrder: option.sortOrder || index + 1,
+            isActive: option.isActive,
+          })),
+        }),
+      );
+    }
+
     return field;
   });
 }
@@ -659,6 +689,7 @@ export async function updateEntityField(
   await validateRelationTarget(authorized.contract.id, input);
   validatePrimaryInput(input);
   await validateTypeChange(field, input.type);
+  const wasPrimary = parseFieldConfig(field.config).display.primary === true;
 
   return prisma.$transaction(async (tx) => {
     if (input.display.primary) {
@@ -668,7 +699,7 @@ export async function updateEntityField(
       );
     }
 
-    return tx.entityField.update({
+    const updated = await tx.entityField.update({
       where: { id: field.id },
       data: {
         name: input.name,
@@ -683,6 +714,20 @@ export async function updateEntityField(
         isActive: input.isActive,
       },
     });
+
+    if (wasPrimary || input.display.primary) {
+      await recalculateEntityTypeDisplayNames(
+        tx,
+        authorized.entityType.id,
+        replaceDisplayNameField(
+          authorized.entityType.fields,
+          { ...updated, options: field.options },
+          input.display.primary === true,
+        ),
+      );
+    }
+
+    return updated;
   });
 }
 
@@ -710,6 +755,7 @@ export async function updateEntityFieldWithOptions(
   validatePrimaryInput(input);
   await validateTypeChange(field, input.type);
   await validateOptionValueChanges(field, options);
+  const wasPrimary = parseFieldConfig(field.config).display.primary === true;
 
   return prisma.$transaction(async (tx) => {
     if (input.display.primary) {
@@ -740,6 +786,29 @@ export async function updateEntityFieldWithOptions(
 
     if (optionFieldTypes.has(input.type)) {
       await syncFieldOptions(tx, field.id, options);
+    }
+
+    if (wasPrimary || input.display.primary) {
+      await recalculateEntityTypeDisplayNames(
+        tx,
+        authorized.entityType.id,
+        replaceDisplayNameField(
+          authorized.entityType.fields,
+          {
+            ...updated,
+            options: optionFieldTypes.has(input.type)
+              ? options.map((option, index) => ({
+                  id: option.id ?? `new_option_${index}`,
+                  label: option.label,
+                  value: option.value,
+                  sortOrder: option.sortOrder || index + 1,
+                  isActive: option.isActive,
+                }))
+              : field.options,
+          },
+          input.display.primary === true,
+        ),
+      );
     }
 
     return updated;
@@ -1265,6 +1334,189 @@ async function unsetPrimaryFields(
       },
     });
   }
+}
+
+type DisplayNameField = Parameters<typeof getRecordDisplayName>[0][number] & {
+  createdAt?: Date | string | null;
+  isActive: boolean;
+};
+
+function normalizeDisplayNameField(field: Partial<DisplayNameField> & {
+  config: Prisma.JsonValue | null;
+  id: string;
+  type: z.infer<typeof entityFieldSchema>["type"];
+}): DisplayNameField {
+  return {
+    createdAt: field.createdAt ?? new Date(0),
+    id: field.id,
+    config: field.config,
+    isActive: field.isActive ?? true,
+    key: field.key ?? field.id,
+    name: field.name ?? field.id,
+    options: field.options ?? [],
+    required: field.required ?? false,
+    searchable: field.searchable ?? false,
+    sortOrder: field.sortOrder ?? 0,
+    type: field.type,
+  };
+}
+
+function setDisplayNameFieldPrimary(field: DisplayNameField, primary: boolean): DisplayNameField {
+  const config = parseFieldConfig(field.config);
+
+  if (config.display.primary === primary) {
+    return field;
+  }
+
+  return {
+    ...field,
+    config: normalizeJsonConfig(
+      buildMergedFieldDisplayConfig({
+        existingConfig: field.config,
+        type: field.type,
+        display: {
+          ...config.display,
+          primary,
+        },
+      }),
+    ),
+  };
+}
+
+function normalizeJsonConfig(config: Prisma.InputJsonValue | typeof Prisma.JsonNull) {
+  return config === Prisma.JsonNull ? null : config as Prisma.JsonValue;
+}
+
+function withPrimaryDisplayNameField(
+  fields: Array<Partial<DisplayNameField> & {
+    config: Prisma.JsonValue | null;
+    id: string;
+    type: z.infer<typeof entityFieldSchema>["type"];
+  }>,
+  primaryField: Partial<DisplayNameField> & {
+    config: Prisma.JsonValue | null;
+    id: string;
+    type: z.infer<typeof entityFieldSchema>["type"];
+  },
+) {
+  const primary = setDisplayNameFieldPrimary(normalizeDisplayNameField(primaryField), true);
+
+  return [
+    ...fields
+      .filter((field) => field.id !== primary.id)
+      .map((field) => setDisplayNameFieldPrimary(normalizeDisplayNameField(field), false)),
+    primary,
+  ];
+}
+
+function replaceDisplayNameField(
+  fields: Array<Partial<DisplayNameField> & {
+    config: Prisma.JsonValue | null;
+    id: string;
+    type: z.infer<typeof entityFieldSchema>["type"];
+  }>,
+  field: Partial<DisplayNameField> & {
+    config: Prisma.JsonValue | null;
+    id: string;
+    type: z.infer<typeof entityFieldSchema>["type"];
+  },
+  primary: boolean,
+) {
+  const updated = setDisplayNameFieldPrimary(normalizeDisplayNameField(field), primary);
+
+  return fields.map((item) => {
+    if (item.id === updated.id) {
+      return updated;
+    }
+
+    const normalized = normalizeDisplayNameField(item);
+
+    return primary ? setDisplayNameFieldPrimary(normalized, false) : normalized;
+  });
+}
+
+async function recalculateEntityTypeDisplayNames(
+  tx: Prisma.TransactionClient,
+  entityTypeId: string,
+  fields: DisplayNameField[],
+) {
+  const activeFields = orderEntityFields(fields.filter((field) => field.isActive));
+  const fieldIds = activeFields.map((field) => field.id);
+  let cursor: string | undefined;
+
+  do {
+    const records = await tx.entityRecord.findMany({
+      orderBy: { id: "asc" },
+      take: displayNameRecalculationBatchSize,
+      select: {
+        id: true,
+        displayName: true,
+        values: {
+          where: { entityFieldId: { in: fieldIds } },
+          select: {
+            entityFieldId: true,
+            textValue: true,
+            integerValue: true,
+            decimalValue: true,
+            booleanValue: true,
+            dateValue: true,
+            jsonValue: true,
+          },
+        },
+      },
+      where: {
+        entityTypeId,
+        ...(cursor ? { id: { gt: cursor } } : {}),
+      },
+    });
+
+    const changedRecords = records
+      .map((record) => ({
+        id: record.id,
+        displayName: getRecordDisplayName(
+          activeFields,
+          record.values.map((value): SerializedFieldValue => ({
+            booleanValue: value.booleanValue,
+            dateValue: value.dateValue,
+            decimalValue: value.decimalValue,
+            fieldId: value.entityFieldId,
+            integerValue: value.integerValue,
+            jsonValue: value.jsonValue ?? Prisma.JsonNull,
+            textValue: value.textValue,
+          })),
+        ),
+        previousDisplayName: record.displayName,
+      }))
+      .filter((record) => record.displayName !== record.previousDisplayName);
+
+    await updateRecordDisplayNames(tx, changedRecords);
+    cursor = records.at(-1)?.id;
+
+    if (records.length < displayNameRecalculationBatchSize) {
+      break;
+    }
+  } while (cursor);
+}
+
+async function updateRecordDisplayNames(
+  tx: Prisma.TransactionClient,
+  records: Array<{ id: string; displayName: string }>,
+) {
+  if (records.length === 0) {
+    return;
+  }
+
+  const cases = records.map(
+    (record) => Prisma.sql`WHEN "id" = ${record.id} THEN ${record.displayName}`,
+  );
+
+  await tx.$executeRaw(
+    Prisma.sql`
+      UPDATE "EntityRecord"
+      SET "displayName" = CASE ${Prisma.join(cases, " ")} ELSE "displayName" END
+      WHERE "id" IN (${Prisma.join(records.map((record) => record.id))})
+    `,
+  );
 }
 
 async function getAuthorizedOptionField(

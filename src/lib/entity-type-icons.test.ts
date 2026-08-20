@@ -182,6 +182,7 @@ describe("entity type nature persistence", () => {
 
     expect(entityTypeUpdate).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.not.objectContaining({
+        displayName: expect.anything(),
         fields: expect.anything(),
         records: expect.anything(),
         relations: expect.anything(),

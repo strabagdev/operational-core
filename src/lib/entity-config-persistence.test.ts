@@ -87,7 +87,10 @@ function tx() {
   return {
     entityField: {
       create: vi.fn(async ({ data }) => ({ ...field(), id: "field_created", ...data })),
-      update: vi.fn(async ({ data }) => ({ ...field(), ...data })),
+      update: vi.fn(async ({ where, data }) => ({ ...field({ id: where.id }), ...data })),
+    },
+    entityRecord: {
+      findMany: vi.fn(async () => []),
     },
     fieldOption: {
       create: vi.fn(async ({ data }) => ({ id: "opt_created", ...data })),
@@ -164,6 +167,140 @@ describe("entity field required persistence", () => {
             validation: expect.objectContaining({ required: false, minLength: 2 }),
           }),
         }),
+      }),
+    );
+  });
+});
+
+describe("entity field primary displayName recalculation", () => {
+  it.each(["MASTER", "REFERENCE"] as const)(
+    "recalculates existing record displayName from the TEXT primary field for %s entities",
+    async (nature) => {
+      entityTypeFindFirst.mockResolvedValue({
+        id: "entity_1",
+        contractId: "contract_1",
+        nature,
+        fields: [
+          field({
+            id: "field_code",
+            key: "codigo",
+            name: "Código",
+            sortOrder: 1,
+            config: { display: { primary: true, showInList: true } },
+          }),
+          field({
+            id: "field_name",
+            key: "nombre",
+            name: "Nombre",
+            sortOrder: 2,
+            config: { display: { showInList: true } },
+          }),
+        ],
+      } as never);
+      const currentTx = tx();
+
+      currentTx.entityRecord.findMany.mockResolvedValueOnce([
+        {
+          id: "record_1",
+          displayName: "1",
+          values: [
+            {
+              entityFieldId: "field_code",
+              textValue: "1",
+              integerValue: null,
+              decimalValue: null,
+              booleanValue: null,
+              dateValue: null,
+              jsonValue: null,
+            },
+            {
+              entityFieldId: "field_name",
+              textValue: "Servicios",
+              integerValue: null,
+              decimalValue: null,
+              booleanValue: null,
+              dateValue: null,
+              jsonValue: null,
+            },
+          ],
+        },
+      ] as never);
+      transaction.mockImplementation(async (callback) => callback(currentTx as never));
+
+      await updateEntityFieldWithOptions(
+        "contract_1",
+        "entity_1",
+        "field_name",
+        "user_1",
+        input(false, {
+          display: { primary: true, showInList: true },
+          key: "nombre",
+          name: "Nombre",
+        }),
+        [],
+      );
+
+      expect(currentTx.entityRecord.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { entityTypeId: "entity_1" },
+        }),
+      );
+      expect(currentTx.$executeRaw).toHaveBeenCalledTimes(1);
+      expect(currentTx.$executeRaw).toHaveBeenCalledWith(
+        expect.objectContaining({
+          values: expect.arrayContaining(["record_1", "Servicios"]),
+        }),
+      );
+    },
+  );
+
+  it("does not rewrite relations when displayName is recalculated", async () => {
+    entityTypeFindFirst.mockResolvedValue({
+      id: "entity_1",
+      contractId: "contract_1",
+      fields: [
+        field({ id: "field_code", config: { display: { primary: true } } }),
+        field({ id: "field_name", key: "nombre", name: "Nombre", sortOrder: 2 }),
+      ],
+    } as never);
+    const currentTx = tx();
+
+    currentTx.entityRecord.findMany.mockResolvedValueOnce([
+      {
+        id: "record_1",
+        displayName: "1",
+        values: [
+          {
+            entityFieldId: "field_name",
+            textValue: "Bodega",
+            integerValue: null,
+            decimalValue: null,
+            booleanValue: null,
+            dateValue: null,
+            jsonValue: null,
+          },
+        ],
+      },
+    ] as never);
+    transaction.mockImplementation(async (callback) => callback(currentTx as never));
+
+    await updateEntityFieldWithOptions(
+      "contract_1",
+      "entity_1",
+      "field_name",
+      "user_1",
+      input(false, {
+        display: { primary: true, showInList: true },
+        key: "nombre",
+        name: "Nombre",
+      }),
+      [],
+    );
+
+    expect("entityRelation" in currentTx).toBe(false);
+    expect(currentTx.$executeRaw).toHaveBeenCalledWith(
+      expect.objectContaining({
+        values: expect.arrayContaining(["record_1", "Bodega"]),
       }),
     );
   });

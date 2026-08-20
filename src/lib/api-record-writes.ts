@@ -606,7 +606,7 @@ async function updateRecordInTransaction({
   txClient: typeof prisma;
   userId: string;
 }) {
-  const nextDisplayName = displayNameOverride ?? existingRecord.displayName;
+  const nextDisplayName = displayNameOverride || getRecordDisplayName(entity.fields, mutation.values);
   const valueChanges = buildValueChanges({
     fields: entity.fields,
     oldValues: existingRecord.values,
