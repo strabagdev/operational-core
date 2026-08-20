@@ -7,6 +7,7 @@ export const getUserContracts = cache(async (userId: string) => {
     where: {
       status: "ACTIVE",
       organization: {
+        active: true,
         memberships: {
           some: {
             userId,
@@ -21,6 +22,24 @@ export const getUserContracts = cache(async (userId: string) => {
   });
 });
 
+export const getInactiveUserOrganizations = cache(async (userId: string) => {
+  return prisma.organization.findMany({
+    orderBy: { name: "asc" },
+    select: {
+      id: true,
+      name: true,
+    },
+    where: {
+      active: false,
+      memberships: {
+        some: {
+          userId,
+        },
+      },
+    },
+  });
+});
+
 export const getAuthorizedContract = cache(
   async (contractId: string, userId: string) => {
     return prisma.contract.findFirst({
@@ -28,6 +47,7 @@ export const getAuthorizedContract = cache(
         id: contractId,
         status: "ACTIVE",
         organization: {
+          active: true,
           memberships: {
             some: {
               userId,

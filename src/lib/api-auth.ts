@@ -78,6 +78,7 @@ export type ApiAuthFailureReason =
   | "app-not-found"
   | "app-inactive"
   | "app-organization-mismatch"
+  | "organization-inactive"
   | "multiple-organizations";
 
 export type ApiAuthResult =
@@ -164,6 +165,7 @@ export type ApiRefreshFailureReason =
   | "app-not-found"
   | "app-inactive"
   | "app-organization-mismatch"
+  | "organization-inactive"
   | "multiple-organizations";
 
 export type ApiRefreshResult =
@@ -195,6 +197,7 @@ const apiAuthErrorCodes = {
   "invalid-token": "TOKEN_INVALID",
   "missing-token": "TOKEN_MISSING",
   "multiple-organizations": "MULTIPLE_ORGANIZATIONS_NOT_SUPPORTED",
+  "organization-inactive": "TOKEN_ORGANIZATION_INACTIVE",
   "user-not-found": "TOKEN_USER_NOT_FOUND",
   "user-inactive": "TOKEN_USER_INACTIVE",
 } as const;
@@ -208,6 +211,7 @@ const apiRefreshErrorCodes = {
   "invalid-refresh-token": "REFRESH_TOKEN_INVALID",
   "missing-refresh-token": "REFRESH_TOKEN_MISSING",
   "multiple-organizations": "MULTIPLE_ORGANIZATIONS_NOT_SUPPORTED",
+  "organization-inactive": "REFRESH_ORGANIZATION_INACTIVE",
   "refresh-token-reused": "REFRESH_TOKEN_REUSED",
   "revoked-refresh-token": "REFRESH_TOKEN_REVOKED",
   "user-inactive": "REFRESH_USER_INACTIVE",
@@ -217,6 +221,10 @@ const apiRefreshErrorCodes = {
 function apiAuthFailureResponse(reason: ApiAuthFailureReason) {
   if (reason === "app-inactive") {
     return forbidden("Aplicacion inactiva", apiAuthErrorCodes[reason]);
+  }
+
+  if (reason === "organization-inactive") {
+    return forbidden("Organizacion inactiva", apiAuthErrorCodes[reason]);
   }
 
   if (reason === "multiple-organizations") {
@@ -239,6 +247,10 @@ function apiAuthConfigurationFailureResponse() {
 export function apiRefreshFailureResponse(reason: ApiRefreshFailureReason) {
   if (reason === "app-inactive") {
     return forbidden("Aplicacion inactiva", apiRefreshErrorCodes[reason]);
+  }
+
+  if (reason === "organization-inactive") {
+    return forbidden("Organizacion inactiva", apiRefreshErrorCodes[reason]);
   }
 
   if (reason === "csrf-origin-invalid") {
@@ -372,6 +384,11 @@ export async function getApiUserOrganization(userId: string) {
       organizationId: "asc",
     },
     select: {
+      organization: {
+        select: {
+          active: true,
+        },
+      },
       organizationId: true,
     },
     where: {
@@ -393,6 +410,15 @@ export async function getApiUserOrganization(userId: string) {
     return {
       ok: false as const,
       reason: "multiple-organizations" as const,
+    };
+  }
+
+  const membership = memberships[0];
+
+  if (membership?.organization?.active === false) {
+    return {
+      ok: false as const,
+      reason: "organization-inactive" as const,
     };
   }
 
@@ -965,6 +991,13 @@ export async function getApiOperationalContext(
 
   const membership = memberships[0];
 
+  if (membership.organization.active === false) {
+    return {
+      ok: false,
+      response: forbidden("Organizacion inactiva", "ORGANIZATION_INACTIVE"),
+    };
+  }
+
   return {
     ok: true,
     context: {
@@ -1005,6 +1038,9 @@ export async function requireApiContractAccess(
     },
     where: {
       id: contractId,
+      organization: {
+        active: true,
+      },
       status: "ACTIVE",
     },
   });

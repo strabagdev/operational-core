@@ -12,6 +12,11 @@ enum MembershipRole {
   MEMBER
 }
 
+enum PlatformRole {
+  NONE
+  PLATFORM_ADMIN
+}
+
 enum ContractStatus {
   ACTIVE
   INACTIVE
@@ -74,6 +79,7 @@ model User {
   image         String?
   passwordHash  String?
   active        Boolean      @default(true)
+  platformRole  PlatformRole @default(NONE)
   accounts      Account[]
   sessions      Session[]
   memberships   Membership[]
@@ -122,6 +128,7 @@ model Organization {
   id           String        @id @default(cuid())
   name         String
   slug         String        @unique
+  active       Boolean       @default(true)
   memberships  Membership[]
   contracts    Contract[]
   externalApps ExternalApp[]

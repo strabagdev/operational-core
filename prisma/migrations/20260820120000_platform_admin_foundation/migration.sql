@@ -1,0 +1,5 @@
+CREATE TYPE "PlatformRole" AS ENUM ('NONE', 'PLATFORM_ADMIN');
+
+ALTER TABLE "User" ADD COLUMN "platformRole" "PlatformRole" NOT NULL DEFAULT 'NONE';
+
+ALTER TABLE "Organization" ADD COLUMN "active" BOOLEAN NOT NULL DEFAULT true;

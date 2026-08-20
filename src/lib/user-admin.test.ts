@@ -17,6 +17,7 @@ import {
   userHasHistoryCannotDeleteMessage,
   UserAdminDatabaseConnectionError,
 } from "./user-admin";
+import { lastPlatformAdminMessage } from "./platform-auth";
 import { prisma } from "./prisma";
 
 vi.mock("./prisma", () => ({
@@ -49,6 +50,7 @@ vi.mock("./prisma", () => ({
     user: {
       create: vi.fn(),
       delete: vi.fn(),
+      findFirst: vi.fn(),
       findUnique: vi.fn(),
       update: vi.fn(),
     },
@@ -66,6 +68,7 @@ const membershipFindFirst = vi.mocked(prisma.membership.findFirst);
 const membershipFindUnique = vi.mocked(prisma.membership.findUnique);
 const membershipCreate = vi.mocked(prisma.membership.create);
 const membershipUpdate = vi.mocked(prisma.membership.update);
+const userFindFirst = vi.mocked(prisma.user.findFirst);
 const userFindUnique = vi.mocked(prisma.user.findUnique);
 const userCreate = vi.mocked(prisma.user.create);
 const userUpdate = vi.mocked(prisma.user.update);
@@ -134,6 +137,7 @@ beforeEach(() => {
   accessCreateMany.mockResolvedValue({ count: 1 } as never);
   contractFindMany.mockResolvedValue([]);
   entityTypeFindMany.mockResolvedValue([]);
+  userFindFirst.mockResolvedValue(null);
 });
 
 describe("user administration", () => {
@@ -357,6 +361,46 @@ describe("user administration", () => {
       where: { id: "user_1" },
     });
     expect(prisma.membership.delete).not.toHaveBeenCalled();
+  });
+
+  it("protects the last active PLATFORM_ADMIN from deactivation and deletion", async () => {
+    userFindUnique.mockResolvedValue({
+      platformRole: "PLATFORM_ADMIN",
+    } as never);
+    userFindFirst.mockResolvedValue(null);
+
+    await expect(setUserActiveForAdmin({
+      active: false,
+      adminUserId: "admin_1",
+      userId: "user_1",
+    })).rejects.toThrow(lastPlatformAdminMessage);
+
+    await expect(deleteUserForAdmin({
+      adminUserId: "admin_1",
+      confirmationText: "Eliminar definitivamente a User One",
+      userId: "user_1",
+    })).rejects.toThrow(lastPlatformAdminMessage);
+
+    expect(userUpdate).not.toHaveBeenCalledWith({
+      data: { active: false },
+      where: { id: "user_1" },
+    });
+    expect(userDelete).not.toHaveBeenCalled();
+  });
+
+  it("allows deactivating a PLATFORM_ADMIN when another active one exists", async () => {
+    userFindUnique.mockResolvedValueOnce({
+      platformRole: "PLATFORM_ADMIN",
+    } as never);
+    userFindFirst.mockResolvedValueOnce({
+      id: "platform_other",
+    } as never);
+
+    await expect(setUserActiveForAdmin({
+      active: false,
+      adminUserId: "admin_1",
+      userId: "user_1",
+    })).resolves.toEqual({ active: false, id: "user_1" });
   });
 
   it("protects the last active ADMIN from demotion, deactivation and deletion", async () => {

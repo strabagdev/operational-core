@@ -39,7 +39,9 @@ function loginRequest(body: unknown, headers?: HeadersInit) {
 beforeEach(() => {
   vi.clearAllMocks();
   process.env.API_AUTH_SECRET = "test-api-auth-secret";
-  membershipFindMany.mockResolvedValue([{ organizationId: "org_1" }] as never);
+  membershipFindMany.mockResolvedValue([
+    { organization: { active: true }, organizationId: "org_1" },
+  ] as never);
   apiRefreshTokenCreate.mockResolvedValue({ id: "refresh_1" } as never);
   externalAppFindUnique.mockResolvedValue({
     active: true,
@@ -353,6 +355,35 @@ describe("POST /api/v1/auth/login", () => {
         message: "Aplicacion inactiva",
       },
     });
+  });
+
+  it("returns 403 for an inactive organization", async () => {
+    userFindUnique.mockResolvedValueOnce({
+      active: true,
+      email: "user@example.com",
+      id: "user_1",
+      name: "User One",
+      passwordHash: await bcrypt.hash("secret123", 12),
+    } as never);
+    membershipFindMany.mockResolvedValueOnce([
+      { organization: { active: false }, organizationId: "org_1" },
+    ] as never);
+
+    const response = await POST(loginRequest({
+      clientId: "opco_app_client_1",
+      email: "user@example.com",
+      password: "secret123",
+    }));
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({
+      ok: false,
+      error: {
+        code: "TOKEN_ORGANIZATION_INACTIVE",
+        message: "Organizacion inactiva",
+      },
+    });
+    expect(externalAppFindUnique).not.toHaveBeenCalled();
   });
 
   it("rejects login for users with multiple organizations", async () => {

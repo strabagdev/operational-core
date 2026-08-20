@@ -3,6 +3,7 @@ type AuthUser = {
   id?: string | null;
   image?: string | null;
   name?: string | null;
+  platformRole?: "NONE" | "PLATFORM_ADMIN" | null;
 };
 
 type MutableAuthToken = {
@@ -10,6 +11,7 @@ type MutableAuthToken = {
   id?: unknown;
   name?: string | null;
   picture?: string | null;
+  platformRole?: "NONE" | "PLATFORM_ADMIN" | null;
   sub?: string;
 };
 
@@ -22,6 +24,7 @@ export function applyAuthenticatedUserToToken<T extends MutableAuthToken>(
     token.name = user.name;
     token.email = user.email;
     token.picture = user.image;
+    token.platformRole = user.platformRole ?? "NONE";
 
     return token;
   }

@@ -16,6 +16,7 @@ describe("auth JWT token callback helper", () => {
       id: "user_1",
       name: "Administrator",
       picture: null,
+      platformRole: "NONE",
     });
   });
 

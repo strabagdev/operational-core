@@ -57,7 +57,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   process.env.API_AUTH_SECRET = "test-api-auth-secret";
   membershipFindMany.mockResolvedValue([
-    { organizationId: "org_1" },
+    { organization: { active: true }, organizationId: "org_1" },
   ] as never);
   externalAppFindUnique.mockResolvedValue({
     active: true,
@@ -320,6 +320,30 @@ describe("API auth bearer tokens", () => {
       reason: "app-organization-mismatch",
     });
   });
+
+  it("rejects bearer tokens when the user's organization is inactive", async () => {
+    userFindUnique.mockResolvedValueOnce({
+      active: true,
+      email: "user@example.com",
+      id: "user_1",
+      name: "User One",
+    } as never);
+    membershipFindMany.mockResolvedValueOnce([
+      { organization: { active: false }, organizationId: "org_1" },
+    ] as never);
+
+    const token = await signApiAccessToken({
+      app: testApp,
+      user: testUser,
+    });
+
+    await expect(getAuthenticatedApiUser(new Request("http://localhost/api/v1/me", {
+      headers: { authorization: `Bearer ${token}` },
+    }))).resolves.toEqual({
+      ok: false,
+      reason: "organization-inactive",
+    });
+  });
 });
 
 describe("API auth token constants", () => {
@@ -377,6 +401,9 @@ describe("API contract access", () => {
     expect(contractFindFirst).toHaveBeenCalledWith(expect.objectContaining({
       where: {
         id: "contract_1",
+        organization: {
+          active: true,
+        },
         status: "ACTIVE",
       },
     }));

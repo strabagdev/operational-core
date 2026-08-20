@@ -108,6 +108,7 @@ export async function createInitialSetup(input: InitialSetupInput) {
           name,
           email,
           passwordHash,
+          platformRole: "PLATFORM_ADMIN",
         },
       });
       const organization = await tx.organization.create({

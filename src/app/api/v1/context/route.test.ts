@@ -63,9 +63,11 @@ function membershipFixture({
   ],
   organizationId = "org_1",
   organizationName = "Organizacion A",
+  organizationActive = true,
   role = "ADMIN",
 }: {
   contracts?: Array<{ id: string; name: string }>;
+  organizationActive?: boolean;
   organizationId?: string;
   organizationName?: string;
   role?: "ADMIN" | "MEMBER";
@@ -73,6 +75,7 @@ function membershipFixture({
   return {
     id: `membership_${organizationId}`,
     organization: {
+      active: organizationActive,
       contracts,
       id: organizationId,
       name: organizationName,
@@ -91,7 +94,7 @@ describe("GET /api/v1/context", () => {
       name: "User One",
     } as never);
     membershipFindMany
-      .mockResolvedValueOnce([{ organizationId: "org_1" }] as never)
+      .mockResolvedValueOnce([{ organization: { active: true }, organizationId: "org_1" }] as never)
       .mockResolvedValueOnce([
         membershipFixture({
           contracts: [
@@ -154,7 +157,7 @@ describe("GET /api/v1/context", () => {
       name: null,
     } as never);
     membershipFindMany
-      .mockResolvedValueOnce([{ organizationId: "org_1" }] as never)
+      .mockResolvedValueOnce([{ organization: { active: true }, organizationId: "org_1" }] as never)
       .mockResolvedValueOnce([
         membershipFixture({
           contracts: [],
@@ -184,7 +187,7 @@ describe("GET /api/v1/context", () => {
       name: "Member One",
     } as never);
     membershipFindMany
-      .mockResolvedValueOnce([{ organizationId: "org_1" }] as never)
+      .mockResolvedValueOnce([{ organization: { active: true }, organizationId: "org_1" }] as never)
       .mockResolvedValueOnce([
         membershipFixture({
           role: "MEMBER",
@@ -259,7 +262,9 @@ describe("GET /api/v1/context", () => {
       id: "user_1",
       name: "User One",
     } as never);
-    membershipFindMany.mockResolvedValue([{ organizationId: "org_1" }] as never);
+    membershipFindMany.mockResolvedValue([
+      { organization: { active: true }, organizationId: "org_1" },
+    ] as never);
 
     externalAppFindUnique.mockResolvedValueOnce({
       active: false,
@@ -298,6 +303,29 @@ describe("GET /api/v1/context", () => {
       error: {
         code: "TOKEN_APP_INVALID",
         message: "Token no valido",
+      },
+    });
+  });
+
+  it("rejects context when the user's organization is inactive", async () => {
+    userFindUnique.mockResolvedValueOnce({
+      active: true,
+      email: "user@example.com",
+      id: "user_1",
+      name: "User One",
+    } as never);
+    membershipFindMany.mockResolvedValueOnce([
+      { organization: { active: false }, organizationId: "org_1" },
+    ] as never);
+
+    const response = await GET(await contextRequest());
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({
+      ok: false,
+      error: {
+        code: "TOKEN_ORGANIZATION_INACTIVE",
+        message: "Organizacion inactiva",
       },
     });
   });

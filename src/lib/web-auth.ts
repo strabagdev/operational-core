@@ -17,6 +17,15 @@ export async function authorizeWebCredentials(
   }
 
   const user = await prisma.user.findUnique({
+    select: {
+      active: true,
+      email: true,
+      id: true,
+      image: true,
+      name: true,
+      passwordHash: true,
+      platformRole: true,
+    },
     where: { email },
   });
 
@@ -35,5 +44,6 @@ export async function authorizeWebCredentials(
     id: user.id,
     image: user.image,
     name: user.name,
+    platformRole: user.platformRole,
   };
 }

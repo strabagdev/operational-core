@@ -98,6 +98,7 @@ describe("initial setup", () => {
     expect(currentTx.user.create.mock.calls[0][0].data).toMatchObject({
       name: "Daniel",
       email: "daniel@example.com",
+      platformRole: "PLATFORM_ADMIN",
     });
     expect(currentTx.user.create.mock.calls[0][0].data.passwordHash).not.toBe("admin1234");
     await expect(
@@ -117,6 +118,7 @@ describe("initial setup", () => {
       },
     });
     expect(result.membership.role).toBe("ADMIN");
+    expect(result.user.platformRole).toBe("PLATFORM_ADMIN");
   });
 
   it("rejects a second setup inside the transaction", async () => {

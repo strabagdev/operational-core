@@ -3,6 +3,7 @@ import { MembershipRole, Prisma } from "@prisma/client";
 import { z } from "zod";
 
 import { getAppViewTypeLabel, parseAppViewConfig, summarizeAppViewConfig } from "./app-views";
+import { assertCanRemovePlatformAdmin, PlatformAuthError } from "./platform-auth";
 import { prisma } from "./prisma";
 
 export const organizationMustKeepAdminMessage =
@@ -96,6 +97,10 @@ export function userAdminFriendlyError(error: unknown) {
   }
 
   if (error instanceof UserAdminError) {
+    return error.message;
+  }
+
+  if (error instanceof PlatformAuthError) {
     return error.message;
   }
 
@@ -329,6 +334,10 @@ export async function updateUserForAdmin({
       await assertOrganizationKeepsAdmin(tx, membership.organizationId, membership.id);
     }
 
+    if (input.active === "inactive") {
+      await assertCanRemovePlatformAdmin(tx, membership.userId);
+    }
+
     const userData: Prisma.UserUpdateInput = {
       active: input.active === "active",
       email: input.email.trim().toLowerCase(),
@@ -429,6 +438,10 @@ export async function setUserActiveForAdmin({
 
     if (!active && membership.role === "ADMIN") {
       await assertOrganizationKeepsAdmin(tx, membership.organizationId, membership.id);
+    }
+
+    if (!active) {
+      await assertCanRemovePlatformAdmin(tx, membership.userId);
     }
 
     return tx.user.update({
@@ -617,6 +630,8 @@ export async function deleteUserForAdmin({
     if (membership.role === "ADMIN") {
       await assertOrganizationKeepsAdmin(tx, membership.organizationId, membership.id);
     }
+
+    await assertCanRemovePlatformAdmin(tx, membership.userId);
 
     const auditEvent = await tx.auditEvent.findFirst({
       select: { id: true },

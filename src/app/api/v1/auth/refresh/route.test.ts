@@ -101,7 +101,9 @@ beforeEach(() => {
   vi.clearAllMocks();
   process.env.API_AUTH_SECRET = "test-api-auth-secret";
   process.env.API_ALLOWED_ORIGINS = allowedOrigin;
-  membershipFindMany.mockResolvedValue([{ organizationId: "org_1" }] as never);
+  membershipFindMany.mockResolvedValue([
+    { organization: { active: true }, organizationId: "org_1" },
+  ] as never);
   apiRefreshTokenCreate.mockResolvedValue({ id: "refresh_2" } as never);
   apiRefreshTokenUpdate.mockResolvedValue({} as never);
   apiRefreshTokenUpdateMany.mockResolvedValue({ count: 1 } as never);
@@ -202,13 +204,21 @@ describe("POST /api/v1/auth/refresh", () => {
     ["revoked", { revokedAt: new Date() }, "REFRESH_TOKEN_REVOKED"],
     ["inactive user", { user: { ...activeUser, active: false } }, "REFRESH_USER_INACTIVE"],
     ["inactive app", { externalApp: { ...activeExternalApp, active: false } }, "REFRESH_APP_INACTIVE"],
+    ["inactive organization", {}, "REFRESH_ORGANIZATION_INACTIVE"],
   ])("rejects a %s refresh token", async (_, overrides, code) => {
+    if (code === "REFRESH_ORGANIZATION_INACTIVE") {
+      membershipFindMany.mockResolvedValueOnce([
+        { organization: { active: false }, organizationId: "org_1" },
+      ] as never);
+    }
     apiRefreshTokenFindUnique.mockResolvedValueOnce(storedRefreshToken(overrides) as never);
 
     const response = await POST(refreshRequest());
     const body = await response.json() as { error: { code: string } };
 
-    expect(response.status).toBe(code === "REFRESH_APP_INACTIVE" ? 403 : 401);
+    expect(response.status).toBe(
+      code === "REFRESH_APP_INACTIVE" || code === "REFRESH_ORGANIZATION_INACTIVE" ? 403 : 401,
+    );
     expect(body.error.code).toBe(code);
   });
 

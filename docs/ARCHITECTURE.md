@@ -10,6 +10,16 @@ It is not an ERP. The Core should not own workflows, approvals, generic business
 
 `Contract` is the operational context. Authenticated app routes use the contract id in the URL, but server-side helpers always validate the session, membership, contract status, and resource ownership before returning data.
 
+`User.platformRole` is the platform-level authorization flag. It is separate from organization membership and currently has the values `NONE` and `PLATFORM_ADMIN`. `PLATFORM_ADMIN` is reserved for global platform administration such as future organization administration. `Membership.role = ADMIN` remains scoped to one `Organization`; it does not grant platform privileges.
+
+`Organization.active` is the tenant-level availability switch. Inactive organizations remain in the database with their contracts, records, configuration, and audit history intact, but they are not considered operationally available. Normal contract selectors and protected contract access exclude inactive organizations. External API authentication also revalidates organization availability so login, refresh, bearer-token use, and context resolution do not expose inactive organizations as usable operational contexts.
+
+Role summary:
+
+- `PLATFORM_ADMIN`: global platform administrator, stored on `User.platformRole`.
+- `ADMIN`: organization administrator, stored on `Membership.role` inside one organization.
+- `MEMBER`: operational organization user, stored on `Membership.role` inside one organization.
+
 ## User Administration
 
 `User.active` is the account-level access switch. Active users can authenticate through the Auth.js credentials flow and through `/api/v1/auth/login`; inactive users remain in the database for history and administration but cannot obtain a new login session or API token. Protected API requests also re-read the user on every Bearer token validation, so an already-issued API token stops working after the user becomes inactive.

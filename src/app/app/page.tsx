@@ -11,7 +11,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
-import { getUserContracts } from "@/lib/contracts";
+import { getInactiveUserOrganizations, getUserContracts } from "@/lib/contracts";
 
 export default async function AppPage() {
   const session = await auth();
@@ -20,7 +20,10 @@ export default async function AppPage() {
     redirect("/login");
   }
 
-  const contracts = await getUserContracts(session.user.id);
+  const [contracts, inactiveOrganizations] = await Promise.all([
+    getUserContracts(session.user.id),
+    getInactiveUserOrganizations(session.user.id),
+  ]);
 
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-4xl flex-col gap-8 px-6 py-10">
@@ -47,6 +50,17 @@ export default async function AppPage() {
       </header>
 
       <section className="grid gap-3">
+        {inactiveOrganizations.length > 0 ? (
+          <Card>
+            <CardContent className="pt-6">
+              <p className="text-sm font-medium">Esta organización se encuentra inactiva.</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {inactiveOrganizations.map((organization) => organization.name).join(", ")}
+              </p>
+            </CardContent>
+          </Card>
+        ) : null}
+
         {contracts.length > 0 ? (
           contracts.map((contract) => (
               <Card key={contract.id}>

@@ -51,7 +51,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       }
 
       const user = await prisma.user.findUnique({
-        select: { active: true },
+        select: { active: true, platformRole: true },
         where: { id: userId },
       });
 
@@ -60,6 +60,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       }
 
       session.user.id = userId;
+      session.user.platformRole = user.platformRole;
 
       return session;
     },
