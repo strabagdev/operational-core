@@ -24,15 +24,7 @@ export async function userIsPlatformAdmin(userId: string) {
   return user?.active === true && user.platformRole === "PLATFORM_ADMIN";
 }
 
-export async function requirePlatformAdmin() {
-  const { auth } = await import("@/auth");
-  const session = await auth();
-  const userId = session?.user?.id;
-
-  if (!userId) {
-    throw new PlatformAuthError("Debes iniciar sesión.");
-  }
-
+export async function assertPlatformAdminUserId(userId: string) {
   const user = await prisma.user.findUnique({
     select: {
       active: true,
@@ -53,6 +45,18 @@ export async function requirePlatformAdmin() {
   }
 
   return user;
+}
+
+export async function requirePlatformAdmin() {
+  const { auth } = await import("@/auth");
+  const session = await auth();
+  const userId = session?.user?.id;
+
+  if (!userId) {
+    throw new PlatformAuthError("Debes iniciar sesión.");
+  }
+
+  return assertPlatformAdminUserId(userId);
 }
 
 export async function assertCanRemovePlatformAdmin(

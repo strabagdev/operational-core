@@ -20,6 +20,14 @@ Role summary:
 - `ADMIN`: organization administrator, stored on `Membership.role` inside one organization.
 - `MEMBER`: operational organization user, stored on `Membership.role` inside one organization.
 
+Platform administrators use `/app/platform/organizations` to list organizations, create additional organizations, edit organization name/slug, and activate or deactivate organizations. This area is platform-scoped: it does not impersonate organization users and does not automatically create `Membership` rows for the platform administrator in every organization.
+
+Creating an organization after bootstrap is transactional: `Organization(active=true)`, the initial `User(active=true, platformRole=NONE)`, and its `Membership(role=ADMIN)` are written together. Existing emails are rejected because Operational Core still does not support one user belonging to multiple organizations.
+
+Initial setup remains only the bootstrap path. `/setup` creates the first organization, the first `PLATFORM_ADMIN`, and that user's first organization `ADMIN` membership. Subsequent organizations are created from the platform area.
+
+Platform-level audit is pending. The current `AuditEvent` model requires a `contractId`, so organization-level platform events must not be forced into an invented contract history.
+
 ## User Administration
 
 `User.active` is the account-level access switch. Active users can authenticate through the Auth.js credentials flow and through `/api/v1/auth/login`; inactive users remain in the database for history and administration but cannot obtain a new login session or API token. Protected API requests also re-read the user on every Bearer token validation, so an already-issued API token stops working after the user becomes inactive.

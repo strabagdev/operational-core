@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { getInactiveUserOrganizations, getUserContracts } from "@/lib/contracts";
+import { getPlatformNavigationItems } from "@/lib/platform-navigation";
 
 export default async function AppPage() {
   const session = await auth();
@@ -24,6 +25,7 @@ export default async function AppPage() {
     getUserContracts(session.user.id),
     getInactiveUserOrganizations(session.user.id),
   ]);
+  const platformNavigation = getPlatformNavigationItems(session.user.platformRole);
 
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-4xl flex-col gap-8 px-6 py-10">
@@ -50,6 +52,21 @@ export default async function AppPage() {
       </header>
 
       <section className="grid gap-3">
+        {platformNavigation.length > 0 ? (
+          <div className="grid gap-3 rounded-md border border-border p-4">
+            <div>
+              <h2 className="text-base font-semibold">Plataforma</h2>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {platformNavigation.map((item) => (
+                <Button asChild key={item.href} variant="outline">
+                  <Link href={item.href}>{item.label}</Link>
+                </Button>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
         {inactiveOrganizations.length > 0 ? (
           <Card>
             <CardContent className="pt-6">
