@@ -6,6 +6,7 @@ import {
   createEntityRecord,
   getEntityRecords,
   getRelationOptions,
+  updateEntityRecord,
   validateRelationValues,
 } from "./entity-records";
 import { prisma } from "./prisma";
@@ -30,6 +31,7 @@ vi.mock("./prisma", () => ({
     },
     entityRecord: {
       count: vi.fn(),
+      findFirst: vi.fn(),
       findMany: vi.fn(),
     },
     $transaction: vi.fn(),
@@ -38,6 +40,7 @@ vi.mock("./prisma", () => ({
 
 const entityTypeFindFirst = vi.mocked(prisma.entityType.findFirst);
 const entityRecordCount = vi.mocked(prisma.entityRecord.count);
+const entityRecordFindFirst = vi.mocked(prisma.entityRecord.findFirst);
 const entityRecordFindMany = vi.mocked(prisma.entityRecord.findMany);
 const transaction = vi.mocked(prisma.$transaction);
 type TestField = ReturnType<typeof field>;
@@ -46,6 +49,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   entityTypeFindFirst.mockResolvedValue(entityType([field("name")]) as never);
   entityRecordCount.mockResolvedValue(0);
+  entityRecordFindFirst.mockResolvedValue(null);
   entityRecordFindMany.mockResolvedValue([]);
 });
 
@@ -136,6 +140,79 @@ describe("entity records without technical status", () => {
     expect(findManyArgs?.where).not.toHaveProperty("status");
   });
 
+  it("loads target display names for relation fields shown in record lists", async () => {
+    const relationField = field("department", {
+      type: "RELATION",
+      config: {
+        display: { showInList: true },
+        targetEntityTypeId: "target_entity",
+        relationKind: "ONE",
+      },
+    });
+
+    entityTypeFindFirst.mockResolvedValue(entityType([field("name"), relationField]) as never);
+    entityRecordCount.mockResolvedValue(1);
+    entityRecordFindMany.mockResolvedValue([
+      {
+        id: "source_record_1",
+        displayName: "Source",
+        values: [],
+        outgoingRelations: [
+          {
+            sourceFieldId: "department",
+            targetRecord: {
+              displayName: "Departamentos",
+              entityTypeId: "target_entity",
+              id: "target_record_1",
+            },
+            targetRecordId: "target_record_1",
+          },
+        ],
+      },
+    ] as never);
+
+    await expect(
+      getEntityRecords({
+        contractId: "contract_1",
+        entityTypeId: "entity_1",
+        userId: "user_1",
+      }),
+    ).resolves.toMatchObject({
+      records: [
+        {
+          outgoingRelations: [
+            {
+              sourceFieldId: "department",
+              targetRecord: {
+                displayName: "Departamentos",
+                id: "target_record_1",
+              },
+              targetRecordId: "target_record_1",
+            },
+          ],
+        },
+      ],
+    });
+    expect(entityRecordFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        include: expect.objectContaining({
+          outgoingRelations: expect.objectContaining({
+            include: {
+              targetRecord: {
+                select: {
+                  displayName: true,
+                  entityTypeId: true,
+                  id: true,
+                },
+              },
+            },
+            where: { sourceFieldId: { in: ["department"] } },
+          }),
+        }),
+      }),
+    );
+  });
+
   it("rejects relation target records outside the configured entity type or contract", async () => {
     const relationField = field("owner", {
       type: "RELATION",
@@ -167,14 +244,196 @@ describe("entity records without technical status", () => {
       },
     });
   });
+
+  it.each(["MASTER", "TRANSACTION", "REFERENCE"] as const)(
+    "creates a single EntityRelation to a %s target with the selected targetRecordId",
+    async (targetNature) => {
+      const relationField = field("department", {
+        type: "RELATION",
+        config: {
+          targetEntityTypeId: "target_entity",
+          relationKind: "ONE",
+        },
+      });
+      const formData = new FormData();
+      const currentTx = tx();
+
+      formData.append("field_department", "target_record_1");
+      entityTypeFindFirst.mockResolvedValue(entityType([field("name"), relationField]) as never);
+      entityRecordCount.mockResolvedValueOnce(1);
+      currentTx.entityRecord.create.mockResolvedValue({
+        id: "source_record_1",
+        displayName: "Registro sin nombre",
+      });
+      transaction.mockImplementation(async (callback) => callback(currentTx as never));
+
+      await expect(
+        createEntityRecord("contract_1", "entity_1", "user_1", formData),
+      ).resolves.toMatchObject({ id: "source_record_1" });
+
+      expect(entityRecordCount).toHaveBeenCalledWith({
+        where: {
+          id: { in: ["target_record_1"] },
+          entityType: {
+            id: "target_entity",
+            contractId: "contract_1",
+          },
+        },
+      });
+      const relationTargetWhere = entityRecordCount.mock.calls[0]?.[0]?.where;
+
+      expect(relationTargetWhere).not.toHaveProperty("nature");
+      expect(relationTargetWhere?.entityType).not.toHaveProperty("nature");
+      expect(currentTx.entityRelation.createMany).toHaveBeenCalledWith({
+        data: [
+          {
+            sourceRecordId: "source_record_1",
+            sourceFieldId: "department",
+            targetRecordId: "target_record_1",
+          },
+        ],
+        skipDuplicates: true,
+      });
+      expect(["MASTER", "TRANSACTION", "REFERENCE"]).toContain(targetNature);
+    },
+  );
+
+  it("updates a single relation to a REFERENCE target", async () => {
+    const relationField = field("department", {
+      type: "RELATION",
+      config: {
+        targetEntityTypeId: "target_entity",
+        relationKind: "ONE",
+      },
+    });
+    const formData = new FormData();
+    const currentTx = tx();
+
+    formData.append("field_department", "target_record_2");
+    entityTypeFindFirst.mockResolvedValue(entityType([field("name"), relationField]) as never);
+    entityRecordFindFirst.mockResolvedValue({
+      id: "source_record_1",
+      displayName: "Source",
+      values: [],
+      outgoingRelations: [
+        {
+          sourceFieldId: "department",
+          targetRecordId: "target_record_1",
+        },
+      ],
+    } as never);
+    entityRecordCount.mockResolvedValueOnce(1);
+    currentTx.entityRecord.update.mockResolvedValue({ id: "source_record_1", displayName: "Source" });
+    transaction.mockImplementation(async (callback) => callback(currentTx as never));
+
+    await updateEntityRecord("contract_1", "entity_1", "source_record_1", "user_1", formData);
+
+    expect(currentTx.entityRelation.deleteMany).toHaveBeenCalledWith({
+      where: {
+        sourceRecordId: "source_record_1",
+        sourceFieldId: "department",
+        targetRecordId: { notIn: ["target_record_2"] },
+      },
+    });
+    expect(currentTx.entityRelation.createMany).toHaveBeenCalledWith({
+      data: [
+        {
+          sourceRecordId: "source_record_1",
+          sourceFieldId: "department",
+          targetRecordId: "target_record_2",
+        },
+      ],
+      skipDuplicates: true,
+    });
+  });
+
+  it("clears an optional relation when no targetRecordId is submitted", async () => {
+    const relationField = field("department", {
+      type: "RELATION",
+      config: {
+        targetEntityTypeId: "target_entity",
+        relationKind: "ONE",
+      },
+    });
+    const currentTx = tx();
+
+    entityTypeFindFirst.mockResolvedValue(entityType([field("name"), relationField]) as never);
+    entityRecordFindFirst.mockResolvedValue({
+      id: "source_record_1",
+      displayName: "Source",
+      values: [],
+      outgoingRelations: [
+        {
+          sourceFieldId: "department",
+          targetRecordId: "target_record_1",
+        },
+      ],
+    } as never);
+    currentTx.entityRecord.update.mockResolvedValue({ id: "source_record_1", displayName: "Source" });
+    transaction.mockImplementation(async (callback) => callback(currentTx as never));
+
+    await updateEntityRecord("contract_1", "entity_1", "source_record_1", "user_1", new FormData());
+
+    expect(currentTx.entityRelation.deleteMany).toHaveBeenCalledWith({
+      where: {
+        sourceRecordId: "source_record_1",
+        sourceFieldId: "department",
+        targetRecordId: { notIn: [] },
+      },
+    });
+    expect(currentTx.entityRelation.createMany).not.toHaveBeenCalled();
+  });
+
+  it("creates one EntityRelation per selected target for a multiple REFERENCE relation", async () => {
+    const relationField = field("departments", {
+      type: "RELATION",
+      multiple: true,
+      config: {
+        targetEntityTypeId: "target_entity",
+        relationKind: "MANY",
+      },
+    });
+    const formData = new FormData();
+    const currentTx = tx();
+
+    formData.append("field_departments", "target_record_1");
+    formData.append("field_departments", "target_record_2");
+    entityTypeFindFirst.mockResolvedValue(entityType([field("name"), relationField]) as never);
+    entityRecordCount.mockResolvedValueOnce(2);
+    currentTx.entityRecord.create.mockResolvedValue({
+      id: "source_record_1",
+      displayName: "Registro sin nombre",
+    });
+    transaction.mockImplementation(async (callback) => callback(currentTx as never));
+
+    await createEntityRecord("contract_1", "entity_1", "user_1", formData);
+
+    expect(currentTx.entityRelation.createMany).toHaveBeenCalledWith({
+      data: [
+        {
+          sourceRecordId: "source_record_1",
+          sourceFieldId: "departments",
+          targetRecordId: "target_record_1",
+        },
+        {
+          sourceRecordId: "source_record_1",
+          sourceFieldId: "departments",
+          targetRecordId: "target_record_2",
+        },
+      ],
+      skipDuplicates: true,
+    });
+  });
 });
 
 function tx() {
   return {
     entityRecord: {
       create: vi.fn(),
+      update: vi.fn(),
     },
     entityValue: {
+      deleteMany: vi.fn(),
       createMany: vi.fn(),
     },
     entityRelation: {

@@ -216,4 +216,79 @@ describe("record form options", () => {
     expect(html).toContain('type="checkbox"');
     expect(html).not.toContain('checked=""');
   });
+
+  it("submits relation targetRecordId values instead of display names", () => {
+    const html = renderToStaticMarkup(
+      <RecordForm
+        action={async () => undefined}
+        fields={[
+          {
+            id: "field_department",
+            name: "Departamento",
+            description: null,
+            type: "RELATION",
+            required: false,
+            config: { targetEntityTypeId: "departments", relationKind: "ONE" },
+            options: [],
+          },
+        ]}
+        relationOptions={{
+          field_department: [
+            {
+              displayName: "Bodega",
+              entityTypeName: "Departamentos",
+              id: "target_record_1",
+            },
+          ],
+        }}
+        submitLabel="Crear registro"
+      />,
+    );
+
+    expect(html).toContain('name="field_field_department"');
+    expect(html).toContain('value="target_record_1"');
+    expect(html).toContain(">Bodega</option>");
+    expect(html).not.toContain('value="Bodega"');
+  });
+
+  it("submits multiple relation targetRecordId values for MANY relations", () => {
+    const html = renderToStaticMarkup(
+      <RecordForm
+        action={async () => undefined}
+        fields={[
+          {
+            id: "field_departments",
+            name: "Departamentos",
+            description: null,
+            type: "RELATION",
+            required: false,
+            config: { targetEntityTypeId: "departments", relationKind: "MANY" },
+            options: [],
+          },
+        ]}
+        relationOptions={{
+          field_departments: [
+            {
+              displayName: "Bodega",
+              entityTypeName: "Departamentos",
+              id: "target_record_1",
+            },
+            {
+              displayName: "Minería",
+              entityTypeName: "Departamentos",
+              id: "target_record_2",
+            },
+          ],
+        }}
+        submitLabel="Crear registro"
+      />,
+    );
+
+    expect(html).toContain('type="checkbox"');
+    expect(html).toContain('name="field_field_departments"');
+    expect(html).toContain('value="target_record_1"');
+    expect(html).toContain('value="target_record_2"');
+    expect(html).not.toContain('value="Bodega"');
+    expect(html).not.toContain('value="Minería"');
+  });
 });

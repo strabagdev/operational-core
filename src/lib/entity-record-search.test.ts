@@ -200,11 +200,11 @@ describe("entity record server-side search", () => {
     );
     expect(entityRecordFindMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        include: {
+        include: expect.objectContaining({
           values: expect.objectContaining({
             where: { entityFieldId: { in: ["rut"] } },
           }),
-        },
+        }),
       }),
     );
   });

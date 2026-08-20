@@ -87,16 +87,20 @@ export default async function EntityRecordsPage({
     values: listFields.map((field) => {
       const value = record.values.find((item) => item.entityFieldId === field.id);
       const fieldConfig = fieldsById.get(field.id);
+      const relationValue = record.outgoingRelations
+        .filter((relation) => relation.sourceFieldId === field.id)
+        .map((relation) => relation.targetRecord.displayName)
+        .join(", ");
 
       return {
         fieldId: field.id,
-        value: value
+        value: field.type === "RELATION" ? relationValue : value
           ? deserializeEntityValue({
-              ...value,
-              entityField: fieldConfig
-                ? { type: fieldConfig.type, config: fieldConfig.config, options: fieldConfig.options }
-                : undefined,
-            })
+            ...value,
+            entityField: fieldConfig
+              ? { type: fieldConfig.type, config: fieldConfig.config, options: fieldConfig.options }
+              : undefined,
+          })
           : "",
       };
     }),

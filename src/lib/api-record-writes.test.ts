@@ -81,6 +81,17 @@ const entity = {
   slug: "equipos",
 } as never;
 
+const relationField = {
+  ...textField,
+  config: { targetEntityTypeId: "reference_entity", relationKind: "ONE" },
+  id: "field_departamento",
+  key: "departamento",
+  name: "Departamento",
+  required: false,
+  sortOrder: 3,
+  type: "RELATION",
+} as const;
+
 const timeField = {
   ...textField,
   id: "field_hora",
@@ -156,6 +167,52 @@ describe("api record writes", () => {
       },
     });
     expect(prisma.auditEvent.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("creates EntityRelation rows from relation targetRecordId values", async () => {
+    vi.mocked(prisma.entityRecord.count).mockResolvedValueOnce(1);
+
+    const result = await createApiEntityRecord({
+      appId: "app_1",
+      body: {
+        clientRequestId: "client-request-relation",
+        values: {
+          codigo: "EQ-001",
+          departamento: "target_record_1",
+        },
+      },
+      contractId: "contract_1",
+      entity: {
+        contractId: "contract_1",
+        fields: [textField, relationField],
+        id: "entity_1",
+        isActive: true,
+        name: "Equipos",
+        slug: "equipos",
+      } as never,
+      userId: "user_1",
+    });
+
+    expect(result).toEqual({ ok: true, recordId: "record_1", replay: false });
+    expect(prisma.entityRecord.count).toHaveBeenCalledWith({
+      where: {
+        id: { in: ["target_record_1"] },
+        entityType: {
+          id: "reference_entity",
+          contractId: "contract_1",
+        },
+      },
+    });
+    expect(prisma.entityRelation.createMany).toHaveBeenCalledWith({
+      data: [
+        {
+          sourceFieldId: "field_departamento",
+          sourceRecordId: "record_1",
+          targetRecordId: "target_record_1",
+        },
+      ],
+      skipDuplicates: true,
+    });
   });
 
   it("replays an idempotent create with the same payload without writing again", async () => {

@@ -201,6 +201,22 @@ export async function getEntityRecords({
 
 function entityRecordListInclude(neededValueFieldIds: string[]) {
   return {
+    outgoingRelations: {
+      include: {
+        targetRecord: {
+          select: {
+            displayName: true,
+            entityTypeId: true,
+            id: true,
+          },
+        },
+      },
+      orderBy: { targetRecord: { displayName: "asc" } },
+      where:
+        neededValueFieldIds.length > 0
+          ? { sourceFieldId: { in: neededValueFieldIds } }
+          : undefined,
+    },
     values: {
       where:
         neededValueFieldIds.length > 0
@@ -216,7 +232,7 @@ function entityRecordListInclude(neededValueFieldIds: string[]) {
         jsonValue: true,
       },
     },
-  };
+  } satisfies Prisma.EntityRecordInclude;
 }
 
 type ResolvedEntityRecordSort = EntityRecordSort & {
