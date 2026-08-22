@@ -158,7 +158,10 @@ describe("GET /api/v1/contracts/[contractId]/views", () => {
         config: {
           sourceEntityTypeId: "people",
           targetEntityTypeId: "attendance",
-          workflow: "attendance",
+          workflowKey: "attendance",
+          personFieldId: "person_field",
+          dateFieldId: "date_field",
+          statusFieldId: "status_field",
         },
         id: "workflow",
         type: "WORKFLOW",
@@ -189,7 +192,10 @@ describe("GET /api/v1/contracts/[contractId]/views", () => {
             config: {
               sourceEntityTypeId: "people",
               targetEntityTypeId: "attendance",
-              workflow: "attendance",
+              workflowKey: "attendance",
+              personFieldId: "person_field",
+              dateFieldId: "date_field",
+              statusFieldId: "status_field",
             },
             type: "WORKFLOW",
           },

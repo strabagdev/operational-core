@@ -5,10 +5,15 @@ import { getAuthorizedContract } from "./contracts";
 import { isEntityIconKey } from "./entity-icons";
 import { slugify } from "./format";
 import { prisma } from "./prisma";
+import {
+  getWorkflowLabel,
+  workflowKeys,
+  workflowOptions,
+  type WorkflowKey,
+} from "./workflow-catalog";
 
 const slugRegex = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const appViewTypeValues = ["RECORDS", "WORKFLOW", "BOARD", "DASHBOARD"] as const;
-const workflowValues = ["attendance"] as const;
 type PrismaClientLike = typeof prisma | Prisma.TransactionClient;
 
 export const appViewTypeOptions = [
@@ -19,7 +24,7 @@ export const appViewTypeOptions = [
 ] as const satisfies Array<{ label: string; value: AppViewType }>;
 
 export const appViewWorkflowOptions = [
-  { label: "Asistencia", value: "attendance" },
+  ...workflowOptions,
 ] as const;
 
 export const appViewCommonSchema = z.object({
@@ -47,9 +52,13 @@ export type AppViewConfig =
   | { type: "RECORDS"; entityTypeId: string }
   | {
       type: "WORKFLOW";
+      workflowKey: WorkflowKey;
       sourceEntityTypeId: string;
       targetEntityTypeId: string;
-      workflow: "attendance";
+      personFieldId: string;
+      dateFieldId: string;
+      statusFieldId: string;
+      observationFieldId?: string;
     }
   | { type: "BOARD"; entityTypeId: string; groupByFieldKey: string }
   | { type: "DASHBOARD"; entityTypeIds: string[] };
@@ -63,7 +72,7 @@ export function getAppViewTypeLabel(type: AppViewType | string) {
 }
 
 export function getAppViewWorkflowLabel(workflow: string) {
-  return appViewWorkflowOptions.find((option) => option.value === workflow)?.label ?? workflow;
+  return getWorkflowLabel(workflow);
 }
 
 export function getAppViewInput(formData: FormData) {
@@ -80,9 +89,14 @@ export function getAppViewInput(formData: FormData) {
       entityTypeId: formData.get("entityTypeId"),
       entityTypeIds: formData.getAll("entityTypeIds"),
       groupByFieldKey: formData.get("groupByFieldKey"),
+      dateFieldId: formData.get("dateFieldId"),
+      observationFieldId: formData.get("observationFieldId"),
+      personFieldId: formData.get("personFieldId"),
       sourceEntityTypeId: formData.get("sourceEntityTypeId"),
+      statusFieldId: formData.get("statusFieldId"),
       targetEntityTypeId: formData.get("targetEntityTypeId"),
       workflow: formData.get("workflow"),
+      workflowKey: formData.get("workflowKey") ?? formData.get("workflow"),
     },
   };
 }
@@ -109,6 +123,15 @@ export async function getAppViewAdminData(contractId: string, userId: string) {
             isActive: true,
             key: true,
             name: true,
+            config: true,
+            options: {
+              orderBy: [{ sortOrder: "asc" }, { label: "asc" }],
+              select: {
+                isActive: true,
+                label: true,
+                value: true,
+              },
+            },
             type: true,
           },
         },
@@ -246,7 +269,7 @@ export function parseAppViewConfig(view: Pick<AppView, "config" | "type">): AppV
   }
 
   if (view.type === "WORKFLOW") {
-    return { type: "WORKFLOW", ...workflowConfigInputSchema.parse(raw) };
+    return { type: "WORKFLOW", ...parseWorkflowConfigInput(raw) };
   }
 
   if (view.type === "BOARD") {
@@ -275,7 +298,7 @@ export function summarizeAppViewConfig({
   }
 
   if (config.type === "WORKFLOW") {
-    return `${entityName(config.sourceEntityTypeId)} -> ${entityName(config.targetEntityTypeId)} · ${getAppViewWorkflowLabel(config.workflow)}`;
+    return `${entityName(config.sourceEntityTypeId)} -> ${entityName(config.targetEntityTypeId)} · ${getAppViewWorkflowLabel(config.workflowKey)}`;
   }
 
   if (config.type === "BOARD") {
@@ -326,15 +349,27 @@ async function validateAppViewConfig({
   }
 
   if (type === "WORKFLOW") {
-    const config = workflowConfigInputSchema.parse(rawConfig);
-    await requireEntityType(client, contractId, config.sourceEntityTypeId);
-    await requireEntityType(client, contractId, config.targetEntityTypeId);
+    const config = parseWorkflowConfigInput(rawConfig);
+    const sourceEntityType = await requireEntityType(client, contractId, config.sourceEntityTypeId);
+    const targetEntityType = await requireEntityType(client, contractId, config.targetEntityTypeId);
+
+    if (config.workflowKey === "attendance") {
+      validateAttendanceAppViewFields({
+        config,
+        sourceEntityTypeId: sourceEntityType.id,
+        targetFields: targetEntityType.fields,
+      });
+    }
 
     return {
       type,
+      workflowKey: config.workflowKey,
       sourceEntityTypeId: config.sourceEntityTypeId,
       targetEntityTypeId: config.targetEntityTypeId,
-      workflow: config.workflow,
+      personFieldId: config.personFieldId,
+      dateFieldId: config.dateFieldId,
+      statusFieldId: config.statusFieldId,
+      ...(config.observationFieldId ? { observationFieldId: config.observationFieldId } : {}),
     };
   }
 
@@ -369,9 +404,20 @@ const recordsConfigInputSchema = z.object({
 });
 
 const workflowConfigInputSchema = z.object({
+  workflowKey: z.enum(workflowKeys),
   sourceEntityTypeId: z.string().trim().min(1, "Selecciona una entidad fuente."),
   targetEntityTypeId: z.string().trim().min(1, "Selecciona una entidad destino."),
-  workflow: z.enum(workflowValues),
+  personFieldId: z.string().trim().min(1, "Selecciona el campo Persona."),
+  dateFieldId: z.string().trim().min(1, "Selecciona el campo Fecha."),
+  statusFieldId: z.string().trim().min(1, "Selecciona el campo Estado."),
+  observationFieldId: z.preprocess(
+    (value) => value === null ? undefined : value,
+    z
+      .string()
+      .trim()
+      .optional()
+      .transform((value) => value || undefined),
+  ),
 });
 
 const boardConfigInputSchema = z.object({
@@ -392,9 +438,19 @@ async function requireEntityType(
     include: {
       fields: {
         select: {
+          config: true,
+          id: true,
           isActive: true,
           key: true,
           name: true,
+          options: {
+            select: {
+              isActive: true,
+              label: true,
+              value: true,
+            },
+          },
+          type: true,
         },
       },
     },
@@ -410,6 +466,95 @@ async function requireEntityType(
   }
 
   return entityType;
+}
+
+function parseWorkflowConfigInput(rawConfig: unknown) {
+  if (!rawConfig || typeof rawConfig !== "object" || Array.isArray(rawConfig)) {
+    return workflowConfigInputSchema.parse(rawConfig);
+  }
+
+  const raw = rawConfig as Record<string, unknown>;
+
+  return workflowConfigInputSchema.parse({
+    ...raw,
+    workflowKey: raw.workflowKey ?? raw.workflow,
+  });
+}
+
+function validateAttendanceAppViewFields({
+  config,
+  sourceEntityTypeId,
+  targetFields,
+}: {
+  config: z.infer<typeof workflowConfigInputSchema>;
+  sourceEntityTypeId: string;
+  targetFields: Array<{
+    config: Prisma.JsonValue | null;
+    id: string;
+    isActive: boolean;
+    name: string;
+    options: Array<{ isActive: boolean; value: string }>;
+    type: string;
+  }>;
+}) {
+  const personField = requireActiveTargetField(targetFields, config.personFieldId, "Persona");
+  const dateField = requireActiveTargetField(targetFields, config.dateFieldId, "Fecha");
+  const statusField = requireActiveTargetField(targetFields, config.statusFieldId, "Estado");
+  const observationField = config.observationFieldId
+    ? requireActiveTargetField(targetFields, config.observationFieldId, "Observación")
+    : null;
+
+  if (personField.type !== "RELATION") {
+    throw new AppViewConfigError("El campo Persona debe ser de tipo relación.");
+  }
+
+  if (!fieldRelationTargetsEntity(personField.config, sourceEntityTypeId)) {
+    throw new AppViewConfigError("El campo Persona debe relacionar hacia la entidad fuente.");
+  }
+
+  if (dateField.type !== "DATE") {
+    throw new AppViewConfigError("El campo Fecha debe ser de tipo fecha.");
+  }
+
+  if (statusField.type !== "SELECT") {
+    throw new AppViewConfigError("El campo Estado debe ser de tipo selección.");
+  }
+
+  const activeStatusValues = new Set(
+    statusField.options.filter((option) => option.isActive).map((option) => option.value),
+  );
+
+  if (!activeStatusValues.has("PRESENTE") || !activeStatusValues.has("AUSENTE")) {
+    throw new AppViewConfigError("El campo Estado debe incluir las opciones PRESENTE y AUSENTE.");
+  }
+
+  if (observationField && observationField.type !== "TEXTAREA") {
+    throw new AppViewConfigError("El campo Observación debe ser de tipo texto largo.");
+  }
+}
+
+function requireActiveTargetField<
+  TField extends { id: string; isActive: boolean; name: string },
+>(
+  fields: TField[],
+  fieldId: string,
+  label: string,
+) {
+  const field = fields.find((item) => item.id === fieldId);
+
+  if (!field || !field.isActive) {
+    throw new AppViewConfigError(`Selecciona un campo activo válido para ${label}.`);
+  }
+
+  return field;
+}
+
+function fieldRelationTargetsEntity(config: Prisma.JsonValue | null, entityTypeId: string) {
+  if (!config || typeof config !== "object" || Array.isArray(config)) {
+    return false;
+  }
+
+  return (config as Record<string, unknown>).targetEntityTypeId === entityTypeId;
 }
 
 function toJsonConfig(config: AppViewConfig): Prisma.InputJsonObject {

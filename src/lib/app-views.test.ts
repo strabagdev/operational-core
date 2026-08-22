@@ -55,8 +55,8 @@ const entityTypeFindMany = vi.mocked(prisma.entityType.findMany);
 function entityType(overrides: Record<string, unknown> = {}) {
   return {
     fields: [
-      { isActive: true, key: "estado", name: "Estado" },
-      { isActive: false, key: "cerrado", name: "Cerrado" },
+      { id: "field_estado", isActive: true, key: "estado", name: "Estado", type: "SELECT" },
+      { id: "field_cerrado", isActive: false, key: "cerrado", name: "Cerrado", type: "BOOLEAN" },
     ],
     id: "entity_1",
     name: "Personas",
@@ -152,23 +152,35 @@ describe("AppView config validation", () => {
   });
 
   it("creates a valid WORKFLOW view", async () => {
+    entityTypeFindFirst
+      .mockResolvedValueOnce(entityType({ id: "people" }) as never)
+      .mockResolvedValueOnce(attendanceEntityType() as never);
+
     await createAppView(
       "contract_1",
       "user_1",
       getAppViewInput(formData({
         sourceEntityTypeId: "people",
         targetEntityTypeId: "attendance",
+        personFieldId: "person_field",
+        dateFieldId: "date_field",
+        statusFieldId: "status_field",
+        observationFieldId: "observation_field",
         type: "WORKFLOW",
-        workflow: "attendance",
+        workflowKey: "attendance",
       })),
     );
 
     expect(appViewCreate).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
         config: {
+          workflowKey: "attendance",
           sourceEntityTypeId: "people",
           targetEntityTypeId: "attendance",
-          workflow: "attendance",
+          personFieldId: "person_field",
+          dateFieldId: "date_field",
+          statusFieldId: "status_field",
+          observationFieldId: "observation_field",
         },
         type: "WORKFLOW",
       }),
@@ -187,11 +199,142 @@ describe("AppView config validation", () => {
         getAppViewInput(formData({
           sourceEntityTypeId: "people",
           targetEntityTypeId: "foreign",
+          personFieldId: "person_field",
+          dateFieldId: "date_field",
+          statusFieldId: "status_field",
           type: "WORKFLOW",
-          workflow: "attendance",
+          workflowKey: "attendance",
         })),
       ),
     ).rejects.toThrow("La vista referencia una entidad que no pertenece a este contrato.");
+  });
+
+  it("rejects an unsupported workflowKey", async () => {
+    await expect(
+      createAppView(
+        "contract_1",
+        "user_1",
+        getAppViewInput(formData({
+          dateFieldId: "date_field",
+          personFieldId: "person_field",
+          sourceEntityTypeId: "people",
+          statusFieldId: "status_field",
+          targetEntityTypeId: "attendance",
+          type: "WORKFLOW",
+          workflowKey: "inspection",
+        })),
+      ),
+    ).rejects.toThrow();
+  });
+
+  it("rejects attendance when configured field types are incorrect", async () => {
+    entityTypeFindFirst
+      .mockResolvedValueOnce(entityType({ id: "people" }) as never)
+      .mockResolvedValueOnce(attendanceEntityType({
+        fields: [
+          {
+            config: { targetEntityTypeId: "people", relationKind: "ONE" },
+            id: "person_field",
+            isActive: true,
+            key: "persona",
+            name: "Persona",
+            options: [],
+            type: "TEXT",
+          },
+          {
+            config: null,
+            id: "date_field",
+            isActive: true,
+            key: "fecha",
+            name: "Fecha",
+            options: [],
+            type: "DATE",
+          },
+          {
+            config: null,
+            id: "status_field",
+            isActive: true,
+            key: "estado",
+            name: "Estado",
+            options: [
+              { isActive: true, value: "PRESENTE" },
+              { isActive: true, value: "AUSENTE" },
+            ],
+            type: "SELECT",
+          },
+        ],
+      }) as never);
+
+    await expect(
+      createAppView(
+        "contract_1",
+        "user_1",
+        getAppViewInput(formData({
+          dateFieldId: "date_field",
+          personFieldId: "person_field",
+          sourceEntityTypeId: "people",
+          statusFieldId: "status_field",
+          targetEntityTypeId: "attendance",
+          type: "WORKFLOW",
+          workflowKey: "attendance",
+        })),
+      ),
+    ).rejects.toThrow("El campo Persona debe ser de tipo relación.");
+  });
+
+  it("rejects attendance when the relation points to a different source", async () => {
+    entityTypeFindFirst
+      .mockResolvedValueOnce(entityType({ id: "people" }) as never)
+      .mockResolvedValueOnce(attendanceEntityType({
+        fields: [
+          {
+            config: { targetEntityTypeId: "equipment", relationKind: "ONE" },
+            id: "person_field",
+            isActive: true,
+            key: "persona",
+            name: "Persona",
+            options: [],
+            type: "RELATION",
+          },
+          {
+            config: null,
+            id: "date_field",
+            isActive: true,
+            key: "fecha",
+            name: "Fecha",
+            options: [],
+            type: "DATE",
+          },
+          {
+            config: null,
+            id: "status_field",
+            isActive: true,
+            key: "estado",
+            name: "Estado",
+            options: [
+              { isActive: true, value: "PRESENTE" },
+              { isActive: true, value: "AUSENTE" },
+            ],
+            type: "SELECT",
+          },
+        ],
+      }) as never);
+
+    await expect(
+      createAppView(
+        "contract_1",
+        "user_1",
+        getAppViewInput(formData({
+          dateFieldId: "date_field",
+          personFieldId: "person_field",
+          sourceEntityTypeId: "people",
+          statusFieldId: "status_field",
+          targetEntityTypeId: "attendance",
+          type: "WORKFLOW",
+          workflowKey: "attendance",
+        })),
+      ),
+    ).rejects.toThrow("El campo Persona debe relacionar hacia la entidad fuente.");
   });
 
   it("creates a valid BOARD view", async () => {
@@ -261,6 +404,55 @@ describe("AppView config validation", () => {
     ).rejects.toThrow("La vista referencia una entidad que no pertenece a este contrato.");
   });
 });
+
+function attendanceEntityType(overrides: Record<string, unknown> = {}) {
+  return entityType({
+    fields: [
+      {
+        config: { targetEntityTypeId: "people", relationKind: "ONE" },
+        id: "person_field",
+        isActive: true,
+        key: "persona",
+        name: "Persona",
+        options: [],
+        type: "RELATION",
+      },
+      {
+        config: null,
+        id: "date_field",
+        isActive: true,
+        key: "fecha",
+        name: "Fecha",
+        options: [],
+        type: "DATE",
+      },
+      {
+        config: null,
+        id: "status_field",
+        isActive: true,
+        key: "estado",
+        name: "Estado",
+        options: [
+          { isActive: true, value: "PRESENTE" },
+          { isActive: true, value: "AUSENTE" },
+        ],
+        type: "SELECT",
+      },
+      {
+        config: null,
+        id: "observation_field",
+        isActive: true,
+        key: "observacion",
+        name: "Observación",
+        options: [],
+        type: "TEXTAREA",
+      },
+    ],
+    id: "attendance",
+    name: "Asistencias",
+    ...overrides,
+  });
+}
 
 describe("AppView administration", () => {
   it("allows the same slug in another contract by relying on the scoped database unique key", async () => {

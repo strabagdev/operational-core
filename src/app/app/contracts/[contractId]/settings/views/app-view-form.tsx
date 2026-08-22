@@ -19,6 +19,7 @@ type AppViewEntityTypeOption = {
     isActive: boolean;
     key: string;
     name: string;
+    type: string;
   }>;
   icon?: string | null;
   id: string;
@@ -64,6 +65,27 @@ export function AppViewForm({
     initialValues?.config.type === "WORKFLOW"
       ? initialValues.config.targetEntityTypeId
       : entityTypes[0]?.id ?? "",
+  );
+  const targetEntityType = entityTypes.find((entityType) => entityType.id === targetEntityTypeId);
+  const [personFieldId, setPersonFieldId] = useState(
+    initialValues?.config.type === "WORKFLOW"
+      ? initialValues.config.personFieldId
+      : firstActiveFieldId(targetEntityType, "RELATION"),
+  );
+  const [dateFieldId, setDateFieldId] = useState(
+    initialValues?.config.type === "WORKFLOW"
+      ? initialValues.config.dateFieldId
+      : firstActiveFieldId(targetEntityType, "DATE"),
+  );
+  const [statusFieldId, setStatusFieldId] = useState(
+    initialValues?.config.type === "WORKFLOW"
+      ? initialValues.config.statusFieldId
+      : firstActiveFieldId(targetEntityType, "SELECT"),
+  );
+  const [observationFieldId, setObservationFieldId] = useState(
+    initialValues?.config.type === "WORKFLOW"
+      ? initialValues.config.observationFieldId ?? ""
+      : "",
   );
   const [dashboardEntityTypeIds, setDashboardEntityTypeIds] = useState<Set<string>>(
     new Set(initialValues?.config.type === "DASHBOARD"
@@ -164,11 +186,19 @@ export function AppViewForm({
         entityTypeId={entityTypeId}
         entityTypes={entityTypes}
         groupByFieldKey={groupByFieldKey}
+        dateFieldId={dateFieldId}
         setEntityTypeId={setEntityTypeId}
+        observationFieldId={observationFieldId}
+        personFieldId={personFieldId}
+        setDateFieldId={setDateFieldId}
         setGroupByFieldKey={setGroupByFieldKey}
+        setObservationFieldId={setObservationFieldId}
+        setPersonFieldId={setPersonFieldId}
         setSourceEntityTypeId={setSourceEntityTypeId}
+        setStatusFieldId={setStatusFieldId}
         setTargetEntityTypeId={setTargetEntityTypeId}
         sourceEntityTypeId={sourceEntityTypeId}
+        statusFieldId={statusFieldId}
         targetEntityTypeId={targetEntityTypeId}
         toggleDashboardEntity={toggleDashboardEntity}
         type={type}
@@ -204,33 +234,52 @@ export function AppViewForm({
 function ConfigFields({
   activeBoardFields,
   dashboardEntityTypeIds,
+  dateFieldId,
   entityTypeId,
   entityTypes,
   groupByFieldKey,
+  observationFieldId,
+  personFieldId,
+  setDateFieldId,
   setEntityTypeId,
   setGroupByFieldKey,
+  setObservationFieldId,
+  setPersonFieldId,
   setSourceEntityTypeId,
+  setStatusFieldId,
   setTargetEntityTypeId,
   sourceEntityTypeId,
+  statusFieldId,
   targetEntityTypeId,
   toggleDashboardEntity,
   type,
 }: {
   activeBoardFields: AppViewEntityTypeOption["fields"];
   dashboardEntityTypeIds: Set<string>;
+  dateFieldId: string;
   entityTypeId: string;
   entityTypes: AppViewEntityTypeOption[];
   groupByFieldKey: string;
+  observationFieldId: string;
+  personFieldId: string;
+  setDateFieldId: (value: string) => void;
   setEntityTypeId: (value: string) => void;
   setGroupByFieldKey: (value: string) => void;
+  setObservationFieldId: (value: string) => void;
+  setPersonFieldId: (value: string) => void;
   setSourceEntityTypeId: (value: string) => void;
+  setStatusFieldId: (value: string) => void;
   setTargetEntityTypeId: (value: string) => void;
   sourceEntityTypeId: string;
+  statusFieldId: string;
   targetEntityTypeId: string;
   toggleDashboardEntity: (entityTypeId: string, checked: boolean) => void;
   type: AppViewType;
 }) {
   if (type === "WORKFLOW") {
+    const targetEntityType = entityTypes.find((entityType) => entityType.id === targetEntityTypeId);
+    const activeTargetFields = targetEntityType?.fields.filter((field) => field.isActive) ?? [];
+
     return (
       <fieldset className="grid gap-3 rounded-md border border-border p-3">
         <legend className="px-1 text-sm font-medium">Configuración del flujo</legend>
@@ -244,7 +293,15 @@ function ConfigFields({
         <EntitySelect
           label="Entidad destino"
           name="targetEntityTypeId"
-          onChange={setTargetEntityTypeId}
+          onChange={(value) => {
+            const nextTarget = entityTypes.find((entityType) => entityType.id === value);
+
+            setTargetEntityTypeId(value);
+            setPersonFieldId(firstActiveFieldId(nextTarget, "RELATION"));
+            setDateFieldId(firstActiveFieldId(nextTarget, "DATE"));
+            setStatusFieldId(firstActiveFieldId(nextTarget, "SELECT"));
+            setObservationFieldId(firstActiveFieldId(nextTarget, "TEXTAREA"));
+          }}
           options={entityTypes}
           value={targetEntityTypeId}
         />
@@ -252,7 +309,7 @@ function ConfigFields({
           Workflow
           <select
             className="h-10 rounded-md border border-input bg-background px-3 text-sm font-normal outline-none ring-ring focus-visible:ring-2"
-            name="workflow"
+            name="workflowKey"
             defaultValue="attendance"
           >
             {appViewWorkflowOptions.map((option) => (
@@ -262,6 +319,41 @@ function ConfigFields({
             ))}
           </select>
         </label>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <FieldSelect
+            fields={activeTargetFields}
+            label="Campo Persona"
+            name="personFieldId"
+            onChange={setPersonFieldId}
+            preferredType="RELATION"
+            value={personFieldId}
+          />
+          <FieldSelect
+            fields={activeTargetFields}
+            label="Campo Fecha"
+            name="dateFieldId"
+            onChange={setDateFieldId}
+            preferredType="DATE"
+            value={dateFieldId}
+          />
+          <FieldSelect
+            fields={activeTargetFields}
+            label="Campo Estado"
+            name="statusFieldId"
+            onChange={setStatusFieldId}
+            preferredType="SELECT"
+            value={statusFieldId}
+          />
+          <FieldSelect
+            fields={activeTargetFields}
+            includeEmpty
+            label="Campo Observación"
+            name="observationFieldId"
+            onChange={setObservationFieldId}
+            preferredType="TEXTAREA"
+            value={observationFieldId}
+          />
+        </div>
       </fieldset>
     );
   }
@@ -337,6 +429,54 @@ function ConfigFields({
       />
     </fieldset>
   );
+}
+
+function FieldSelect({
+  fields,
+  includeEmpty = false,
+  label,
+  name,
+  onChange,
+  preferredType,
+  value,
+}: {
+  fields: AppViewEntityTypeOption["fields"];
+  includeEmpty?: boolean;
+  label: string;
+  name: string;
+  onChange: (value: string) => void;
+  preferredType: string;
+  value: string;
+}) {
+  const preferredFields = fields.filter((field) => field.type === preferredType);
+  const otherFields = fields.filter((field) => field.type !== preferredType);
+
+  return (
+    <label className="grid gap-2 text-sm font-medium">
+      {label}
+      <select
+        className="h-10 rounded-md border border-input bg-background px-3 text-sm font-normal outline-none ring-ring focus-visible:ring-2"
+        name={name}
+        onChange={(event) => onChange(event.target.value)}
+        required={!includeEmpty}
+        value={value}
+      >
+        {includeEmpty ? <option value="">Sin campo</option> : <option value="">Selecciona un campo</option>}
+        {[...preferredFields, ...otherFields].map((field) => (
+          <option key={field.id} value={field.id}>
+            {field.name}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function firstActiveFieldId(
+  entityType: AppViewEntityTypeOption | undefined,
+  type: string,
+) {
+  return entityType?.fields.find((field) => field.isActive && field.type === type)?.id ?? "";
 }
 
 function EntitySelect({

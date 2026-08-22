@@ -6,15 +6,20 @@ import { AppViewForm } from "./app-view-form";
 const entityTypes = [
   {
     fields: [
-      { id: "field_1", isActive: true, key: "estado", name: "Estado" },
-      { id: "field_2", isActive: false, key: "cerrado", name: "Cerrado" },
+      { id: "field_1", isActive: true, key: "estado", name: "Estado", type: "SELECT" },
+      { id: "field_2", isActive: false, key: "cerrado", name: "Cerrado", type: "BOOLEAN" },
     ],
     icon: "users",
     id: "people",
     name: "Personas",
   },
   {
-    fields: [],
+    fields: [
+      { id: "person_field", isActive: true, key: "persona", name: "Persona", type: "RELATION" },
+      { id: "date_field", isActive: true, key: "fecha", name: "Fecha", type: "DATE" },
+      { id: "status_field", isActive: true, key: "estado", name: "Estado", type: "SELECT" },
+      { id: "observation_field", isActive: true, key: "observacion", name: "Observación", type: "TEXTAREA" },
+    ],
     icon: "clipboard-check",
     id: "attendance",
     name: "Asistencias",
@@ -53,8 +58,12 @@ describe("AppViewForm", () => {
           config: {
             sourceEntityTypeId: "people",
             targetEntityTypeId: "attendance",
+            personFieldId: "person_field",
+            dateFieldId: "date_field",
+            statusFieldId: "status_field",
+            observationFieldId: "observation_field",
             type: "WORKFLOW",
-            workflow: "attendance",
+            workflowKey: "attendance",
           },
           icon: "clipboard-check",
           name: "Tomar asistencia",
@@ -70,5 +79,9 @@ describe("AppViewForm", () => {
     expect(html).toContain("Entidad fuente");
     expect(html).toContain("Entidad destino");
     expect(html).toContain("Asistencia");
+    expect(html).toContain("Campo Persona");
+    expect(html).toContain("Campo Fecha");
+    expect(html).toContain("Campo Estado");
+    expect(html).toContain("Campo Observación");
   });
 });

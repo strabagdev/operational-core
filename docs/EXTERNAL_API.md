@@ -461,9 +461,13 @@ Config shapes by `type`:
     "entityTypeId": "entity_type_id"
   },
   "WORKFLOW": {
+    "workflowKey": "attendance",
     "sourceEntityTypeId": "source_entity_type_id",
     "targetEntityTypeId": "target_entity_type_id",
-    "workflow": "attendance"
+    "personFieldId": "person_relation_field_id",
+    "dateFieldId": "date_field_id",
+    "statusFieldId": "status_select_field_id",
+    "observationFieldId": "optional_textarea_field_id"
   },
   "BOARD": {
     "entityTypeId": "entity_type_id",
@@ -480,6 +484,106 @@ The response does not include `createdAt`, `updatedAt`, assignment ids, users, o
 If a stored AppView has invalid config, Opco omits that view from the response and logs a server-side diagnostic with the view id. This prevents one corrupted view from breaking the whole client navigation payload.
 
 Important: AppView access controls which experience appears to the user. It is not a full data-permission boundary. Entity and record endpoints continue to perform their own server-side authorization. In this stage, data access is still based on contract membership because granular entity permissions do not exist yet.
+
+### GET /api/v1/contracts/:contractId/views/:appViewId/workflow/attendance
+
+Returns the configured attendance workflow state for one date. The AppView must be active, assigned to the authenticated user, belong to the contract, and use `workflowKey = "attendance"`.
+
+Query:
+
+```http
+?date=YYYY-MM-DD
+```
+
+Success response:
+
+```json
+{
+  "ok": true,
+  "data": {
+    "appView": {
+      "id": "app_view_id",
+      "name": "Tomar asistencia",
+      "slug": "tomar-asistencia"
+    },
+    "date": "2026-08-22",
+    "sourceEntityType": {
+      "id": "people_entity_type_id",
+      "name": "Personas"
+    },
+    "targetEntityType": {
+      "id": "attendance_entity_type_id",
+      "name": "Asistencias"
+    },
+    "items": [
+      {
+        "person": {
+          "id": "person_record_id",
+          "displayName": "Ana Pérez"
+        },
+        "attendance": {
+          "recordId": "attendance_record_id",
+          "status": "PRESENTE",
+          "observation": null,
+          "updatedAt": "2026-08-22T12:00:00.000Z"
+        }
+      },
+      {
+        "person": {
+          "id": "person_without_attendance_id",
+          "displayName": "Juan Soto"
+        },
+        "attendance": null
+      }
+    ]
+  }
+}
+```
+
+### POST /api/v1/contracts/:contractId/views/:appViewId/workflow/attendance
+
+Creates or confirms attendance entries for one date. `clientRequestId` is optional but recommended for retryable clients. The workflow is functionally idempotent for the same Persona + Fecha + status: retries do not create duplicate attendance records.
+
+Request:
+
+```json
+{
+  "clientRequestId": "device-request-id",
+  "date": "2026-08-22",
+  "entries": [
+    {
+      "personRecordId": "person_record_id",
+      "status": "PRESENTE",
+      "observation": "Opcional"
+    }
+  ]
+}
+```
+
+Per-entry result values:
+
+- `CREATED`: no attendance existed for Persona + Fecha and a record was created.
+- `UNCHANGED`: an attendance existed with the same status; no write was performed.
+- `CONFLICT`: an attendance existed with a different status; no write was performed.
+- `UPDATED`: an explicit overwrite was accepted and audited.
+- `ERROR`: the entry is invalid, for example the person does not belong to the configured source EntityType.
+
+Conflict response inside a successful batch:
+
+```json
+{
+  "personRecordId": "person_record_id",
+  "result": "CONFLICT",
+  "existing": {
+    "recordId": "attendance_record_id",
+    "status": "PRESENTE",
+    "updatedAt": "2026-08-22T12:00:00.000Z"
+  },
+  "requestedStatus": "AUSENTE"
+}
+```
+
+To overwrite, resend that entry with `overwrite: true` and either `expectedStatus` or `expectedUpdatedAt`. If the existing attendance changed again before confirmation, the API returns a fresh `CONFLICT` instead of overwriting blindly.
 
 ## Dynamic Entities
 

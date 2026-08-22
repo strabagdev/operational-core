@@ -205,7 +205,7 @@ An AppView assignment means the experience is visible/available to the user. It 
 Current `AppView.type` values:
 
 - `RECORDS`: generic listing/detail/edit experience for one `EntityType`; config stores `entityTypeId`.
-- `WORKFLOW`: specialized operation that can read one entity and write another; config stores `sourceEntityTypeId`, `targetEntityTypeId`, and a controlled `workflow` value. The only current workflow value is `attendance` (`Asistencia`). The attendance renderer is not implemented yet.
+- `WORKFLOW`: specialized operation that can read one entity and write another; config stores `workflowKey`, `sourceEntityTypeId`, `targetEntityTypeId`, and workflow-specific field ids. The only current workflow key is `attendance` (`Asistencia`). The attendance renderer is not implemented yet.
 - `BOARD`: grouped board for one `EntityType`; config stores `entityTypeId` and `groupByFieldKey`.
 - `DASHBOARD`: summary view over multiple entity types; config stores `entityTypeIds`.
 
@@ -216,7 +216,7 @@ Example:
 - `Personas`: `nature = MASTER`
 - `Asistencias`: `nature = TRANSACTION`
 - `Directorio Personas`: `type = RECORDS`, `entityTypeId = Personas`
-- `Tomar asistencia`: `type = WORKFLOW`, `sourceEntityTypeId = Personas`, `targetEntityTypeId = Asistencias`, `workflow = attendance`
+- `Tomar asistencia`: `type = WORKFLOW`, `workflowKey = attendance`, `sourceEntityTypeId = Personas`, `targetEntityTypeId = Asistencias`, plus `personFieldId`, `dateFieldId`, `statusFieldId`, and optional `observationFieldId`
 
 The current audit system does not yet include dedicated actions for AppView configuration changes. AppView administration reuses contract authorization but does not write audit events in this stage.
 
