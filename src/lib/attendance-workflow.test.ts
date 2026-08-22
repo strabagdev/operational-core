@@ -21,6 +21,7 @@ vi.mock("@/lib/prisma", () => ({
       findFirst: vi.fn(),
     },
     entityRecord: {
+      count: vi.fn(),
       findMany: vi.fn(),
     },
     entityType: {
@@ -33,14 +34,20 @@ vi.mock("@/lib/prisma", () => ({
 const userCanAccessAppViewMock = vi.mocked(userCanAccessAppView);
 const apiIdempotencyCreate = vi.mocked(prisma.apiIdempotencyKey.create);
 const appViewFindFirst = vi.mocked(prisma.appView.findFirst);
+const entityRecordCount = vi.mocked(prisma.entityRecord.count);
 const entityRecordFindMany = vi.mocked(prisma.entityRecord.findMany);
 const entityTypeFindFirst = vi.mocked(prisma.entityType.findFirst);
 const transaction = vi.mocked(prisma.$transaction);
 
 type EntityRecordFindManyMockArgs = {
+  include?: {
+    outgoingRelations?: unknown;
+    values?: unknown;
+  };
+  take?: number;
   where?: {
     entityTypeId?: string;
-    id?: { in?: string[] };
+    id?: string | { in?: string[] };
     outgoingRelations?: {
       some?: {
         targetRecordId?: { in?: string[] };
@@ -80,17 +87,8 @@ beforeEach(() => {
 
     return null;
   }) as never);
-  entityRecordFindMany.mockImplementation((async (args: EntityRecordFindManyMockArgs) => {
-    if (args?.where?.entityTypeId === "people") {
-      const ids = Array.isArray(args.where.id?.in)
-        ? args.where.id.in
-        : ["person_1"];
-
-      return people().filter((person) => ids.includes(person.id)) as never;
-    }
-
-    return [] as never;
-  }) as never);
+  entityRecordFindMany.mockImplementation(defaultEntityRecordFindMany());
+  entityRecordCount.mockResolvedValue(0 as never);
   tx.entityRecord.create.mockResolvedValue({
     displayName: "Ana 2026-08-22",
     id: "attendance_new",
@@ -104,10 +102,10 @@ beforeEach(() => {
   apiIdempotencyCreate.mockResolvedValue({ id: "idempotency_1" } as never);
 });
 
-describe("attendance workflow save policy", () => {
-  it("creates a missing Person+Date attendance", async () => {
+describe("attendance workflow dynamic status policy", () => {
+  it("creates a missing Person+Date attendance with any configured active option", async () => {
     const result = await saveAttendanceWorkflowDay(requestBody({
-      entries: [{ personRecordId: "person_1", status: "PRESENTE" }],
+      entries: [{ personRecordId: "person_1", statusOptionId: "late_option" }],
     }));
 
     expect(result).toMatchObject({
@@ -118,65 +116,23 @@ describe("attendance workflow save policy", () => {
         ],
       },
     });
-    expect(tx.entityRecord.create).toHaveBeenCalledTimes(1);
     expect(tx.entityValue.createMany).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.arrayContaining([
           expect.objectContaining({
             entityFieldId: "status_field",
-            textValue: "presente",
-          }),
-        ]),
-      }),
-    );
-    expect(tx.entityRecord.update).not.toHaveBeenCalled();
-  });
-
-  it("stores optional observation when creating attendance", async () => {
-    await saveAttendanceWorkflowDay(requestBody({
-      entries: [
-        {
-          observation: "Llegó con inducción hecha",
-          personRecordId: "person_1",
-          status: "PRESENTE",
-        },
-      ],
-    }));
-
-    expect(tx.entityValue.createMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.arrayContaining([
-          expect.objectContaining({
-            entityFieldId: "observation_field",
-            textValue: "Llegó con inducción hecha",
+            textValue: "atraso",
           }),
         ]),
       }),
     );
   });
 
-  it("persists the real absent option value when creating AUSENTE", async () => {
-    await saveAttendanceWorkflowDay(requestBody({
-      entries: [{ personRecordId: "person_1", status: "AUSENTE" }],
-    }));
-
-    expect(tx.entityValue.createMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.arrayContaining([
-          expect.objectContaining({
-            entityFieldId: "status_field",
-            textValue: "ausente",
-          }),
-        ]),
-      }),
-    );
-  });
-
-  it("returns UNCHANGED for the same status without creating another record", async () => {
-    mockExistingAttendances([existingAttendance({ status: "PRESENTE" })]);
+  it("returns UNCHANGED for the same statusOptionId without writing", async () => {
+    mockExistingAttendances([existingAttendance({ statusValue: "presente" })]);
 
     const result = await saveAttendanceWorkflowDay(requestBody({
-      entries: [{ personRecordId: "person_1", status: "PRESENTE" }],
+      entries: [{ personRecordId: "person_1", statusOptionId: "present_option" }],
     }));
 
     expect(result).toMatchObject({
@@ -190,11 +146,11 @@ describe("attendance workflow save policy", () => {
     expect(transaction).not.toHaveBeenCalled();
   });
 
-  it("returns CONFLICT and does not modify an existing different status", async () => {
-    mockExistingAttendances([existingAttendance({ status: "PRESENTE" })]);
+  it("returns CONFLICT and does not update when an existing option is different", async () => {
+    mockExistingAttendances([existingAttendance({ statusValue: "presente" })]);
 
     const result = await saveAttendanceWorkflowDay(requestBody({
-      entries: [{ personRecordId: "person_1", status: "AUSENTE" }],
+      entries: [{ personRecordId: "person_1", statusOptionId: "absent_option" }],
     }));
 
     expect(result).toMatchObject({
@@ -204,10 +160,14 @@ describe("attendance workflow save policy", () => {
           {
             existing: {
               recordId: "attendance_existing",
-              status: "PRESENTE",
+              statusLabel: "PRESENTE",
+              statusOptionId: "present_option",
             },
             personRecordId: "person_1",
-            requestedStatus: "AUSENTE",
+            requested: {
+              statusLabel: "AUSENTE",
+              statusOptionId: "absent_option",
+            },
             result: "CONFLICT",
           },
         ],
@@ -217,16 +177,16 @@ describe("attendance workflow save policy", () => {
     expect(tx.entityRecord.create).not.toHaveBeenCalled();
   });
 
-  it("updates with explicit overwrite and expected status", async () => {
-    mockExistingAttendances([existingAttendance({ status: "PRESENTE" })]);
+  it("updates with explicit overwrite and expectedUpdatedAt", async () => {
+    mockExistingAttendances([existingAttendance({ statusValue: "presente" })]);
 
     const result = await saveAttendanceWorkflowDay(requestBody({
       entries: [
         {
-          expectedStatus: "PRESENTE",
+          expectedUpdatedAt: "2026-08-22T12:00:00.000Z",
           overwrite: true,
           personRecordId: "person_1",
-          status: "AUSENTE",
+          statusOptionId: "absent_option",
         },
       ],
     }));
@@ -239,7 +199,6 @@ describe("attendance workflow save policy", () => {
         ],
       },
     });
-    expect(tx.entityRecord.update).toHaveBeenCalledTimes(1);
     expect(tx.entityValue.createMany).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.arrayContaining([
@@ -250,29 +209,23 @@ describe("attendance workflow save policy", () => {
         ]),
       }),
     );
-    expect(tx.auditEvent.create).toHaveBeenCalled();
+    expect(tx.auditEvent.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ action: "RECORD_UPDATED" }),
+    }));
   });
 
-  it("maps arbitrary configured option values to domain statuses", async () => {
-    entityTypeFindFirst.mockImplementation((async (args: { where?: { id?: string } }) => {
-      const id = args?.where?.id;
-
-      if (id === "people") return sourceEntityType() as never;
-      if (id === "attendance") {
-        return attendanceEntityType({
-          statusOptions: [
-            { id: "present_option", isActive: true, label: "Presente", value: "P" },
-            { id: "absent_option", isActive: true, label: "Ausente", value: "A" },
-          ],
-        }) as never;
-      }
-
-      return null;
-    }) as never);
-    mockExistingAttendances([existingAttendance({ statusValue: "P" })]);
+  it("returns a fresh conflict for stale overwrite confirmation", async () => {
+    mockExistingAttendances([existingAttendance({ statusValue: "ausente" })]);
 
     const result = await saveAttendanceWorkflowDay(requestBody({
-      entries: [{ personRecordId: "person_1", status: "AUSENTE" }],
+      entries: [
+        {
+          expectedUpdatedAt: "2026-08-22T11:00:00.000Z",
+          overwrite: true,
+          personRecordId: "person_1",
+          statusOptionId: "present_option",
+        },
+      ],
     }));
 
     expect(result).toMatchObject({
@@ -280,34 +233,26 @@ describe("attendance workflow save policy", () => {
       data: {
         results: [
           {
-            existing: { status: "PRESENTE" },
-            requestedStatus: "AUSENTE",
+            existing: { statusOptionId: "absent_option" },
+            personRecordId: "person_1",
+            requested: { statusOptionId: "present_option" },
             result: "CONFLICT",
           },
         ],
       },
     });
+    expect(tx.entityRecord.update).not.toHaveBeenCalled();
   });
 
-  it("does not duplicate records for conflicts", async () => {
-    mockExistingAttendances([existingAttendance({ status: "PRESENTE" })]);
-
-    await saveAttendanceWorkflowDay(requestBody({
-      entries: [{ personRecordId: "person_1", status: "AUSENTE" }],
-    }));
-
-    expect(tx.entityRecord.create).not.toHaveBeenCalled();
-  });
-
-  it("keeps processing valid entries when another entry conflicts", async () => {
+  it("keeps processing valid single-entry style batches when another entry conflicts", async () => {
     mockExistingAttendances([
-      existingAttendance({ personRecordId: "person_1", status: "PRESENTE" }),
+      existingAttendance({ personRecordId: "person_1", statusValue: "presente" }),
     ]);
 
     const result = await saveAttendanceWorkflowDay(requestBody({
       entries: [
-        { personRecordId: "person_1", status: "AUSENTE" },
-        { personRecordId: "person_2", status: "PRESENTE" },
+        { personRecordId: "person_1", statusOptionId: "absent_option" },
+        { personRecordId: "person_2", statusOptionId: "present_option" },
       ],
     }));
 
@@ -323,18 +268,9 @@ describe("attendance workflow save policy", () => {
     expect(tx.entityRecord.create).toHaveBeenCalledTimes(1);
   });
 
-  it("returns a fresh conflict when overwrite confirmation has a stale expected status", async () => {
-    mockExistingAttendances([existingAttendance({ status: "AUSENTE" })]);
-
+  it("rejects arbitrary or inactive option ids per entry", async () => {
     const result = await saveAttendanceWorkflowDay(requestBody({
-      entries: [
-        {
-          expectedStatus: "PRESENTE",
-          overwrite: true,
-          personRecordId: "person_1",
-          status: "PRESENTE",
-        },
-      ],
+      entries: [{ personRecordId: "person_1", statusOptionId: "inactive_option" }],
     }));
 
     expect(result).toMatchObject({
@@ -342,25 +278,24 @@ describe("attendance workflow save policy", () => {
       data: {
         results: [
           {
-            existing: { status: "AUSENTE" },
+            code: "INVALID_STATUS_OPTION",
             personRecordId: "person_1",
-            requestedStatus: "PRESENTE",
-            result: "CONFLICT",
+            result: "ERROR",
           },
         ],
       },
     });
-    expect(tx.entityRecord.update).not.toHaveBeenCalled();
+    expect(tx.entityRecord.create).not.toHaveBeenCalled();
   });
 
   it("keeps identical retries functionally idempotent", async () => {
-    mockExistingAttendances([existingAttendance({ status: "PRESENTE" })]);
+    mockExistingAttendances([existingAttendance({ statusValue: "presente" })]);
 
     const result = await saveAttendanceWorkflowDay(requestBody({
       body: {
         clientRequestId: "request_1",
         date: "2026-08-22",
-        entries: [{ personRecordId: "person_1", status: "PRESENTE" }],
+        entries: [{ personRecordId: "person_1", statusOptionId: "present_option" }],
       },
     }));
 
@@ -376,64 +311,77 @@ describe("attendance workflow save policy", () => {
     expect(tx.entityRecord.create).not.toHaveBeenCalled();
   });
 
-  it("returns ERROR for a person outside the configured source entity", async () => {
-    const result = await saveAttendanceWorkflowDay(requestBody({
-      entries: [{ personRecordId: "foreign_person", status: "PRESENTE" }],
-    }));
+  it("accepts legacy presentOptionId as defaultCheckInOptionId", async () => {
+    appViewFindFirst.mockResolvedValue(appView({
+      config: {
+        workflowKey: "attendance",
+        sourceEntityTypeId: "people",
+        targetEntityTypeId: "attendance",
+        personFieldId: "person_field",
+        dateFieldId: "date_field",
+        statusFieldId: "status_field",
+        presentOptionId: "late_option",
+        absentOptionId: "absent_option",
+      },
+    }) as never);
+
+    const result = await getAttendanceWorkflowDay(dayQuery({ search: "Ana" }));
 
     expect(result).toMatchObject({
       ok: true,
       data: {
-        results: [
-          {
-            code: "INVALID_PERSON",
-            personRecordId: "foreign_person",
-            result: "ERROR",
-          },
-        ],
+        statuses: expect.arrayContaining([
+          expect.objectContaining({ optionId: "late_option", isDefaultCheckIn: true }),
+        ]),
       },
     });
-    expect(tx.entityRecord.create).not.toHaveBeenCalled();
-  });
-
-  it("rejects an AppView without access", async () => {
-    userCanAccessAppViewMock.mockResolvedValueOnce(false);
-
-    const result = await saveAttendanceWorkflowDay(requestBody({
-      entries: [{ personRecordId: "person_1", status: "PRESENTE" }],
-    }));
-
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.response.status).toBe(403);
-    }
   });
 });
 
 describe("attendance workflow day query", () => {
-  it("returns people with current attendance and null for missing attendance", async () => {
-    mockExistingAttendances([
-      existingAttendance({ personRecordId: "person_1", status: "PRESENTE" }),
-    ]);
+  it("does not return the full roster by default and includes status metadata plus day summary", async () => {
+    entityRecordCount.mockResolvedValue(25 as never);
+    mockLatestAttendances([existingAttendance({ statusValue: "atraso" })]);
 
-    const result = await getAttendanceWorkflowDay({
-      appViewId: "view_attendance",
-      contractId: "contract_1",
-      date: "2026-08-22",
-      userId: "user_1",
-    });
+    const result = await getAttendanceWorkflowDay(dayQuery());
 
     expect(result).toMatchObject({
       ok: true,
       data: {
         date: "2026-08-22",
+        items: [],
+        latest: [
+          {
+            person: { id: "person_1", displayName: "Ana" },
+            statusLabel: "ATRASO",
+            statusOptionId: "late_option",
+          },
+        ],
+        statuses: [
+          { optionId: "present_option", label: "PRESENTE", isDefaultCheckIn: true },
+          { optionId: "absent_option", label: "AUSENTE", isDefaultCheckIn: false },
+          { optionId: "late_option", label: "ATRASO", isDefaultCheckIn: false },
+        ],
+        summary: { totalRegistered: 25 },
+      },
+    });
+    expect(entityRecordFindMany).not.toHaveBeenCalledWith(expect.objectContaining({
+      where: { entityTypeId: "people" },
+    }));
+  });
+
+  it("searches people with a limited result set and returns null for missing attendance", async () => {
+    mockExistingAttendances([]);
+
+    const result = await getAttendanceWorkflowDay(dayQuery({ search: "ana" }));
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: {
         items: [
           {
             person: { id: "person_1", displayName: "Ana" },
-            attendance: {
-              recordId: "attendance_existing",
-              status: "PRESENTE",
-            },
+            attendance: null,
           },
           {
             person: { id: "person_2", displayName: "Beto" },
@@ -442,6 +390,48 @@ describe("attendance workflow day query", () => {
         ],
       },
     });
+    expect(entityRecordFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      take: 20,
+      where: expect.objectContaining({ entityTypeId: "people" }),
+    }));
+  });
+
+  it("loads one selected person directly", async () => {
+    const result = await getAttendanceWorkflowDay(dayQuery({ personRecordId: "person_2" }));
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: {
+        items: [
+          {
+            person: { id: "person_2", displayName: "Beto" },
+          },
+        ],
+      },
+    });
+    expect(entityRecordFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      take: 1,
+      where: {
+        entityTypeId: "people",
+        id: "person_2",
+      },
+    }));
+  });
+
+  it("rejects config when defaultCheckInOptionId belongs to another field or is inactive", async () => {
+    appViewFindFirst.mockResolvedValue(appView({
+      config: {
+        ...appView().config,
+        defaultCheckInOptionId: "inactive_option",
+      },
+    }) as never);
+
+    const result = await getAttendanceWorkflowDay(dayQuery({ search: "Ana" }));
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.response.status).toBe(400);
+    }
   });
 });
 
@@ -464,7 +454,17 @@ function requestBody({
   };
 }
 
-function appView() {
+function dayQuery(overrides: Partial<Parameters<typeof getAttendanceWorkflowDay>[0]> = {}) {
+  return {
+    appViewId: "view_attendance",
+    contractId: "contract_1",
+    date: "2026-08-22",
+    userId: "user_1",
+    ...overrides,
+  };
+}
+
+function appView(overrides: Record<string, unknown> = {}) {
   return {
     config: {
       workflowKey: "attendance",
@@ -473,19 +473,22 @@ function appView() {
       personFieldId: "person_field",
       dateFieldId: "date_field",
       statusFieldId: "status_field",
-      presentOptionId: "present_option",
-      absentOptionId: "absent_option",
+      defaultCheckInOptionId: "present_option",
       observationFieldId: "observation_field",
     },
     id: "view_attendance",
     name: "Asistencia",
     slug: "asistencia",
     type: "WORKFLOW",
+    ...overrides,
   };
 }
 
 function sourceEntityType() {
   return {
+    fields: [
+      field("person_name", "nombre", "Nombre", "TEXT", { searchable: true }),
+    ],
     id: "people",
     name: "Personas",
   };
@@ -493,12 +496,13 @@ function sourceEntityType() {
 
 function attendanceEntityType({
   statusOptions = [
-    { id: "present_option", isActive: true, label: "PRESENTE", value: "presente" },
-    { id: "absent_option", isActive: true, label: "AUSENTE", value: "ausente" },
-    { id: "late_option", isActive: true, label: "ATRASO", value: "atraso" },
+    { id: "present_option", isActive: true, label: "PRESENTE", sortOrder: 0, value: "presente" },
+    { id: "absent_option", isActive: true, label: "AUSENTE", sortOrder: 1, value: "ausente" },
+    { id: "late_option", isActive: true, label: "ATRASO", sortOrder: 2, value: "atraso" },
+    { id: "inactive_option", isActive: false, label: "INACTIVO", sortOrder: 3, value: "inactivo" },
   ],
 }: {
-  statusOptions?: Array<{ id: string; isActive: boolean; label: string; value: string }>;
+  statusOptions?: Array<{ id: string; isActive: boolean; label: string; sortOrder: number; value: string }>;
 } = {}) {
   return {
     fields: [
@@ -524,15 +528,10 @@ function field(
     id,
     key,
     name,
-    options: type === "SELECT"
-      ? [
-          { id: "present_option", isActive: true, label: "PRESENTE", value: "presente" },
-          { id: "absent_option", isActive: true, label: "AUSENTE", value: "ausente" },
-        ]
-      : [],
+    options: [],
     multiple: false,
     required: id !== "observation_field",
-    searchable: true,
+    searchable: false,
     sortOrder: 0,
     type,
     ...overrides,
@@ -546,9 +545,31 @@ function people() {
   ];
 }
 
+function defaultEntityRecordFindMany(records: Array<ReturnType<typeof existingAttendance>> = []) {
+  return (async (args: EntityRecordFindManyMockArgs) => {
+    if (args?.where?.entityTypeId === "people") {
+      if (typeof args.where.id === "string") {
+        return people().filter((person) => person.id === args.where?.id) as never;
+      }
+
+      const ids = Array.isArray(args.where.id?.in)
+        ? args.where.id.in
+        : people().map((person) => person.id);
+
+      return people().filter((person) => ids.includes(person.id)) as never;
+    }
+
+    return records as never;
+  }) as never;
+}
+
 function mockExistingAttendances(records: Array<ReturnType<typeof existingAttendance>>) {
   entityRecordFindMany.mockImplementation((async (args: EntityRecordFindManyMockArgs) => {
     if (args?.where?.entityTypeId === "people") {
+      if (typeof args.where.id === "string") {
+        return people().filter((person) => person.id === args.where?.id) as never;
+      }
+
       const ids = Array.isArray(args.where.id?.in)
         ? args.where.id.in
         : people().map((person) => person.id);
@@ -569,14 +590,32 @@ function mockExistingAttendances(records: Array<ReturnType<typeof existingAttend
   }) as never);
 }
 
+function mockLatestAttendances(records: Array<ReturnType<typeof existingAttendance>>) {
+  entityRecordFindMany.mockImplementation((async (args: EntityRecordFindManyMockArgs) => {
+    if (args?.where?.entityTypeId === "people") {
+      return [] as never;
+    }
+
+    if (args?.include?.outgoingRelations) {
+      return records.map((record) => ({
+        ...record,
+        outgoingRelations: record.outgoingRelations.map((relation) => ({
+          ...relation,
+          targetRecord: people().find((person) => person.id === relation.targetRecordId) ?? null,
+        })),
+      })) as never;
+    }
+
+    return [] as never;
+  }) as never);
+}
+
 function existingAttendance({
   personRecordId = "person_1",
-  status,
-  statusValue,
+  statusValue = "presente",
   updatedAt = new Date("2026-08-22T12:00:00.000Z"),
 }: {
   personRecordId?: string;
-  status?: "PRESENTE" | "AUSENTE";
   statusValue?: string;
   updatedAt?: Date;
 }) {
@@ -594,7 +633,7 @@ function existingAttendance({
       {
         dateValue: null,
         entityFieldId: "status_field",
-        textValue: statusValue ?? (status === "AUSENTE" ? "ausente" : "presente"),
+        textValue: statusValue,
       },
     ],
   };

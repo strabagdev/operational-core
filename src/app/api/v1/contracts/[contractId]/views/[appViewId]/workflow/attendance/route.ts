@@ -18,10 +18,13 @@ export async function GET(
     return access.response;
   }
 
+  const searchParams = new URL(request.url).searchParams;
   const result = await getAttendanceWorkflowDay({
     appViewId,
     contractId: access.context.contract.id,
-    date: new URL(request.url).searchParams.get("date"),
+    date: searchParams.get("date"),
+    personRecordId: searchParams.get("personRecordId"),
+    search: searchParams.get("search"),
     userId: access.context.user.id,
   });
 

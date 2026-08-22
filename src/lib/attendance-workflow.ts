@@ -17,14 +17,12 @@ import {
 import { prisma } from "@/lib/prisma";
 import { syncEntityRelations } from "@/lib/entity-records";
 
-export type AttendanceStatus = "PRESENTE" | "AUSENTE";
 export type AttendanceEntryInput = {
-  expectedStatus?: AttendanceStatus;
   expectedUpdatedAt?: string;
   observation?: string | null;
   overwrite?: boolean;
   personRecordId: string;
-  status: AttendanceStatus;
+  statusOptionId: string;
 };
 export type AttendanceEntryResult =
   | {
@@ -35,11 +33,15 @@ export type AttendanceEntryResult =
   | {
       existing: {
         recordId: string;
-        status: AttendanceStatus | null;
+        statusLabel: string | null;
+        statusOptionId: string | null;
         updatedAt: string;
       };
       personRecordId: string;
-      requestedStatus: AttendanceStatus;
+      requested: {
+        statusLabel: string;
+        statusOptionId: string;
+      };
       result: "CONFLICT";
     }
   | {
@@ -55,12 +57,18 @@ type AttendanceField = {
   id: string;
   key: string;
   name: string;
-  options: Array<{ id: string; isActive: boolean; label?: string; value: string }>;
+  options: Array<{ id: string; isActive: boolean; label: string; sortOrder: number; value: string }>;
   multiple: boolean;
   required: boolean;
   searchable: boolean;
   sortOrder: number;
   type: EntityFieldType;
+};
+type AttendanceStatusOption = {
+  id: string;
+  isDefaultCheckIn: boolean;
+  label: string;
+  value: string;
 };
 type AttendanceContext = {
   appView: {
@@ -70,6 +78,7 @@ type AttendanceContext = {
   };
   config: AttendanceConfig;
   sourceEntityType: {
+    fields: AttendanceField[];
     id: string;
     name: string;
   };
@@ -78,19 +87,26 @@ type AttendanceContext = {
     id: string;
     name: string;
   };
-  statusOptionValues: StatusOptionValues;
+  statusOptions: AttendanceStatusOption[];
+  statusOptionsById: Map<string, AttendanceStatusOption>;
+  statusOptionsByValue: Map<string, AttendanceStatusOption>;
 };
-type StatusOptionValues = Record<AttendanceStatus, string>;
+const attendanceSearchLimit = 20;
+const latestAttendanceLimit = 10;
 
 export async function getAttendanceWorkflowDay({
   appViewId,
   contractId,
   date,
+  personRecordId,
+  search,
   userId,
 }: {
   appViewId: string;
   contractId: string;
   date: string | null;
+  personRecordId?: string | null;
+  search?: string | null;
   userId: string;
 }) {
   const parsedDate = parseAttendanceDate(date);
@@ -105,15 +121,10 @@ export async function getAttendanceWorkflowDay({
     return context;
   }
 
-  const people = await prisma.entityRecord.findMany({
-    orderBy: [{ displayName: "asc" }, { id: "asc" }],
-    select: {
-      displayName: true,
-      id: true,
-    },
-    where: {
-      entityTypeId: context.context.sourceEntityType.id,
-    },
+  const people = await findAttendancePeople({
+    context: context.context,
+    personRecordId,
+    search,
   });
   const attendances = people.length === 0
     ? []
@@ -121,7 +132,7 @@ export async function getAttendanceWorkflowDay({
         config: context.context.config,
         date: parsedDate.date,
         personRecordIds: people.map((person) => person.id),
-        statusOptionValues: context.context.statusOptionValues,
+        statusOptionsByValue: context.context.statusOptionsByValue,
         targetEntityTypeId: context.context.targetEntityType.id,
       });
   const attendanceByPersonId = new Map(
@@ -142,13 +153,36 @@ export async function getAttendanceWorkflowDay({
             ? {
                 observation: attendance.observation,
                 recordId: attendance.record.id,
-                status: attendance.status,
+                statusLabel: attendance.statusOption?.label ?? null,
+                statusOptionId: attendance.statusOption?.id ?? null,
                 updatedAt: attendance.record.updatedAt.toISOString(),
               }
             : null,
         };
       }),
-      sourceEntityType: context.context.sourceEntityType,
+      latest: await getLatestAttendanceRecords({
+        config: context.context.config,
+        date: parsedDate.date,
+        limit: latestAttendanceLimit,
+        statusOptionsByValue: context.context.statusOptionsByValue,
+        targetEntityTypeId: context.context.targetEntityType.id,
+      }),
+      sourceEntityType: {
+        id: context.context.sourceEntityType.id,
+        name: context.context.sourceEntityType.name,
+      },
+      statuses: context.context.statusOptions.map((option) => ({
+        isDefaultCheckIn: option.isDefaultCheckIn,
+        label: option.label,
+        optionId: option.id,
+      })),
+      summary: {
+        totalRegistered: await countRegisteredAttendances({
+          config: context.context.config,
+          date: parsedDate.date,
+          targetEntityTypeId: context.context.targetEntityType.id,
+        }),
+      },
       targetEntityType: {
         id: context.context.targetEntityType.id,
         name: context.context.targetEntityType.name,
@@ -232,7 +266,8 @@ export async function saveAttendanceWorkflowDay({
       date: parsed.body.date,
       entry,
       person,
-      statusOptionValues: context.context.statusOptionValues,
+      statusOptionsById: context.context.statusOptionsById,
+      statusOptionsByValue: context.context.statusOptionsByValue,
       targetEntityType: context.context.targetEntityType,
       userId,
     }));
@@ -256,7 +291,8 @@ async function saveAttendanceEntry({
   entry,
   person,
   targetEntityType,
-  statusOptionValues,
+  statusOptionsById,
+  statusOptionsByValue,
   userId,
 }: {
   appId: string;
@@ -265,15 +301,27 @@ async function saveAttendanceEntry({
   date: Date;
   entry: AttendanceEntryInput;
   person: { displayName: string; id: string };
-  statusOptionValues: StatusOptionValues;
+  statusOptionsById: Map<string, AttendanceStatusOption>;
+  statusOptionsByValue: Map<string, AttendanceStatusOption>;
   targetEntityType: AttendanceContext["targetEntityType"];
   userId: string;
 }): Promise<AttendanceEntryResult> {
+  const requestedOption = statusOptionsById.get(entry.statusOptionId);
+
+  if (!requestedOption) {
+    return {
+      code: "INVALID_STATUS_OPTION",
+      message: "El estado solicitado no pertenece al campo Estado configurado o está inactivo.",
+      personRecordId: entry.personRecordId,
+      result: "ERROR",
+    };
+  }
+
   const existing = (await findExistingAttendances({
     config,
     date,
     personRecordIds: [person.id],
-    statusOptionValues,
+    statusOptionsByValue,
     targetEntityTypeId: targetEntityType.id,
   }))[0];
 
@@ -285,7 +333,7 @@ async function saveAttendanceEntry({
       date,
       entry,
       person,
-      statusOptionValues,
+      requestedOption,
       targetEntityType,
       userId,
     });
@@ -297,7 +345,7 @@ async function saveAttendanceEntry({
     };
   }
 
-  if (existing.status === entry.status) {
+  if (existing.statusOption?.id === entry.statusOptionId) {
     return {
       personRecordId: entry.personRecordId,
       recordId: existing.record.id,
@@ -306,23 +354,20 @@ async function saveAttendanceEntry({
   }
 
   if (!entry.overwrite) {
-    return conflictResult(entry, existing);
+    return conflictResult(entry, existing, requestedOption);
   }
 
-  if (!entry.expectedStatus && !entry.expectedUpdatedAt) {
+  if (!entry.expectedUpdatedAt) {
     return {
       code: "OVERWRITE_EXPECTATION_REQUIRED",
-      message: "overwrite requiere expectedStatus o expectedUpdatedAt.",
+      message: "overwrite requiere expectedUpdatedAt.",
       personRecordId: entry.personRecordId,
       result: "ERROR",
     };
   }
 
-  if (
-    (entry.expectedStatus && existing.status !== entry.expectedStatus) ||
-    (entry.expectedUpdatedAt && existing.record.updatedAt.toISOString() !== entry.expectedUpdatedAt)
-  ) {
-    return conflictResult(entry, existing);
+  if (existing.record.updatedAt.toISOString() !== entry.expectedUpdatedAt) {
+    return conflictResult(entry, existing, requestedOption);
   }
 
   const record = await updateAttendanceRecord({
@@ -331,7 +376,7 @@ async function saveAttendanceEntry({
     contractId,
     entry,
     existing,
-    statusOptionValues,
+    requestedOption,
     targetEntityType,
     userId,
   });
@@ -351,7 +396,7 @@ async function createAttendanceRecord({
   entry,
   person,
   targetEntityType,
-  statusOptionValues,
+  requestedOption,
   userId,
 }: {
   appId: string;
@@ -360,12 +405,12 @@ async function createAttendanceRecord({
   date: Date;
   entry: AttendanceEntryInput;
   person: { displayName: string; id: string };
-  statusOptionValues: StatusOptionValues;
+  requestedOption: AttendanceStatusOption;
   targetEntityType: AttendanceContext["targetEntityType"];
   userId: string;
 }) {
   return prisma.$transaction(async (tx) => {
-    const values = attendanceValues({ config, date, entry, statusOptionValues });
+    const values = attendanceValues({ config, date, entry, requestedOption });
     const displayName = getRecordDisplayName(targetEntityType.fields, values) ||
       `${person.displayName} ${dateOnlyInputValue(date)}`;
     const record = await tx.entityRecord.create({
@@ -409,7 +454,7 @@ async function updateAttendanceRecord({
   contractId,
   entry,
   existing,
-  statusOptionValues,
+  requestedOption,
   targetEntityType,
   userId,
 }: {
@@ -418,7 +463,7 @@ async function updateAttendanceRecord({
   contractId: string;
   entry: AttendanceEntryInput;
   existing: ExistingAttendance;
-  statusOptionValues: StatusOptionValues;
+  requestedOption: AttendanceStatusOption;
   targetEntityType: AttendanceContext["targetEntityType"];
   userId: string;
 }) {
@@ -427,7 +472,7 @@ async function updateAttendanceRecord({
       config.statusFieldId,
       ...(config.observationFieldId ? [config.observationFieldId] : []),
     ];
-    const newValues = attendanceMutableValues({ config, entry, statusOptionValues });
+    const newValues = attendanceMutableValues({ config, entry, requestedOption });
 
     await tx.entityValue.deleteMany({
       where: {
@@ -479,20 +524,20 @@ type ExistingAttendance = {
       textValue: string | null;
     }>;
   };
-  status: AttendanceStatus | null;
+  statusOption: AttendanceStatusOption | null;
 };
 
 async function findExistingAttendances({
   config,
   date,
   personRecordIds,
-  statusOptionValues,
+  statusOptionsByValue,
   targetEntityTypeId,
 }: {
   config: AttendanceConfig;
   date: Date;
   personRecordIds: string[];
-  statusOptionValues: StatusOptionValues;
+  statusOptionsByValue: Map<string, AttendanceStatusOption>;
   targetEntityTypeId: string;
 }): Promise<ExistingAttendance[]> {
   if (personRecordIds.length === 0) {
@@ -561,11 +606,217 @@ async function findExistingAttendances({
         : null,
       personRecordId,
       record,
-      status: domainStatusFromOptionValue(statusValue, statusOptionValues),
+      statusOption: statusValue ? statusOptionsByValue.get(statusValue) ?? null : null,
     });
   }
 
   return Array.from(firstByPerson.values());
+}
+
+async function findAttendancePeople({
+  context,
+  personRecordId,
+  search,
+}: {
+  context: AttendanceContext;
+  personRecordId?: string | null;
+  search?: string | null;
+}) {
+  const normalizedPersonRecordId = personRecordId?.trim();
+  const normalizedSearch = search?.trim();
+
+  if (normalizedPersonRecordId) {
+    return prisma.entityRecord.findMany({
+      orderBy: [{ displayName: "asc" }, { id: "asc" }],
+      select: {
+        displayName: true,
+        id: true,
+      },
+      take: 1,
+      where: {
+        entityTypeId: context.sourceEntityType.id,
+        id: normalizedPersonRecordId,
+      },
+    });
+  }
+
+  if (!normalizedSearch) {
+    return [];
+  }
+
+  return prisma.entityRecord.findMany({
+    orderBy: [{ displayName: "asc" }, { id: "asc" }],
+    select: {
+      displayName: true,
+      id: true,
+    },
+    take: attendanceSearchLimit,
+    where: buildAttendancePeopleSearchWhere({
+      entityTypeId: context.sourceEntityType.id,
+      fields: context.sourceEntityType.fields,
+      query: normalizedSearch,
+    }),
+  });
+}
+
+function buildAttendancePeopleSearchWhere({
+  entityTypeId,
+  fields,
+  query,
+}: {
+  entityTypeId: string;
+  fields: AttendanceField[];
+  query: string;
+}): Prisma.EntityRecordWhereInput {
+  const textFieldIds = fields
+    .filter((field) => field.searchable && attendanceSearchableTextFieldTypes.has(field.type))
+    .map((field) => field.id);
+  const selectValueSearches = fields
+    .filter((field) => field.searchable && field.type === "SELECT")
+    .map((field) => ({
+      fieldId: field.id,
+      values: field.options
+        .filter((option) => optionMatchesSearch(option, query))
+        .map((option) => option.value),
+    }))
+    .filter((item) => item.values.length > 0);
+  const orConditions: Prisma.EntityRecordWhereInput[] = [
+    {
+      displayName: {
+        contains: query,
+        mode: "insensitive",
+      },
+    },
+  ];
+
+  if (textFieldIds.length > 0) {
+    orConditions.push({
+      values: {
+        some: {
+          entityFieldId: { in: textFieldIds },
+          textValue: {
+            contains: query,
+            mode: "insensitive",
+          },
+        },
+      },
+    });
+  }
+
+  for (const search of selectValueSearches) {
+    orConditions.push({
+      values: {
+        some: {
+          entityFieldId: search.fieldId,
+          textValue: { in: search.values },
+        },
+      },
+    });
+  }
+
+  return {
+    entityTypeId,
+    OR: orConditions,
+  };
+}
+
+async function countRegisteredAttendances({
+  config,
+  date,
+  targetEntityTypeId,
+}: {
+  config: AttendanceConfig;
+  date: Date;
+  targetEntityTypeId: string;
+}) {
+  return prisma.entityRecord.count({
+    where: {
+      entityTypeId: targetEntityTypeId,
+      values: {
+        some: {
+          dateValue: date,
+          entityFieldId: config.dateFieldId,
+        },
+      },
+    },
+  });
+}
+
+async function getLatestAttendanceRecords({
+  config,
+  date,
+  limit,
+  statusOptionsByValue,
+  targetEntityTypeId,
+}: {
+  config: AttendanceConfig;
+  date: Date;
+  limit: number;
+  statusOptionsByValue: Map<string, AttendanceStatusOption>;
+  targetEntityTypeId: string;
+}) {
+  const records = await prisma.entityRecord.findMany({
+    include: {
+      outgoingRelations: {
+        select: {
+          targetRecord: {
+            select: {
+              displayName: true,
+              id: true,
+            },
+          },
+          targetRecordId: true,
+        },
+        where: {
+          sourceFieldId: config.personFieldId,
+        },
+      },
+      values: {
+        select: {
+          entityFieldId: true,
+          textValue: true,
+        },
+        where: {
+          entityFieldId: config.statusFieldId,
+        },
+      },
+    },
+    orderBy: [{ updatedAt: "desc" }, { id: "asc" }],
+    take: limit,
+    where: {
+      entityTypeId: targetEntityTypeId,
+      outgoingRelations: {
+        some: {
+          sourceFieldId: config.personFieldId,
+        },
+      },
+      values: {
+        some: {
+          dateValue: date,
+          entityFieldId: config.dateFieldId,
+        },
+      },
+    },
+  });
+
+  return records.map((record) => {
+    const statusValue = record.values.find((value) => value.entityFieldId === config.statusFieldId)?.textValue;
+    const statusOption = statusValue ? statusOptionsByValue.get(statusValue) ?? null : null;
+    const person = record.outgoingRelations[0]?.targetRecord ?? null;
+
+    return {
+      attendanceRecordId: record.id,
+      person: person
+        ? {
+            displayName: person.displayName,
+            id: person.id,
+          }
+        : null,
+      statusLabel: statusOption?.label ?? null,
+      statusOptionId: statusOption?.id ?? null,
+      updatedAt: record.updatedAt.toISOString(),
+    };
+  });
 }
 
 async function getAttendanceWorkflowContext({
@@ -621,6 +872,31 @@ async function getAttendanceWorkflowContext({
   const [sourceEntityType, targetEntityType] = await Promise.all([
     prisma.entityType.findFirst({
       select: {
+        fields: {
+          orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }, { id: "asc" }],
+          select: {
+            config: true,
+            id: true,
+            key: true,
+            multiple: true,
+            name: true,
+            options: {
+              orderBy: [{ sortOrder: "asc" }, { label: "asc" }, { id: "asc" }],
+              select: {
+                id: true,
+                isActive: true,
+                label: true,
+                sortOrder: true,
+                value: true,
+              },
+            },
+            required: true,
+            searchable: true,
+            sortOrder: true,
+            type: true,
+          },
+          where: { isActive: true },
+        },
         id: true,
         name: true,
       },
@@ -641,10 +917,12 @@ async function getAttendanceWorkflowContext({
             multiple: true,
             name: true,
             options: {
+              orderBy: [{ sortOrder: "asc" }, { label: "asc" }, { id: "asc" }],
               select: {
                 id: true,
                 isActive: true,
                 label: true,
+                sortOrder: true,
                 value: true,
               },
             },
@@ -692,9 +970,15 @@ async function getAttendanceWorkflowContext({
         slug: appView.slug,
       },
       config,
-      sourceEntityType,
+      sourceEntityType: {
+        fields: sourceEntityType.fields,
+        id: sourceEntityType.id,
+        name: sourceEntityType.name,
+      },
       targetEntityType,
-      statusOptionValues: configValidation.statusOptionValues,
+      statusOptions: configValidation.statusOptions,
+      statusOptionsById: configValidation.statusOptionsById,
+      statusOptionsByValue: configValidation.statusOptionsByValue,
     },
   };
 }
@@ -741,16 +1025,15 @@ function validateAttendanceRuntimeConfig({
     };
   }
 
-  const optionMapping = getAttendanceStatusOptionValues({
-    absentOptionId: config.absentOptionId,
-    presentOptionId: config.presentOptionId,
+  const statusOptions = getAttendanceStatusOptions({
+    defaultCheckInOptionId: config.defaultCheckInOptionId,
     statusField,
   });
 
-  if (!optionMapping.ok) {
+  if (!statusOptions.ok) {
     return {
       ok: false as const,
-      response: badRequest(optionMapping.message, "INVALID_WORKFLOW_CONFIG"),
+      response: badRequest(statusOptions.message, "INVALID_WORKFLOW_CONFIG"),
     };
   }
 
@@ -761,7 +1044,12 @@ function validateAttendanceRuntimeConfig({
     };
   }
 
-  return { ok: true as const, statusOptionValues: optionMapping.statusOptionValues };
+  return {
+    ok: true as const,
+    statusOptions: statusOptions.statusOptions,
+    statusOptionsById: statusOptions.statusOptionsById,
+    statusOptionsByValue: statusOptions.statusOptionsByValue,
+  };
 }
 
 function fieldRelationTargetsEntity(config: Prisma.JsonValue | null, entityTypeId: string) {
@@ -829,35 +1117,21 @@ function parseAttendanceSaveBody(body: unknown) {
       };
     }
 
-    if (entry.status !== "PRESENTE" && entry.status !== "AUSENTE") {
+    if (typeof entry.statusOptionId !== "string" || !entry.statusOptionId.trim()) {
       return {
         ok: false as const,
-        response: badRequest("status debe ser PRESENTE o AUSENTE.", "INVALID_ATTENDANCE_STATUS"),
-      };
-    }
-
-    const expectedStatus = entry.expectedStatus;
-
-    if (
-      expectedStatus !== undefined &&
-      expectedStatus !== "PRESENTE" &&
-      expectedStatus !== "AUSENTE"
-    ) {
-      return {
-        ok: false as const,
-        response: badRequest("expectedStatus debe ser PRESENTE o AUSENTE.", "INVALID_ATTENDANCE_STATUS"),
+        response: badRequest("statusOptionId es obligatorio.", "INVALID_ATTENDANCE_STATUS"),
       };
     }
 
     entries.push({
-      expectedStatus,
       expectedUpdatedAt: typeof entry.expectedUpdatedAt === "string" ? entry.expectedUpdatedAt : undefined,
       observation: typeof entry.observation === "string"
         ? entry.observation.trim() || null
         : entry.observation === null ? null : undefined,
       overwrite: entry.overwrite === true,
       personRecordId: entry.personRecordId.trim(),
-      status: entry.status,
+      statusOptionId: entry.statusOptionId.trim(),
     });
   }
 
@@ -950,93 +1224,79 @@ function attendanceValues({
   config,
   date,
   entry,
-  statusOptionValues,
+  requestedOption,
 }: {
   config: AttendanceConfig;
   date: Date;
   entry: AttendanceEntryInput;
-  statusOptionValues: StatusOptionValues;
+  requestedOption: AttendanceStatusOption;
 }): SerializedFieldValue[] {
   return [
     { dateValue: date, fieldId: config.dateFieldId },
-    ...attendanceMutableValues({ config, entry, statusOptionValues }),
+    ...attendanceMutableValues({ config, entry, requestedOption }),
   ];
 }
 
 function attendanceMutableValues({
   config,
   entry,
-  statusOptionValues,
+  requestedOption,
 }: {
   config: AttendanceConfig;
   entry: AttendanceEntryInput;
-  statusOptionValues: StatusOptionValues;
+  requestedOption: AttendanceStatusOption;
 }): SerializedFieldValue[] {
   return [
-    { fieldId: config.statusFieldId, textValue: statusOptionValues[entry.status] },
+    { fieldId: config.statusFieldId, textValue: requestedOption.value },
     ...(config.observationFieldId && entry.observation
       ? [{ fieldId: config.observationFieldId, textValue: entry.observation }]
       : []),
   ];
 }
 
-function getAttendanceStatusOptionValues({
-  absentOptionId,
-  presentOptionId,
+function getAttendanceStatusOptions({
+  defaultCheckInOptionId,
   statusField,
 }: {
-  absentOptionId?: string;
-  presentOptionId?: string;
+  defaultCheckInOptionId: string;
   statusField: AttendanceField;
 }):
-  | { ok: true; statusOptionValues: StatusOptionValues }
+  | {
+      ok: true;
+      statusOptions: AttendanceStatusOption[];
+      statusOptionsById: Map<string, AttendanceStatusOption>;
+      statusOptionsByValue: Map<string, AttendanceStatusOption>;
+    }
   | { ok: false; message: string } {
-  if (!presentOptionId || !absentOptionId) {
+  const activeOptions = statusField.options.filter((option) => option.isActive);
+
+  if (activeOptions.length === 0) {
     return {
       ok: false,
-      message: "La configuración de asistencia debe seleccionar opciones para Presente y Ausente.",
+      message: "El campo Estado debe tener al menos una opción activa.",
     };
   }
 
-  if (presentOptionId === absentOptionId) {
+  if (!activeOptions.some((option) => option.id === defaultCheckInOptionId)) {
     return {
       ok: false,
-      message: "La configuración de asistencia debe usar opciones distintas para Presente y Ausente.",
+      message: "El estado por defecto de checking debe pertenecer al campo Estado y estar activo.",
     };
   }
 
-  const presentOption = statusField.options.find((option) => option.id === presentOptionId);
-  const absentOption = statusField.options.find((option) => option.id === absentOptionId);
-
-  if (!presentOption?.isActive || !absentOption?.isActive) {
-    return {
-      ok: false,
-      message: "Las opciones de asistencia deben pertenecer al campo Estado y estar activas.",
-    };
-  }
+  const statusOptions = activeOptions.map((option) => ({
+    id: option.id,
+    isDefaultCheckIn: option.id === defaultCheckInOptionId,
+    label: option.label,
+    value: option.value,
+  }));
 
   return {
     ok: true,
-    statusOptionValues: {
-      PRESENTE: presentOption.value,
-      AUSENTE: absentOption.value,
-    },
+    statusOptions,
+    statusOptionsById: new Map(statusOptions.map((option) => [option.id, option])),
+    statusOptionsByValue: new Map(statusOptions.map((option) => [option.value, option])),
   };
-}
-
-function domainStatusFromOptionValue(
-  value: string | null | undefined,
-  statusOptionValues: StatusOptionValues,
-) {
-  if (value === statusOptionValues.PRESENTE) {
-    return "PRESENTE";
-  }
-
-  if (value === statusOptionValues.AUSENTE) {
-    return "AUSENTE";
-  }
-
-  return null;
 }
 
 async function writeAttendanceValues(
@@ -1065,15 +1325,41 @@ async function writeAttendanceValues(
 function conflictResult(
   entry: AttendanceEntryInput,
   existing: ExistingAttendance,
+  requestedOption: AttendanceStatusOption,
 ): AttendanceEntryResult {
   return {
     existing: {
       recordId: existing.record.id,
-      status: existing.status,
+      statusLabel: existing.statusOption?.label ?? null,
+      statusOptionId: existing.statusOption?.id ?? null,
       updatedAt: existing.record.updatedAt.toISOString(),
     },
     personRecordId: entry.personRecordId,
-    requestedStatus: entry.status,
+    requested: {
+      statusLabel: requestedOption.label,
+      statusOptionId: requestedOption.id,
+    },
     result: "CONFLICT",
   };
+}
+
+const attendanceSearchableTextFieldTypes = new Set<EntityFieldType>([
+  "TEXT",
+  "TEXTAREA",
+  "EMAIL",
+  "PHONE",
+  "URL",
+  "TIME",
+]);
+
+function optionMatchesSearch(
+  option: { label: string; value: string },
+  query: string,
+) {
+  const normalizedQuery = query.toLocaleLowerCase();
+
+  return (
+    option.label.toLocaleLowerCase().includes(normalizedQuery) ||
+    option.value.toLocaleLowerCase().includes(normalizedQuery)
+  );
 }

@@ -66,35 +66,33 @@ describe("AppView settings actions", () => {
   });
 
   it("returns validation state for invalid create without redirecting to the list", async () => {
-    const error = new Error("Este campo debe incluir PRESENTE y AUSENTE.");
+    const error = new Error("Selecciona el estado por defecto de checking.");
 
     createAppViewMock.mockRejectedValue(error);
-    friendlyAppViewErrorMock.mockReturnValue("Este campo debe incluir PRESENTE y AUSENTE.");
+    friendlyAppViewErrorMock.mockReturnValue("Selecciona el estado por defecto de checking.");
     appViewFieldErrorsMock.mockReturnValue({
-      statusFieldId: ["Este campo debe incluir PRESENTE y AUSENTE."],
+      defaultCheckInOptionId: ["Selecciona el estado por defecto de checking."],
     });
 
     const result = await createAppViewAction("contract_1", initialState(), appViewFormData({
       name: "Registro de Asistencia",
       personFieldId: "person_field",
       statusFieldId: "status_field",
-      presentOptionId: "present_option",
-      absentOptionId: "absent_option",
+      defaultCheckInOptionId: "present_option",
       type: "WORKFLOW",
     }));
 
     expect(result).toEqual({
       success: false,
-      message: "Este campo debe incluir PRESENTE y AUSENTE.",
+      message: "Selecciona el estado por defecto de checking.",
       fieldErrors: {
-        statusFieldId: ["Este campo debe incluir PRESENTE y AUSENTE."],
+        defaultCheckInOptionId: ["Selecciona el estado por defecto de checking."],
       },
       values: expect.objectContaining({
         name: "Registro de Asistencia",
         personFieldId: "person_field",
         statusFieldId: "status_field",
-        presentOptionId: "present_option",
-        absentOptionId: "absent_option",
+        defaultCheckInOptionId: "present_option",
         type: "WORKFLOW",
       }),
     });
@@ -113,8 +111,7 @@ describe("AppView settings actions", () => {
     const result = await updateAppViewAction("contract_1", "view_1", initialState(), appViewFormData({
       name: "Registro de Asistencia",
       personFieldId: "person_field",
-      presentOptionId: "present_option",
-      absentOptionId: "absent_option",
+      defaultCheckInOptionId: "present_option",
       sourceEntityTypeId: "people",
       targetEntityTypeId: "attendance",
       type: "WORKFLOW",
@@ -131,8 +128,7 @@ describe("AppView settings actions", () => {
         name: "Registro de Asistencia",
         observationFieldId: "observation_field",
         personFieldId: "person_field",
-        presentOptionId: "present_option",
-        absentOptionId: "absent_option",
+        defaultCheckInOptionId: "present_option",
         slug: "registro-de-asistencia",
         sortOrder: "0",
         sourceEntityTypeId: "people",
@@ -169,8 +165,7 @@ function appViewFormData(overrides: Record<string, string> = {}) {
     name: "Registro de Asistencia",
     observationFieldId: "observation_field",
     personFieldId: "person_field",
-    presentOptionId: "present_option",
-    absentOptionId: "absent_option",
+    defaultCheckInOptionId: "present_option",
     slug: "registro-de-asistencia",
     sortOrder: "0",
     sourceEntityTypeId: "people",

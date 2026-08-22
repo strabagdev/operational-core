@@ -30,13 +30,16 @@ describe("attendance workflow route", () => {
         appView: { id: "view_1", name: "Asistencia", slug: "asistencia" },
         date: "2026-08-22",
         items: [],
+        latest: [],
         sourceEntityType: { id: "people", name: "Personas" },
+        statuses: [],
+        summary: { totalRegistered: 0 },
         targetEntityType: { id: "attendance", name: "Asistencias" },
       },
     } as never);
 
     const response = await GET(
-      new Request("http://localhost/api/v1/contracts/contract_1/views/view_1/workflow/attendance?date=2026-08-22"),
+      new Request("http://localhost/api/v1/contracts/contract_1/views/view_1/workflow/attendance?date=2026-08-22&search=ana&personRecordId=person_1"),
       { params: Promise.resolve({ appViewId: "view_1", contractId: "contract_1" }) },
     );
 
@@ -45,6 +48,8 @@ describe("attendance workflow route", () => {
       appViewId: "view_1",
       contractId: "contract_1",
       date: "2026-08-22",
+      personRecordId: "person_1",
+      search: "ana",
       userId: "user_1",
     });
     expect(await response.json()).toMatchObject({
@@ -65,7 +70,7 @@ describe("attendance workflow route", () => {
     } as never);
     const body = {
       date: "2026-08-22",
-      entries: [{ personRecordId: "person_1", status: "PRESENTE" }],
+      entries: [{ personRecordId: "person_1", statusOptionId: "present_option" }],
     };
 
     const response = await POST(

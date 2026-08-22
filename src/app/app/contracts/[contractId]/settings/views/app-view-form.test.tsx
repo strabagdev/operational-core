@@ -73,8 +73,7 @@ describe("AppViewForm", () => {
             personFieldId: "person_field",
             dateFieldId: "date_field",
             statusFieldId: "status_field",
-            presentOptionId: "present_option",
-            absentOptionId: "absent_option",
+            defaultCheckInOptionId: "present_option",
             observationFieldId: "observation_field",
             type: "WORKFLOW",
             workflowKey: "attendance",
@@ -96,8 +95,7 @@ describe("AppViewForm", () => {
     expect(html).toContain("Campo Persona");
     expect(html).toContain("Campo Fecha");
     expect(html).toContain("Campo Estado");
-    expect(html).toContain("Opción para Presente");
-    expect(html).toContain("Opción para Ausente");
+    expect(html).toContain("Estado por defecto de checking");
     expect(html).toContain("Campo Observación");
   });
 
@@ -108,9 +106,9 @@ describe("AppViewForm", () => {
         entityTypes={entityTypes}
         initialActionState={{
           success: false,
-          message: "Selecciona la opción para Presente.",
+          message: "Selecciona el estado por defecto de checking.",
           fieldErrors: {
-            presentOptionId: ["Selecciona la opción para Presente."],
+            defaultCheckInOptionId: ["Selecciona el estado por defecto de checking."],
           },
           values: {
             name: "Registro de Asistencia",
@@ -121,8 +119,7 @@ describe("AppViewForm", () => {
             personFieldId: "person_field",
             dateFieldId: "date_field",
             statusFieldId: "status_field",
-            presentOptionId: "present_option",
-            absentOptionId: "absent_option",
+            defaultCheckInOptionId: "present_option",
             observationFieldId: "observation_field",
           },
         }}
@@ -130,12 +127,11 @@ describe("AppViewForm", () => {
       />,
     );
 
-    expect(html).toContain("Selecciona la opción para Presente.");
+    expect(html).toContain("Selecciona el estado por defecto de checking.");
     expect(html).toContain('value="Registro de Asistencia"');
     expect(html).toContain('value="registro-de-asistencia"');
     expect(html).toContain('value="status_field" selected=""');
     expect(html).toContain('value="present_option" selected=""');
-    expect(html).toContain('value="absent_option" selected=""');
   });
 });
 

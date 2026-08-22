@@ -39,9 +39,10 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - `workflowKey = attendance`.
 - Source/target `EntityType` son configurables.
 - Roles de fields configurados por IDs.
-- `presentOptionId` / `absentOptionId` mapean estados de dominio a `FieldOption`.
-- API/domain usa `PRESENTE` / `AUSENTE`; `FieldOption.value` puede ser distinto.
-- Opciones extra permitidas.
+- `defaultCheckInOptionId` identifica la opción principal de checking.
+- Estados de asistencia son las `FieldOption` activas de `statusFieldId`.
+- API usa `statusOptionId` + labels; `FieldOption.value` puede ser distinto y es lo persistido.
+- Opciones extra permitidas sin cambios de código.
 - Una asistencia por Persona+Fecha a nivel de dominio.
 - Cambio de status existente devuelve `CONFLICT`; `overwrite` explícito requerido.
 - Mantener auditoría.

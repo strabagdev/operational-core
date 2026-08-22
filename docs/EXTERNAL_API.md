@@ -467,8 +467,7 @@ Config shapes by `type`:
     "personFieldId": "person_relation_field_id",
     "dateFieldId": "date_field_id",
     "statusFieldId": "status_select_field_id",
-    "presentOptionId": "field_option_id_for_present",
-    "absentOptionId": "field_option_id_for_absent",
+    "defaultCheckInOptionId": "field_option_id_for_default_check_in",
     "observationFieldId": "optional_textarea_field_id"
   },
   "BOARD": {
@@ -489,13 +488,15 @@ Important: AppView access controls which experience appears to the user. It is n
 
 ### GET /api/v1/contracts/:contractId/views/:appViewId/workflow/attendance
 
-Returns the configured attendance workflow state for one date. The AppView must be active, assigned to the authenticated user, belong to the contract, and use `workflowKey = "attendance"`.
+Returns the configured attendance workflow state for one date. The AppView must be active, assigned to the authenticated user, belong to the contract, and use `workflowKey = "attendance"`. Attendance statuses are the active `FieldOption` rows of the configured Estado field.
 
 Query:
 
 ```http
-?date=YYYY-MM-DD
+?date=YYYY-MM-DD&search=ana&personRecordId=optional_person_record_id
 ```
+
+`search` returns a limited set of matching people, currently 20. It searches `displayName` and searchable fields of the source EntityType. `personRecordId` returns one selected person. Without `search` or `personRecordId`, `items` is empty so the client can render the checking screen without loading the full roster.
 
 Success response:
 
@@ -509,6 +510,33 @@ Success response:
       "slug": "tomar-asistencia"
     },
     "date": "2026-08-22",
+    "statuses": [
+      {
+        "optionId": "present_option_id",
+        "label": "Presente",
+        "isDefaultCheckIn": true
+      },
+      {
+        "optionId": "late_option_id",
+        "label": "Atraso",
+        "isDefaultCheckIn": false
+      }
+    ],
+    "summary": {
+      "totalRegistered": 18
+    },
+    "latest": [
+      {
+        "attendanceRecordId": "attendance_record_id",
+        "person": {
+          "id": "person_record_id",
+          "displayName": "Ana Pérez"
+        },
+        "statusOptionId": "present_option_id",
+        "statusLabel": "Presente",
+        "updatedAt": "2026-08-22T12:00:00.000Z"
+      }
+    ],
     "sourceEntityType": {
       "id": "people_entity_type_id",
       "name": "Personas"
@@ -525,7 +553,8 @@ Success response:
         },
         "attendance": {
           "recordId": "attendance_record_id",
-          "status": "PRESENTE",
+          "statusOptionId": "present_option_id",
+          "statusLabel": "Presente",
           "observation": null,
           "updatedAt": "2026-08-22T12:00:00.000Z"
         }
@@ -546,7 +575,7 @@ Success response:
 
 Creates or confirms attendance entries for one date. `clientRequestId` is optional but recommended for retryable clients. The workflow is functionally idempotent for the same Persona + Fecha + status: retries do not create duplicate attendance records.
 
-The API contract uses domain statuses `PRESENTE` and `AUSENTE`. Internally, Operational Core maps those statuses to the configured `FieldOption` ids on the AppView and persists the selected option's real `value`.
+The API uses `statusOptionId` from the GET `statuses` list. Internally, Operational Core persists the selected option's real `FieldOption.value`. The client does not send or depend on the internal value.
 
 Request:
 
@@ -557,7 +586,7 @@ Request:
   "entries": [
     {
       "personRecordId": "person_record_id",
-      "status": "PRESENTE",
+      "statusOptionId": "present_option_id",
       "observation": "Opcional"
     }
   ]
@@ -580,14 +609,18 @@ Conflict response inside a successful batch:
   "result": "CONFLICT",
   "existing": {
     "recordId": "attendance_record_id",
-    "status": "PRESENTE",
+    "statusOptionId": "present_option_id",
+    "statusLabel": "Presente",
     "updatedAt": "2026-08-22T12:00:00.000Z"
   },
-  "requestedStatus": "AUSENTE"
+  "requested": {
+    "statusOptionId": "late_option_id",
+    "statusLabel": "Atraso"
+  }
 }
 ```
 
-To overwrite, resend that entry with `overwrite: true` and either `expectedStatus` or `expectedUpdatedAt`. If the existing attendance changed again before confirmation, the API returns a fresh `CONFLICT` instead of overwriting blindly.
+To overwrite, resend that entry with `overwrite: true` and `expectedUpdatedAt` from the conflict. If the existing attendance changed again before confirmation, the API returns a fresh `CONFLICT` instead of overwriting blindly.
 
 ## Dynamic Entities
 

@@ -108,17 +108,11 @@ export function AppViewForm({
       : firstActiveFieldId(targetEntityType, "SELECT")),
   );
   const statusField = targetEntityType?.fields.find((field) => field.id === statusFieldId);
-  const [presentOptionId, setPresentOptionId] = useState(
-    valueFromState(state, "presentOptionId") ||
+  const [defaultCheckInOptionId, setDefaultCheckInOptionId] = useState(
+    valueFromState(state, "defaultCheckInOptionId") ||
     (initialValues?.config.type === "WORKFLOW"
-      ? initialValues.config.presentOptionId ?? ""
+      ? initialValues.config.defaultCheckInOptionId ?? ""
       : firstActiveOptionId(statusField)),
-  );
-  const [absentOptionId, setAbsentOptionId] = useState(
-    valueFromState(state, "absentOptionId") ||
-    (initialValues?.config.type === "WORKFLOW"
-      ? initialValues.config.absentOptionId ?? ""
-      : secondActiveOptionId(statusField)),
   );
   const [observationFieldId, setObservationFieldId] = useState(
     valueFromState(state, "observationFieldId") ||
@@ -236,14 +230,12 @@ export function AppViewForm({
         setEntityTypeId={setEntityTypeId}
         observationFieldId={observationFieldId}
         personFieldId={personFieldId}
-        presentOptionId={presentOptionId}
-        absentOptionId={absentOptionId}
+        defaultCheckInOptionId={defaultCheckInOptionId}
         setDateFieldId={setDateFieldId}
-        setAbsentOptionId={setAbsentOptionId}
         setGroupByFieldKey={setGroupByFieldKey}
         setObservationFieldId={setObservationFieldId}
         setPersonFieldId={setPersonFieldId}
-        setPresentOptionId={setPresentOptionId}
+        setDefaultCheckInOptionId={setDefaultCheckInOptionId}
         setSourceEntityTypeId={setSourceEntityTypeId}
         setStatusFieldId={setStatusFieldId}
         setTargetEntityTypeId={setTargetEntityTypeId}
@@ -291,17 +283,15 @@ function ConfigFields({
   entityTypes,
   fieldErrors,
   groupByFieldKey,
+  defaultCheckInOptionId,
   observationFieldId,
   personFieldId,
-  presentOptionId,
-  absentOptionId,
   setDateFieldId,
-  setAbsentOptionId,
+  setDefaultCheckInOptionId,
   setEntityTypeId,
   setGroupByFieldKey,
   setObservationFieldId,
   setPersonFieldId,
-  setPresentOptionId,
   setSourceEntityTypeId,
   setStatusFieldId,
   setTargetEntityTypeId,
@@ -318,17 +308,15 @@ function ConfigFields({
   entityTypes: AppViewEntityTypeOption[];
   fieldErrors?: Record<string, string[]>;
   groupByFieldKey: string;
+  defaultCheckInOptionId: string;
   observationFieldId: string;
   personFieldId: string;
-  presentOptionId: string;
-  absentOptionId: string;
   setDateFieldId: (value: string) => void;
-  setAbsentOptionId: (value: string) => void;
+  setDefaultCheckInOptionId: (value: string) => void;
   setEntityTypeId: (value: string) => void;
   setGroupByFieldKey: (value: string) => void;
   setObservationFieldId: (value: string) => void;
   setPersonFieldId: (value: string) => void;
-  setPresentOptionId: (value: string) => void;
   setSourceEntityTypeId: (value: string) => void;
   setStatusFieldId: (value: string) => void;
   setTargetEntityTypeId: (value: string) => void;
@@ -367,8 +355,7 @@ function ConfigFields({
             const nextStatusFieldId = firstActiveFieldId(nextTarget, "SELECT");
             const nextStatusField = nextTarget?.fields.find((field) => field.id === nextStatusFieldId);
             setStatusFieldId(nextStatusFieldId);
-            setPresentOptionId(firstActiveOptionId(nextStatusField));
-            setAbsentOptionId(secondActiveOptionId(nextStatusField));
+            setDefaultCheckInOptionId(firstActiveOptionId(nextStatusField));
             setObservationFieldId(firstActiveFieldId(nextTarget, "TEXTAREA"));
           }}
           options={entityTypes}
@@ -416,28 +403,19 @@ function ConfigFields({
               const nextStatusField = activeTargetFields.find((field) => field.id === value);
 
               setStatusFieldId(value);
-              setPresentOptionId(firstActiveOptionId(nextStatusField));
-              setAbsentOptionId(secondActiveOptionId(nextStatusField));
+              setDefaultCheckInOptionId(firstActiveOptionId(nextStatusField));
             }}
             preferredType="SELECT"
             value={statusFieldId}
             errors={fieldErrors?.statusFieldId}
           />
           <OptionSelect
-            errors={fieldErrors?.presentOptionId}
-            label="Opción para Presente"
-            name="presentOptionId"
-            onChange={setPresentOptionId}
+            errors={fieldErrors?.defaultCheckInOptionId}
+            label="Estado por defecto de checking"
+            name="defaultCheckInOptionId"
+            onChange={setDefaultCheckInOptionId}
             options={activeStatusOptions}
-            value={presentOptionId}
-          />
-          <OptionSelect
-            errors={fieldErrors?.absentOptionId}
-            label="Opción para Ausente"
-            name="absentOptionId"
-            onChange={setAbsentOptionId}
-            options={activeStatusOptions}
-            value={absentOptionId}
+            value={defaultCheckInOptionId}
           />
           <FieldSelect
             fields={activeTargetFields}
@@ -620,10 +598,6 @@ function firstActiveFieldId(
 
 function firstActiveOptionId(field: AppViewEntityTypeOption["fields"][number] | undefined) {
   return field?.options.find((option) => option.isActive)?.id ?? "";
-}
-
-function secondActiveOptionId(field: AppViewEntityTypeOption["fields"][number] | undefined) {
-  return field?.options.filter((option) => option.isActive)[1]?.id ?? "";
 }
 
 function EntitySelect({

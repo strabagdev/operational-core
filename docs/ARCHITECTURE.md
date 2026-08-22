@@ -216,9 +216,9 @@ Example:
 - `Personas`: `nature = MASTER`
 - `Asistencias`: `nature = TRANSACTION`
 - `Directorio Personas`: `type = RECORDS`, `entityTypeId = Personas`
-- `Tomar asistencia`: `type = WORKFLOW`, `workflowKey = attendance`, `sourceEntityTypeId = Personas`, `targetEntityTypeId = Asistencias`, plus `personFieldId`, `dateFieldId`, `statusFieldId`, `presentOptionId`, `absentOptionId`, and optional `observationFieldId`
+- `Tomar asistencia`: `type = WORKFLOW`, `workflowKey = attendance`, `sourceEntityTypeId = Personas`, `targetEntityTypeId = Asistencias`, plus `personFieldId`, `dateFieldId`, `statusFieldId`, `defaultCheckInOptionId`, and optional `observationFieldId`
 
-Attendance uses domain statuses `PRESENTE` and `AUSENTE` in its API, but stores the actual `FieldOption.value` configured through `presentOptionId` and `absentOptionId`. This keeps the workflow independent from the visible option label and from the internal option value string.
+Attendance uses the active `FieldOption` rows of the configured `statusFieldId` as its available statuses. The API exposes option ids and labels, while record persistence still stores the selected option's canonical `FieldOption.value`. `defaultCheckInOptionId` marks the primary one-tap check-in status; adding more active options to the Estado field makes them available to the workflow without code changes or a new AppView migration. Legacy AppViews with `presentOptionId` are safely read and migrated by copying that id to `defaultCheckInOptionId`; `absentOptionId` is no longer required.
 
 The current audit system does not yet include dedicated actions for AppView configuration changes. AppView administration reuses contract authorization but does not write audit events in this stage.
 

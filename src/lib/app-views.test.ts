@@ -165,8 +165,7 @@ describe("AppView config validation", () => {
         personFieldId: "person_field",
         dateFieldId: "date_field",
         statusFieldId: "status_field",
-        presentOptionId: "present_option",
-        absentOptionId: "absent_option",
+        defaultCheckInOptionId: "present_option",
         observationFieldId: "observation_field",
         type: "WORKFLOW",
         workflowKey: "attendance",
@@ -182,8 +181,7 @@ describe("AppView config validation", () => {
           personFieldId: "person_field",
           dateFieldId: "date_field",
           statusFieldId: "status_field",
-          presentOptionId: "present_option",
-          absentOptionId: "absent_option",
+          defaultCheckInOptionId: "present_option",
           observationFieldId: "observation_field",
         },
         type: "WORKFLOW",
@@ -206,8 +204,7 @@ describe("AppView config validation", () => {
           personFieldId: "person_field",
           dateFieldId: "date_field",
           statusFieldId: "status_field",
-          presentOptionId: "present_option",
-          absentOptionId: "absent_option",
+          defaultCheckInOptionId: "present_option",
           type: "WORKFLOW",
           workflowKey: "attendance",
         })),
@@ -223,8 +220,7 @@ describe("AppView config validation", () => {
         getAppViewInput(formData({
           dateFieldId: "date_field",
           personFieldId: "person_field",
-          presentOptionId: "present_option",
-          absentOptionId: "absent_option",
+          defaultCheckInOptionId: "present_option",
           sourceEntityTypeId: "people",
           statusFieldId: "status_field",
           targetEntityTypeId: "attendance",
@@ -280,8 +276,7 @@ describe("AppView config validation", () => {
         getAppViewInput(formData({
           dateFieldId: "date_field",
           personFieldId: "person_field",
-          presentOptionId: "present_option",
-          absentOptionId: "absent_option",
+          defaultCheckInOptionId: "present_option",
           sourceEntityTypeId: "people",
           statusFieldId: "status_field",
           targetEntityTypeId: "attendance",
@@ -337,8 +332,7 @@ describe("AppView config validation", () => {
         getAppViewInput(formData({
           dateFieldId: "date_field",
           personFieldId: "person_field",
-          presentOptionId: "present_option",
-          absentOptionId: "absent_option",
+          defaultCheckInOptionId: "present_option",
           sourceEntityTypeId: "people",
           statusFieldId: "status_field",
           targetEntityTypeId: "attendance",
@@ -368,8 +362,7 @@ describe("AppView config validation", () => {
       getAppViewInput(formData({
         dateFieldId: "date_field",
         personFieldId: "person_field",
-        presentOptionId: "present_option",
-        absentOptionId: "absent_option",
+        defaultCheckInOptionId: "present_option",
         sourceEntityTypeId: "people",
         statusFieldId: "status_field",
         targetEntityTypeId: "attendance",
@@ -405,8 +398,7 @@ describe("AppView config validation", () => {
       getAppViewInput(formData({
         dateFieldId: "date_field",
         personFieldId: "person_field",
-        presentOptionId: "present_option",
-        absentOptionId: "absent_option",
+        defaultCheckInOptionId: "present_option",
         sourceEntityTypeId: "people",
         statusFieldId: "status_field",
         targetEntityTypeId: "attendance",
@@ -440,8 +432,7 @@ describe("AppView config validation", () => {
       getAppViewInput(formData({
         dateFieldId: "date_field",
         personFieldId: "person_field",
-        presentOptionId: "present_option",
-        absentOptionId: "absent_option",
+        defaultCheckInOptionId: "present_option",
         sourceEntityTypeId: "people",
         statusFieldId: "status_field",
         targetEntityTypeId: "attendance",
@@ -475,8 +466,7 @@ describe("AppView config validation", () => {
       getAppViewInput(formData({
         dateFieldId: "date_field",
         personFieldId: "person_field",
-        presentOptionId: "present_option",
-        absentOptionId: "absent_option",
+        defaultCheckInOptionId: "present_option",
         sourceEntityTypeId: "people",
         statusFieldId: "status_field",
         targetEntityTypeId: "attendance",
@@ -500,8 +490,7 @@ describe("AppView config validation", () => {
         getAppViewInput(formData({
           dateFieldId: "date_field",
           personFieldId: "person_field",
-          presentOptionId: "foreign_option",
-          absentOptionId: "absent_option",
+          defaultCheckInOptionId: "foreign_option",
           sourceEntityTypeId: "people",
           statusFieldId: "status_field",
           targetEntityTypeId: "attendance",
@@ -509,7 +498,7 @@ describe("AppView config validation", () => {
           workflowKey: "attendance",
         })),
       ),
-    ).rejects.toThrow("La opción para Presente debe pertenecer al campo Estado y estar activa.");
+    ).rejects.toThrow("El estado por defecto de checking debe pertenecer al campo Estado y estar activo.");
   });
 
   it("rejects attendance when an option id is inactive", async () => {
@@ -535,8 +524,7 @@ describe("AppView config validation", () => {
         getAppViewInput(formData({
           dateFieldId: "date_field",
           personFieldId: "person_field",
-          presentOptionId: "present_option",
-          absentOptionId: "absent_option",
+          defaultCheckInOptionId: "present_option",
           sourceEntityTypeId: "people",
           statusFieldId: "status_field",
           targetEntityTypeId: "attendance",
@@ -544,10 +532,10 @@ describe("AppView config validation", () => {
           workflowKey: "attendance",
         })),
       ),
-    ).rejects.toThrow("La opción para Presente debe pertenecer al campo Estado y estar activa.");
+    ).rejects.toThrow("El estado por defecto de checking debe pertenecer al campo Estado y estar activo.");
   });
 
-  it("rejects attendance when present and absent use the same option", async () => {
+  it("accepts attendance with one configured default check-in option", async () => {
     entityTypeFindFirst
       .mockResolvedValueOnce(entityType({ id: "people" }) as never)
       .mockResolvedValueOnce(attendanceEntityType() as never);
@@ -559,8 +547,7 @@ describe("AppView config validation", () => {
         getAppViewInput(formData({
           dateFieldId: "date_field",
           personFieldId: "person_field",
-          presentOptionId: "present_option",
-          absentOptionId: "present_option",
+          defaultCheckInOptionId: "present_option",
           sourceEntityTypeId: "people",
           statusFieldId: "status_field",
           targetEntityTypeId: "attendance",
@@ -568,7 +555,7 @@ describe("AppView config validation", () => {
           workflowKey: "attendance",
         })),
       ),
-    ).rejects.toThrow("Selecciona opciones distintas para Presente y Ausente.");
+    ).resolves.toBeTruthy();
   });
 
   it("rejects attendance status when the select allows multiple values", async () => {
@@ -592,8 +579,7 @@ describe("AppView config validation", () => {
         getAppViewInput(formData({
           dateFieldId: "date_field",
           personFieldId: "person_field",
-          presentOptionId: "present_option",
-          absentOptionId: "absent_option",
+          defaultCheckInOptionId: "present_option",
           sourceEntityTypeId: "people",
           statusFieldId: "status_field",
           targetEntityTypeId: "attendance",

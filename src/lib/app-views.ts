@@ -59,8 +59,7 @@ export type AppViewConfig =
       personFieldId: string;
       dateFieldId: string;
       statusFieldId: string;
-      presentOptionId?: string;
-      absentOptionId?: string;
+      defaultCheckInOptionId: string;
       observationFieldId?: string;
     }
   | { type: "BOARD"; entityTypeId: string; groupByFieldKey: string }
@@ -93,10 +92,9 @@ export function getAppViewInput(formData: FormData) {
       entityTypeIds: formData.getAll("entityTypeIds"),
       groupByFieldKey: formData.get("groupByFieldKey"),
       dateFieldId: formData.get("dateFieldId"),
-      absentOptionId: formData.get("absentOptionId"),
+      defaultCheckInOptionId: formData.get("defaultCheckInOptionId") ?? formData.get("presentOptionId"),
       observationFieldId: formData.get("observationFieldId"),
       personFieldId: formData.get("personFieldId"),
-      presentOptionId: formData.get("presentOptionId"),
       sourceEntityTypeId: formData.get("sourceEntityTypeId"),
       statusFieldId: formData.get("statusFieldId"),
       targetEntityTypeId: formData.get("targetEntityTypeId"),
@@ -412,8 +410,7 @@ async function validateAppViewConfig({
       personFieldId: config.personFieldId,
       dateFieldId: config.dateFieldId,
       statusFieldId: config.statusFieldId,
-      presentOptionId: config.presentOptionId,
-      absentOptionId: config.absentOptionId,
+      defaultCheckInOptionId: config.defaultCheckInOptionId,
       ...(config.observationFieldId ? { observationFieldId: config.observationFieldId } : {}),
     };
   }
@@ -455,21 +452,12 @@ const workflowConfigInputSchema = z.object({
   personFieldId: z.string().trim().min(1, "Selecciona el campo Persona."),
   dateFieldId: z.string().trim().min(1, "Selecciona el campo Fecha."),
   statusFieldId: z.string().trim().min(1, "Selecciona el campo Estado."),
-  presentOptionId: z.preprocess(
+  defaultCheckInOptionId: z.preprocess(
     (value) => value === null ? undefined : value,
     z
       .string()
       .trim()
-      .optional()
-      .transform((value) => value || undefined),
-  ),
-  absentOptionId: z.preprocess(
-    (value) => value === null ? undefined : value,
-    z
-      .string()
-      .trim()
-      .optional()
-      .transform((value) => value || undefined),
+      .min(1, "Selecciona el estado por defecto de checking."),
   ),
   observationFieldId: z.preprocess(
     (value) => value === null ? undefined : value,
@@ -540,6 +528,7 @@ function parseWorkflowConfigInput(rawConfig: unknown) {
 
   return workflowConfigInputSchema.parse({
     ...raw,
+    defaultCheckInOptionId: raw.defaultCheckInOptionId ?? raw.presentOptionId,
     workflowKey: raw.workflowKey ?? raw.workflow,
   });
 }
@@ -608,18 +597,7 @@ function validateAttendanceAppViewFields({
     throw new AppViewConfigError("El campo Estado debe ser de selección simple.", "statusFieldId");
   }
 
-  const presentOption = requireActiveStatusOption(statusField, config.presentOptionId, "Presente");
-  const absentOption = requireActiveStatusOption(statusField, config.absentOptionId, "Ausente");
-
-  if (presentOption.id === absentOption.id) {
-    logAttendanceValidationIssue("status_options", {
-      absentOptionId: config.absentOptionId ?? null,
-      presentOptionId: config.presentOptionId ?? null,
-      statusFieldId: statusField.id,
-      targetEntityTypeId: targetEntityType.id,
-    });
-    throw new AppViewConfigError("Selecciona opciones distintas para Presente y Ausente.", "absentOptionId");
-  }
+  requireActiveStatusOption(statusField, config.defaultCheckInOptionId);
 
   if (observationField && observationField.type !== "TEXTAREA") {
     throw new AppViewConfigError("El campo Observación debe ser de tipo texto largo.", "observationFieldId");
@@ -632,18 +610,17 @@ function requireActiveStatusOption(
     options: Array<{ id: string; isActive: boolean }>;
   },
   optionId: string | undefined,
-  label: string,
 ) {
   if (!optionId) {
-    throw new AppViewConfigError(`Selecciona la opción para ${label}.`, label === "Presente" ? "presentOptionId" : "absentOptionId");
+    throw new AppViewConfigError("Selecciona el estado por defecto de checking.", "defaultCheckInOptionId");
   }
 
   const option = statusField.options.find((item) => item.id === optionId);
 
   if (!option || !option.isActive) {
     throw new AppViewConfigError(
-      `La opción para ${label} debe pertenecer al campo Estado y estar activa.`,
-      label === "Presente" ? "presentOptionId" : "absentOptionId",
+      "El estado por defecto de checking debe pertenecer al campo Estado y estar activo.",
+      "defaultCheckInOptionId",
     );
   }
 
