@@ -42,6 +42,17 @@ export type EntityRecordSort = {
   key: EntityRecordSortKey;
   direction: EntityRecordSortDirection;
 };
+export type IncomingRecordRelationGroup = {
+  sourceEntityTypeId: string;
+  sourceEntityTypeName: string;
+  sourceFieldId: string;
+  sourceFieldName: string;
+  total: number;
+  preview: Array<{
+    recordId: string;
+    displayName: string;
+  }>;
+};
 
 export async function getRecordEntityTypes(contractId: string, userId: string) {
   const contract = await getAuthorizedContract(contractId, userId);
@@ -1328,6 +1339,255 @@ export async function getIncomingRecordRelations(
   });
 
   return relations;
+}
+
+export async function getIncomingRecordRelationGroups(
+  contractId: string,
+  entityTypeId: string,
+  recordId: string,
+  userId: string,
+): Promise<IncomingRecordRelationGroup[] | null> {
+  const authorized = await getAuthorizedEntityRecord(
+    contractId,
+    entityTypeId,
+    recordId,
+    userId,
+  );
+
+  if (!authorized) {
+    return null;
+  }
+
+  const groupRows = await prisma.$queryRaw<
+    Array<{
+      sourceEntityTypeId: string;
+      sourceEntityTypeName: string;
+      sourceFieldId: string;
+      sourceFieldName: string;
+      total: bigint | number;
+    }>
+  >(Prisma.sql`
+    SELECT
+      source_type."id" AS "sourceEntityTypeId",
+      source_type."name" AS "sourceEntityTypeName",
+      relation."sourceFieldId" AS "sourceFieldId",
+      source_field."name" AS "sourceFieldName",
+      COUNT(*) AS "total"
+    FROM "EntityRelation" relation
+    INNER JOIN "EntityRecord" target_record
+      ON target_record."id" = relation."targetRecordId"
+    INNER JOIN "EntityType" target_type
+      ON target_type."id" = target_record."entityTypeId"
+      AND target_type."contractId" = ${authorized.contract.id}
+    INNER JOIN "EntityRecord" source_record
+      ON source_record."id" = relation."sourceRecordId"
+    INNER JOIN "EntityType" source_type
+      ON source_type."id" = source_record."entityTypeId"
+      AND source_type."contractId" = ${authorized.contract.id}
+    INNER JOIN "EntityField" source_field
+      ON source_field."id" = relation."sourceFieldId"
+      AND source_field."entityTypeId" = source_type."id"
+    WHERE relation."targetRecordId" = ${authorized.record.id}
+      AND target_record."entityTypeId" = ${authorized.entityType.id}
+    GROUP BY
+      source_type."id",
+      source_type."name",
+      relation."sourceFieldId",
+      source_field."name"
+    ORDER BY source_type."name" ASC, source_field."name" ASC, source_type."id" ASC, relation."sourceFieldId" ASC
+  `);
+
+  if (groupRows.length === 0) {
+    return [];
+  }
+
+  const previewRows = await prisma.$queryRaw<
+    Array<{
+      sourceEntityTypeId: string;
+      sourceFieldId: string;
+      recordId: string;
+      displayName: string;
+    }>
+  >(Prisma.sql`
+    SELECT
+      ranked."sourceEntityTypeId",
+      ranked."sourceFieldId",
+      ranked."recordId",
+      ranked."displayName"
+    FROM (
+      SELECT
+        source_record."entityTypeId" AS "sourceEntityTypeId",
+        relation."sourceFieldId" AS "sourceFieldId",
+        source_record."id" AS "recordId",
+        source_record."displayName" AS "displayName",
+        ROW_NUMBER() OVER (
+          PARTITION BY source_record."entityTypeId", relation."sourceFieldId"
+          ORDER BY source_record."displayName" ASC, source_record."id" ASC
+        ) AS "position"
+      FROM "EntityRelation" relation
+      INNER JOIN "EntityRecord" target_record
+        ON target_record."id" = relation."targetRecordId"
+      INNER JOIN "EntityType" target_type
+        ON target_type."id" = target_record."entityTypeId"
+        AND target_type."contractId" = ${authorized.contract.id}
+      INNER JOIN "EntityRecord" source_record
+        ON source_record."id" = relation."sourceRecordId"
+      INNER JOIN "EntityType" source_type
+        ON source_type."id" = source_record."entityTypeId"
+        AND source_type."contractId" = ${authorized.contract.id}
+      INNER JOIN "EntityField" source_field
+        ON source_field."id" = relation."sourceFieldId"
+        AND source_field."entityTypeId" = source_type."id"
+      WHERE relation."targetRecordId" = ${authorized.record.id}
+        AND target_record."entityTypeId" = ${authorized.entityType.id}
+    ) ranked
+    WHERE ranked."position" <= 3
+    ORDER BY ranked."displayName" ASC, ranked."recordId" ASC
+  `);
+  const previewsByGroup = new Map<string, IncomingRecordRelationGroup["preview"]>();
+
+  for (const preview of previewRows) {
+    const key = incomingRelationGroupKey(preview.sourceEntityTypeId, preview.sourceFieldId);
+    const items = previewsByGroup.get(key) ?? [];
+
+    items.push({
+      recordId: preview.recordId,
+      displayName: preview.displayName,
+    });
+    previewsByGroup.set(key, items);
+  }
+
+  return groupRows.map((group) => ({
+    sourceEntityTypeId: group.sourceEntityTypeId,
+    sourceEntityTypeName: group.sourceEntityTypeName,
+    sourceFieldId: group.sourceFieldId,
+    sourceFieldName: group.sourceFieldName,
+    total: Number(group.total),
+    preview: previewsByGroup.get(incomingRelationGroupKey(
+      group.sourceEntityTypeId,
+      group.sourceFieldId,
+    )) ?? [],
+  }));
+}
+
+export async function getIncomingRecordRelationsPage({
+  contractId,
+  entityTypeId,
+  recordId,
+  sourceEntityTypeId,
+  sourceFieldId,
+  userId,
+  page = 1,
+  pageSize = 25,
+  query,
+}: {
+  contractId: string;
+  entityTypeId: string;
+  recordId: string;
+  sourceEntityTypeId: string;
+  sourceFieldId: string;
+  userId: string;
+  page?: number;
+  pageSize?: number;
+  query?: string;
+}) {
+  const authorized = await getAuthorizedEntityRecord(
+    contractId,
+    entityTypeId,
+    recordId,
+    userId,
+  );
+
+  if (!authorized) {
+    return null;
+  }
+
+  const sourceEntityType = await prisma.entityType.findFirst({
+    where: {
+      id: sourceEntityTypeId,
+      contractId: authorized.contract.id,
+      isActive: true,
+    },
+    select: {
+      id: true,
+      name: true,
+      fields: {
+        where: {
+          id: sourceFieldId,
+          type: "RELATION",
+          isActive: true,
+        },
+        select: {
+          id: true,
+          name: true,
+        },
+        take: 1,
+      },
+    },
+  });
+  const sourceField = sourceEntityType?.fields[0];
+
+  if (!sourceEntityType || !sourceField) {
+    return null;
+  }
+
+  const normalizedPage = Math.max(1, page);
+  const normalizedPageSize = clampPageSize(pageSize);
+  const normalizedQuery = query?.trim();
+  const sourceRecordWhere: Prisma.EntityRecordWhereInput = {
+    entityTypeId: sourceEntityType.id,
+    outgoingRelations: {
+      some: {
+        sourceFieldId: sourceField.id,
+        targetRecordId: authorized.record.id,
+        targetRecord: {
+          entityTypeId: authorized.entityType.id,
+          entityType: {
+            contractId: authorized.contract.id,
+          },
+        },
+      },
+    },
+  };
+
+  if (normalizedQuery) {
+    sourceRecordWhere.displayName = {
+      contains: normalizedQuery,
+      mode: "insensitive",
+    };
+  }
+
+  const totalRecords = await prisma.entityRecord.count({
+    where: sourceRecordWhere,
+  });
+  const records = await prisma.entityRecord.findMany({
+    where: sourceRecordWhere,
+    select: {
+      id: true,
+      displayName: true,
+    },
+    orderBy: [{ displayName: "asc" }, { id: "asc" }],
+    skip: (normalizedPage - 1) * normalizedPageSize,
+    take: normalizedPageSize,
+  });
+
+  return {
+    ...authorized,
+    sourceEntityType,
+    sourceField,
+    pagination: {
+      page: normalizedPage,
+      pageSize: normalizedPageSize,
+      totalRecords,
+      totalPages: Math.max(1, Math.ceil(totalRecords / normalizedPageSize)),
+    },
+    query: normalizedQuery ?? "",
+    records,
+  };
+}
+
+function incomingRelationGroupKey(sourceEntityTypeId: string, sourceFieldId: string) {
+  return `${sourceEntityTypeId}:${sourceFieldId}`;
 }
 
 export function serializeEntityValue(

@@ -5,6 +5,8 @@ import {
   buildEntityRecordSearchWhere,
   createEntityRecord,
   getEntityRecords,
+  getIncomingRecordRelationGroups,
+  getIncomingRecordRelationsPage,
   getRelationOptions,
   updateEntityRecord,
   validateRelationValues,
@@ -34,6 +36,10 @@ vi.mock("./prisma", () => ({
       findFirst: vi.fn(),
       findMany: vi.fn(),
     },
+    entityRelation: {
+      findMany: vi.fn(),
+    },
+    $queryRaw: vi.fn(),
     $transaction: vi.fn(),
   },
 }));
@@ -42,6 +48,7 @@ const entityTypeFindFirst = vi.mocked(prisma.entityType.findFirst);
 const entityRecordCount = vi.mocked(prisma.entityRecord.count);
 const entityRecordFindFirst = vi.mocked(prisma.entityRecord.findFirst);
 const entityRecordFindMany = vi.mocked(prisma.entityRecord.findMany);
+const queryRaw = vi.mocked(prisma.$queryRaw);
 const transaction = vi.mocked(prisma.$transaction);
 type TestField = ReturnType<typeof field>;
 
@@ -51,6 +58,7 @@ beforeEach(() => {
   entityRecordCount.mockResolvedValue(0);
   entityRecordFindFirst.mockResolvedValue(null);
   entityRecordFindMany.mockResolvedValue([]);
+  queryRaw.mockResolvedValue([] as never);
 });
 
 describe("entity records without technical status", () => {
@@ -426,6 +434,204 @@ describe("entity records without technical status", () => {
   });
 });
 
+describe("incoming record relation summaries", () => {
+  it("returns no groups when a record has no incoming relations", async () => {
+    mockAuthorizedRecord();
+    queryRaw.mockResolvedValueOnce([] as never);
+
+    await expect(
+      getIncomingRecordRelationGroups(
+        "contract_1",
+        "entity_1",
+        "target_record",
+        "user_1",
+      ),
+    ).resolves.toEqual([]);
+
+    expect(queryRaw).toHaveBeenCalledTimes(1);
+  });
+
+  it("groups incoming relations by source entity type and field with three previews", async () => {
+    mockAuthorizedRecord();
+    queryRaw
+      .mockResolvedValueOnce([
+        {
+          sourceEntityTypeId: "people",
+          sourceEntityTypeName: "Personas",
+          sourceFieldId: "department",
+          sourceFieldName: "Departamento",
+          total: BigInt(148),
+        },
+        {
+          sourceEntityTypeId: "people",
+          sourceEntityTypeName: "Personas",
+          sourceFieldId: "manager_department",
+          sourceFieldName: "Departamento jefe",
+          total: BigInt(2),
+        },
+        {
+          sourceEntityTypeId: "teams",
+          sourceEntityTypeName: "Equipos",
+          sourceFieldId: "team_department",
+          sourceFieldName: "Departamento",
+          total: BigInt(12),
+        },
+      ] as never)
+      .mockResolvedValueOnce([
+        {
+          sourceEntityTypeId: "people",
+          sourceFieldId: "department",
+          recordId: "person_1",
+          displayName: "Ana",
+        },
+        {
+          sourceEntityTypeId: "people",
+          sourceFieldId: "department",
+          recordId: "person_2",
+          displayName: "Beto",
+        },
+        {
+          sourceEntityTypeId: "people",
+          sourceFieldId: "department",
+          recordId: "person_3",
+          displayName: "Carla",
+        },
+        {
+          sourceEntityTypeId: "people",
+          sourceFieldId: "manager_department",
+          recordId: "person_4",
+          displayName: "Diego",
+        },
+        {
+          sourceEntityTypeId: "teams",
+          sourceFieldId: "team_department",
+          recordId: "team_1",
+          displayName: "Equipo Norte",
+        },
+      ] as never);
+
+    await expect(
+      getIncomingRecordRelationGroups(
+        "contract_1",
+        "entity_1",
+        "target_record",
+        "user_1",
+      ),
+    ).resolves.toEqual([
+      {
+        sourceEntityTypeId: "people",
+        sourceEntityTypeName: "Personas",
+        sourceFieldId: "department",
+        sourceFieldName: "Departamento",
+        total: 148,
+        preview: [
+          { recordId: "person_1", displayName: "Ana" },
+          { recordId: "person_2", displayName: "Beto" },
+          { recordId: "person_3", displayName: "Carla" },
+        ],
+      },
+      {
+        sourceEntityTypeId: "people",
+        sourceEntityTypeName: "Personas",
+        sourceFieldId: "manager_department",
+        sourceFieldName: "Departamento jefe",
+        total: 2,
+        preview: [{ recordId: "person_4", displayName: "Diego" }],
+      },
+      {
+        sourceEntityTypeId: "teams",
+        sourceEntityTypeName: "Equipos",
+        sourceFieldId: "team_department",
+        sourceFieldName: "Departamento",
+        total: 12,
+        preview: [{ recordId: "team_1", displayName: "Equipo Norte" }],
+      },
+    ]);
+    expect(queryRaw).toHaveBeenCalledTimes(2);
+  });
+
+  it("loads a paginated incoming relation page scoped to the contract", async () => {
+    mockAuthorizedRecord();
+    entityTypeFindFirst
+      .mockResolvedValueOnce(entityType([field("name")]) as never)
+      .mockResolvedValueOnce({
+        id: "people",
+        name: "Personas",
+        fields: [{ id: "department", name: "Departamento" }],
+      } as never);
+    entityRecordCount.mockResolvedValue(501);
+    entityRecordFindMany.mockResolvedValue([
+      { id: "person_26", displayName: "Persona 26" },
+    ] as never);
+
+    const data = await getIncomingRecordRelationsPage({
+      contractId: "contract_1",
+      entityTypeId: "entity_1",
+      recordId: "target_record",
+      sourceEntityTypeId: "people",
+      sourceFieldId: "department",
+      userId: "user_1",
+      page: 2,
+      pageSize: 25,
+      query: "persona",
+    });
+
+    expect(data).toMatchObject({
+      pagination: {
+        page: 2,
+        pageSize: 25,
+        totalRecords: 501,
+        totalPages: 21,
+      },
+      records: [{ id: "person_26", displayName: "Persona 26" }],
+    });
+    expect(entityRecordFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        skip: 25,
+        take: 25,
+        where: expect.objectContaining({
+          entityTypeId: "people",
+          displayName: {
+            contains: "persona",
+            mode: "insensitive",
+          },
+          outgoingRelations: {
+            some: {
+              sourceFieldId: "department",
+              targetRecordId: "target_record",
+              targetRecord: {
+                entityTypeId: "entity_1",
+                entityType: {
+                  contractId: "contract_1",
+                },
+              },
+            },
+          },
+        }),
+      }),
+    );
+  });
+
+  it("rejects relation pages for source entity types outside the contract", async () => {
+    mockAuthorizedRecord();
+    entityTypeFindFirst
+      .mockResolvedValueOnce(entityType([field("name")]) as never)
+      .mockResolvedValueOnce(null);
+
+    await expect(
+      getIncomingRecordRelationsPage({
+        contractId: "contract_1",
+        entityTypeId: "entity_1",
+        recordId: "target_record",
+        sourceEntityTypeId: "other_contract_people",
+        sourceFieldId: "department",
+        userId: "user_1",
+      }),
+    ).resolves.toBeNull();
+    expect(entityRecordFindMany).not.toHaveBeenCalled();
+  });
+});
+
 function tx() {
   return {
     entityRecord: {
@@ -445,6 +651,18 @@ function tx() {
       create: vi.fn(),
     },
   };
+}
+
+function mockAuthorizedRecord() {
+  entityTypeFindFirst.mockResolvedValue(entityType([field("name")]) as never);
+  entityRecordFindFirst.mockResolvedValue({
+    id: "target_record",
+    displayName: "Departamento Norte",
+    createdAt: new Date("2026-01-01"),
+    updatedAt: new Date("2026-01-02"),
+    values: [],
+    outgoingRelations: [],
+  } as never);
 }
 
 function entityType(fields: TestField[]) {

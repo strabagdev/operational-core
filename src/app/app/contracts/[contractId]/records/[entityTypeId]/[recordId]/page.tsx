@@ -18,8 +18,9 @@ import {
 import {
   deserializeEntityValue,
   getAuthorizedEntityRecord,
-  getIncomingRecordRelations,
+  getIncomingRecordRelationGroups,
   getRelationOptions,
+  type IncomingRecordRelationGroup,
 } from "@/lib/entity-records";
 import {
   entityRecordCancelEditPath,
@@ -60,7 +61,7 @@ export default async function EntityRecordDetailPage({
     entityTypeId,
     session.user.id,
   );
-  const incomingRelations = await getIncomingRecordRelations(
+  const incomingRelationGroups = await getIncomingRecordRelationGroups(
     contractId,
     entityTypeId,
     recordId,
@@ -77,7 +78,7 @@ export default async function EntityRecordDetailPage({
   if (
     !data ||
     !relationOptions ||
-    !incomingRelations ||
+    !incomingRelationGroups ||
     !auditHistory
   ) {
     notFound();
@@ -178,6 +179,7 @@ export default async function EntityRecordDetailPage({
             />
           ) : (
             <RecordReadView
+              contractId={contractId}
               fields={data.entityType.fields}
               relations={data.record.outgoingRelations}
               values={data.record.values}
@@ -186,33 +188,14 @@ export default async function EntityRecordDetailPage({
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Relacionado desde</CardTitle>
-        </CardHeader>
-        <CardContent className="grid gap-3">
-          {incomingRelations.length > 0 ? (
-            incomingRelations.map((relation) => (
-              <div className="grid gap-1 text-sm" key={relation.id}>
-                <div className="text-muted-foreground">
-                  Mediante campo {relation.sourceField.name}
-                </div>
-                <Link
-                  className="font-medium text-primary underline-offset-4 hover:underline"
-                  href={`/app/contracts/${contractId}/records/${relation.sourceRecord.entityTypeId}/${relation.sourceRecord.id}`}
-                >
-                  {relation.sourceRecord.entityType.name}{" "}
-                  {relation.sourceRecord.displayName}
-                </Link>
-              </div>
-            ))
-          ) : (
-            <p className="text-sm text-muted-foreground">
-              No hay registros apuntando hacia este registro.
-            </p>
-          )}
-        </CardContent>
-      </Card>
+      {incomingRelationGroups.length > 0 ? (
+        <IncomingRelationsSummary
+          contractId={contractId}
+          entityTypeId={entityTypeId}
+          groups={incomingRelationGroups}
+          recordId={recordId}
+        />
+      ) : null}
 
       <Card>
         <CardHeader>
@@ -255,11 +238,74 @@ export default async function EntityRecordDetailPage({
   );
 }
 
+function IncomingRelationsSummary({
+  contractId,
+  entityTypeId,
+  groups,
+  recordId,
+}: {
+  contractId: string;
+  entityTypeId: string;
+  groups: IncomingRecordRelationGroup[];
+  recordId: string;
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Relacionado desde</CardTitle>
+      </CardHeader>
+      <CardContent className="grid gap-4">
+        {groups.map((group) => (
+          <section
+            className="grid gap-2 rounded-md border border-border p-3"
+            key={`${group.sourceEntityTypeId}:${group.sourceFieldId}`}
+          >
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div className="grid gap-0.5">
+                <h3 className="text-sm font-medium">{group.sourceEntityTypeName}</h3>
+                <p className="text-xs text-muted-foreground">{group.sourceFieldName}</p>
+              </div>
+              <p className="text-xs font-medium text-muted-foreground">
+                {formatRelatedCount(group.total)}
+              </p>
+            </div>
+            <div className="grid gap-1 text-sm">
+              {group.preview.map((record) => (
+                <Link
+                  className="w-fit text-primary underline-offset-4 hover:underline"
+                  href={`/app/contracts/${contractId}/records/${group.sourceEntityTypeId}/${record.recordId}`}
+                  key={record.recordId}
+                >
+                  {record.displayName}
+                </Link>
+              ))}
+            </div>
+            <Link
+              className="w-fit text-sm font-medium text-primary underline-offset-4 hover:underline"
+              href={incomingRelationsHref({
+                contractId,
+                entityTypeId,
+                recordId,
+                sourceEntityTypeId: group.sourceEntityTypeId,
+                sourceFieldId: group.sourceFieldId,
+              })}
+            >
+              Ver todos ({group.total})
+            </Link>
+          </section>
+        ))}
+      </CardContent>
+    </Card>
+  );
+}
+
 function RecordReadView({
+  contractId,
   fields,
   relations,
   values,
 }: {
+  contractId: string;
   fields: Array<{
     id: string;
     name: string;
@@ -278,8 +324,11 @@ function RecordReadView({
   }>;
   relations: Array<{
     sourceFieldId: string;
+    targetRecordId?: string | null;
     targetRecord: {
       displayName: string;
+      entityTypeId?: string | null;
+      id?: string | null;
     };
   }>;
 }) {
@@ -295,11 +344,10 @@ function RecordReadView({
     <dl className="grid gap-4">
       {fields.map((field) => {
         const value = values.find((item) => item.entityFieldId === field.id);
-        const relationValue = relations
-          .filter((relation) => relation.sourceFieldId === field.id)
-          .map((relation) => relation.targetRecord.displayName)
-          .join(", ");
-        const displayValue = field.type === "RELATION" ? relationValue : value
+        const fieldRelations = relations.filter(
+          (relation) => relation.sourceFieldId === field.id,
+        );
+        const displayValue = value
           ? deserializeEntityValue({
               ...value,
               jsonValue: value.jsonValue,
@@ -315,13 +363,90 @@ function RecordReadView({
           <div className="grid gap-1" key={field.id}>
             <dt className="text-sm font-medium">{field.name}</dt>
             <dd className="text-sm text-muted-foreground">
-              {displayValue || "Sin valor"}
+              {field.type === "RELATION" ? (
+                <RelationReadValue
+                  contractId={contractId}
+                  relations={fieldRelations}
+                />
+              ) : (
+                displayValue || "Sin valor"
+              )}
             </dd>
           </div>
         );
       })}
     </dl>
   );
+}
+
+function RelationReadValue({
+  contractId,
+  relations,
+}: {
+  contractId: string;
+  relations: Array<{
+    targetRecordId?: string | null;
+    targetRecord: {
+      displayName: string;
+      entityTypeId?: string | null;
+      id?: string | null;
+    };
+  }>;
+}) {
+  if (relations.length === 0) {
+    return "Sin valor";
+  }
+
+  return (
+    <span className="inline-flex flex-wrap items-center gap-x-1 gap-y-1">
+      {relations.map((relation, index) => {
+        const targetRecordId = relation.targetRecord.id ?? relation.targetRecordId;
+        const targetEntityTypeId = relation.targetRecord.entityTypeId;
+        const content = targetRecordId && targetEntityTypeId ? (
+          <Link
+            className="text-primary underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            href={`/app/contracts/${contractId}/records/${targetEntityTypeId}/${targetRecordId}`}
+          >
+            {relation.targetRecord.displayName}
+          </Link>
+        ) : (
+          <span>{relation.targetRecord.displayName || "Registro relacionado no disponible"}</span>
+        );
+
+        return (
+          <span className="inline-flex items-center gap-x-1" key={`${targetRecordId ?? "missing"}-${index}`}>
+            {index > 0 ? <span aria-hidden="true">·</span> : null}
+            {content}
+          </span>
+        );
+      })}
+    </span>
+  );
+}
+
+function formatRelatedCount(total: number) {
+  return total === 1 ? "1 registro relacionado" : `${total} registros relacionados`;
+}
+
+function incomingRelationsHref({
+  contractId,
+  entityTypeId,
+  recordId,
+  sourceEntityTypeId,
+  sourceFieldId,
+}: {
+  contractId: string;
+  entityTypeId: string;
+  recordId: string;
+  sourceEntityTypeId: string;
+  sourceFieldId: string;
+}) {
+  const params = new URLSearchParams({
+    sourceEntityTypeId,
+    sourceFieldId,
+  });
+
+  return `/app/contracts/${contractId}/records/${entityTypeId}/${recordId}/relations?${params.toString()}`;
 }
 
 function parseFieldErrors(value?: string) {
