@@ -10,6 +10,10 @@ const recordListControlsSource = readFileSync(
   new URL("../app/app/contracts/[contractId]/records/[entityTypeId]/record-list-controls.tsx", import.meta.url),
   "utf8",
 );
+const recordListAutoRefreshSource = readFileSync(
+  new URL("../app/app/contracts/[contractId]/records/[entityTypeId]/record-list-auto-refresh.tsx", import.meta.url),
+  "utf8",
+);
 const recordsTableSource = readFileSync(
   new URL("../app/app/contracts/[contractId]/records/[entityTypeId]/entity-records-table.tsx", import.meta.url),
   "utf8",
@@ -128,6 +132,7 @@ describe("entity record pagination UI", () => {
   });
 
   it("exposes separate Excel template, export, and import actions", () => {
+    expect(recordsPageSource).toContain("RecordListAutoRefresh");
     expect(recordsPageSource).toContain("Descargar plantilla");
     expect(recordsPageSource).toContain("Exportar datos");
     expect(recordsPageSource).toContain("ImportRecordsSheet");
@@ -152,6 +157,10 @@ describe("entity record pagination UI", () => {
   });
 
   it("uses icon-only header actions with accessible labels and tooltips", () => {
+    expect(recordListAutoRefreshSource).toContain("RefreshCw");
+    expect(recordListAutoRefreshSource).toContain('aria-label="Actualizar"');
+    expect(recordListAutoRefreshSource).toContain("Actualizando...");
+    expect(recordListAutoRefreshSource).toContain('role="status"');
     expect(recordsPageSource).toContain("Download");
     expect(recordsPageSource).toContain("FileSpreadsheet");
     expect(recordsPageSource).toContain("Plus");
@@ -163,6 +172,21 @@ describe("entity record pagination UI", () => {
     expect(importSheetSource).toContain('aria-label="Importar Excel"');
     expect(importSheetSource).toContain('size="icon"');
     expect(importSheetSource).toContain('role="tooltip"');
+  });
+
+  it("keeps the record table mounted across data refreshes and highlights new rows", () => {
+    expect(recordsPageSource).toContain('key={`${entityTypeId}:${q ?? ""}:${page ?? ""}:${pageSize ?? ""}:${sort ?? ""}:${dir ?? ""}`}');
+    expect(recordsPageSource).not.toContain("tableRecords.map((record) => record.id).join");
+    expect(recordsTableSource).toContain("createRecordListNewRecordHighlighter");
+    expect(recordsTableSource).toContain("recordRowClassName(highlightedIds.has(record.id))");
+  });
+
+  it("applies new-record highlight styles to table cells", () => {
+    const globalsSource = readFileSync(new URL("../app/globals.css", import.meta.url), "utf8");
+
+    expect(globalsSource).toContain(".record-new-highlight > td");
+    expect(globalsSource).toContain("color-mix(in srgb, var(--accent) 78%, var(--ring))");
+    expect(globalsSource).toContain("prefers-reduced-motion: reduce");
   });
 
   it("keeps Excel import success feedback outside the permanent header flow", () => {

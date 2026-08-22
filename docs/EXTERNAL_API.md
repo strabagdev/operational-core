@@ -750,8 +750,8 @@ Query params:
 | `page` | `1` | Positive page number. |
 | `pageSize` | `50` | Positive page size, maximum `100`. |
 | `search` | none | Text search using the current Opco searchable-field rules. |
-| `sort` | default record sort | `displayName`, `updatedAt`, or `field:<fieldKey>`. |
-| `direction` | `desc` | `asc` or `desc`. Used with `sort`. |
+| `sort` | `createdAt DESC, id DESC` | `displayName`, `updatedAt`, or `field:<fieldKey>`. |
+| `direction` | `desc` | `asc` or `desc`. Used only with explicit `sort`. |
 
 Success response:
 

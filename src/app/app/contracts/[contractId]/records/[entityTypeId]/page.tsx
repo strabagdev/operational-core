@@ -16,6 +16,7 @@ import {
 import { deleteEntityRecordsAction } from "../actions";
 import { EntityRecordsTable } from "./entity-records-table";
 import { ImportRecordsSheet } from "./import-records-sheet";
+import { RecordListAutoRefresh } from "./record-list-auto-refresh";
 import { RecordListControls } from "./record-list-controls";
 
 type SortHeaderState = {
@@ -121,6 +122,7 @@ export default async function EntityRecordsPage({
             />
           </div>
           <div className="ml-auto flex shrink-0 flex-nowrap items-center justify-end gap-1.5">
+            <RecordListAutoRefresh />
             <TooltipIconButton label="Descargar plantilla">
               <Button asChild size="icon" variant="outline">
                 <a
@@ -178,7 +180,7 @@ export default async function EntityRecordsPage({
             contractId={contractId}
             deleteAction={deleteEntityRecordsAction.bind(null, contractId, entityTypeId)}
             entityTypeId={entityTypeId}
-            key={`${entityTypeId}:${q ?? ""}:${tableRecords.map((record) => record.id).join("|")}`}
+            key={`${entityTypeId}:${q ?? ""}:${page ?? ""}:${pageSize ?? ""}:${sort ?? ""}:${dir ?? ""}`}
             listFields={listFields.map((field) => ({
               id: field.id,
               name: field.name,

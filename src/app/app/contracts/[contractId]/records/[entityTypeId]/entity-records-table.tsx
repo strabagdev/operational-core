@@ -21,6 +21,8 @@ import {
   entityRecordDetailPath,
   entityRecordEditPath,
 } from "@/lib/entity-record-routes";
+import { createRecordListNewRecordHighlighter } from "@/lib/record-list-new-record-highlights";
+import { cn } from "@/lib/utils";
 
 import {
   type BulkEntityRecordsActionState,
@@ -66,7 +68,9 @@ export function EntityRecordsTable({
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [confirmation, setConfirmation] = useState("");
   const [feedback, setFeedback] = useState<BulkEntityRecordsActionState | null>(null);
+  const [highlightedIds, setHighlightedIds] = useState<Set<string>>(() => new Set());
   const [pending, startTransition] = useTransition();
+  const highlighterRef = useRef<ReturnType<typeof createRecordListNewRecordHighlighter> | null>(null);
   const visibleIds = useMemo(() => records.map((record) => record.id), [records]);
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
   const selection = getBulkSelectionState(selectedIds, visibleIds);
@@ -74,6 +78,21 @@ export function EntityRecordsTable({
   const allVisibleSelected = selection.allSelected;
   const partiallySelected = selection.indeterminate;
   const deleteConfirmation = `ELIMINAR ${selectedCount} REGISTROS`;
+
+  useEffect(() => {
+    highlighterRef.current = createRecordListNewRecordHighlighter({
+      setHighlightedIds,
+    });
+
+    return () => {
+      highlighterRef.current?.dispose();
+      highlighterRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    highlighterRef.current?.observe(visibleIds);
+  }, [visibleIds]);
 
   function toggleRecord(recordId: string) {
     setSelectedIds((current) => toggleRecordSelection(current, recordId));
@@ -183,7 +202,7 @@ export function EntityRecordsTable({
           <tbody>
             {records.length > 0 ? (
               records.map((record) => (
-                <tr className="border-b border-border" key={record.id}>
+                <tr className={recordRowClassName(highlightedIds.has(record.id))} key={record.id}>
                   <td className="py-3 pr-3">
                     <input
                       aria-label={`Seleccionar ${record.displayName}`}
@@ -273,6 +292,10 @@ export function EntityRecordsTable({
       </AlertDialog>
     </div>
   );
+}
+
+export function recordRowClassName(highlighted: boolean) {
+  return cn("border-b border-border", highlighted && "record-new-highlight");
 }
 
 function SortableHeader({

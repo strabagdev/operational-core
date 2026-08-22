@@ -37,7 +37,7 @@ type FieldWithOptions = EntityField & {
 
 type ValueInput = SerializedFieldValue;
 export type EntityRecordSortDirection = "asc" | "desc";
-export type EntityRecordSortKey = "displayName" | "updatedAt" | `field:${string}`;
+export type EntityRecordSortKey = "createdAt" | "displayName" | "updatedAt" | `field:${string}`;
 export type EntityRecordSort = {
   key: EntityRecordSortKey;
   direction: EntityRecordSortDirection;
@@ -306,28 +306,8 @@ export function resolveEntityRecordSort({
     }
   }
 
-  if (!sortKey) {
-    const primaryField = getConfiguredPrimaryField(fields);
-
-    if (primaryField) {
-      const primarySort = resolveEntityRecordSort({
-        fields,
-        listFields: [primaryField],
-        sortKey: `field:${primaryField.id}`,
-        direction: normalizedDirection,
-      });
-
-      if (primarySort.explicit) {
-        return {
-          ...primarySort,
-          explicit: false,
-        };
-      }
-    }
-  }
-
   return {
-    key: "displayName",
+    key: "createdAt",
     direction: "desc",
     explicit: false,
   };
@@ -427,6 +407,10 @@ export async function getEntityRecordIdsForSort({
 }
 
 function entityRecordOrderBy(sort: ResolvedEntityRecordSort): Prisma.EntityRecordOrderByWithRelationInput[] {
+  if (sort.key === "createdAt") {
+    return [{ createdAt: "desc" }, { id: "desc" }];
+  }
+
   if (sort.key === "displayName") {
     return [{ displayName: sort.direction }, { id: "asc" }];
   }

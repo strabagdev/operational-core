@@ -175,6 +175,7 @@ describe("entity record server-side search", () => {
         page: 3,
         pageSize: 25,
         query: "persona 10",
+        sort: { key: "field:rut", direction: "asc" },
         userId: "user_1",
       }),
     ).resolves.toMatchObject({
@@ -242,28 +243,12 @@ describe("entity record server-side search", () => {
 });
 
 describe("entity record server-side sorting", () => {
-  it.each([
-    ["INTEGER", "number", [18, 17, 16]],
-    ["DATE", "date", ["2026-01-18", "2026-01-17", "2026-01-16"]],
-    ["TEXT", "name", ["zeta", "beta", "alpha"]],
-  ] as const)("uses primary %s as default DESC sort", async (type, fieldId, orderedValues) => {
+  it("uses createdAt DESC with id DESC as the global default sort", async () => {
     entityTypeFindFirst.mockResolvedValue(entityType([
-      textField(fieldId, {
-        type,
+      textField("name", {
         config: { display: { primary: true, showInList: true } },
       }),
     ]) as never);
-    queryRaw.mockResolvedValueOnce(
-      orderedValues.map((_, index) => ({ id: `record_${index + 1}` })),
-    );
-    entityRecordFindMany.mockResolvedValueOnce(
-      orderedValues.map((value, index) => recordWithFieldValue({
-        fieldId,
-        id: `record_${index + 1}`,
-        type,
-        value,
-      })),
-    );
 
     const data = await getEntityRecords({
       contractId: "contract_1",
@@ -271,14 +256,30 @@ describe("entity record server-side sorting", () => {
       userId: "user_1",
     });
 
-    expect(queryRaw).toHaveBeenCalledTimes(1);
     expect(data?.sort).toBeNull();
-    expect(data?.records.map((item) => item.id)).toEqual(["record_1", "record_2", "record_3"]);
-    const sql = queryRaw.mock.calls[0]?.[0] as { strings?: string[] };
-    expect(sql.strings?.join(" ")).toContain("DESC");
+    expect(entityRecordFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      }),
+    );
+    expect(queryRaw).not.toHaveBeenCalled();
   });
 
-  it("lets explicit ASC field sort override the primary DESC default", async () => {
+  it("keeps same-createdAt records stable by id DESC", async () => {
+    await getEntityRecords({
+      contractId: "contract_1",
+      entityTypeId: "entity_1",
+      userId: "user_1",
+    });
+
+    expect(entityRecordFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      }),
+    );
+  });
+
+  it("lets explicit ASC field sort override the createdAt DESC default", async () => {
     entityTypeFindFirst.mockResolvedValue(entityType([
       textField("number", {
         type: "INTEGER",
@@ -304,7 +305,7 @@ describe("entity record server-side sorting", () => {
     expect(sql.strings?.join(" ")).toContain("ASC");
   });
 
-  it("keeps the stable displayName fallback when an entity has no primary field", async () => {
+  it("does not use displayName as the fallback when an entity has no primary field", async () => {
     entityTypeFindFirst.mockResolvedValue(entityType([
       textField("name", { config: { display: { showInList: true } } }),
     ]) as never);
@@ -317,7 +318,7 @@ describe("entity record server-side sorting", () => {
 
     expect(entityRecordFindMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        orderBy: [{ displayName: "desc" }, { id: "asc" }],
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
       }),
     );
     expect(queryRaw).not.toHaveBeenCalled();
@@ -395,10 +396,48 @@ describe("entity record server-side sorting", () => {
     expect(data?.sort).toBeNull();
     expect(entityRecordFindMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        orderBy: [{ displayName: "desc" }, { id: "asc" }],
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
       }),
     );
     expect(queryRaw).not.toHaveBeenCalled();
+  });
+
+  it("uses the same stable default sort for paginated pages", async () => {
+    await getEntityRecords({
+      contractId: "contract_1",
+      entityTypeId: "entity_1",
+      page: 3,
+      pageSize: 25,
+      userId: "user_1",
+    });
+
+    expect(entityRecordFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        skip: 50,
+        take: 25,
+      }),
+    );
+  });
+
+  it("places newer records before older records by default", async () => {
+    entityRecordFindMany.mockResolvedValueOnce([
+      { ...record("record_new"), createdAt: new Date("2026-08-22T12:00:00.000Z") },
+      { ...record("record_old"), createdAt: new Date("2026-08-21T12:00:00.000Z") },
+    ] as never);
+
+    const data = await getEntityRecords({
+      contractId: "contract_1",
+      entityTypeId: "entity_1",
+      userId: "user_1",
+    });
+
+    expect(entityRecordFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      }),
+    );
+    expect(data?.records.map((item) => item.id)).toEqual(["record_new", "record_old"]);
   });
 
   it.each([
@@ -540,7 +579,7 @@ describe("entity record server-side sorting", () => {
           sortKey: `field:${fieldId}`,
           direction: "asc",
         }),
-      ).toMatchObject({ key: "displayName", explicit: false });
+      ).toMatchObject({ key: "createdAt", direction: "desc", explicit: false });
     }
   });
 });

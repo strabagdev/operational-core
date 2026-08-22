@@ -79,3 +79,27 @@ body {
   background: var(--background);
   color: var(--foreground);
 }
+
+@keyframes record-new-highlight {
+  0%,
+  20% {
+    background-color: color-mix(in srgb, var(--accent) 78%, var(--ring));
+  }
+
+  100% {
+    background-color: transparent;
+  }
+}
+
+.record-new-highlight,
+.record-new-highlight > td {
+  animation: record-new-highlight 2500ms ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .record-new-highlight,
+  .record-new-highlight > td {
+    animation: none;
+    background-color: color-mix(in srgb, var(--accent) 78%, var(--ring));
+  }
+}

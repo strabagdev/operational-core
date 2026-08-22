@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
-import { EntityRecordsTable } from "./entity-records-table";
+import { EntityRecordsTable, recordRowClassName } from "./entity-records-table";
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({
@@ -64,5 +64,10 @@ describe("EntityRecordsTable", () => {
     expect(html).not.toContain(">Nombre<");
     expect(html).toContain(">Ver</a>");
     expect(html).toContain("/app/contracts/contract_1/records/attendance/attendance_1");
+  });
+
+  it("marks highlighted rows with the new-record highlight class", () => {
+    expect(recordRowClassName(true)).toContain("record-new-highlight");
+    expect(recordRowClassName(false)).not.toContain("record-new-highlight");
   });
 });
