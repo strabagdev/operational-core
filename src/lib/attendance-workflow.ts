@@ -9,7 +9,11 @@ import { parseAppViewConfig, type AppViewConfig } from "@/lib/app-views";
 import { stableRecordRequestHash } from "@/lib/api-record-writes";
 import { badRequest, conflict, forbidden, notFound } from "@/lib/api-response";
 import { dateOnlyInputValue, dateOnlyToUtcDate } from "@/lib/date-only";
-import { getRecordDisplayName, type SerializedFieldValue } from "@/lib/field-validation";
+import {
+  getRecordDisplayName,
+  getRelationConfig,
+  type SerializedFieldValue,
+} from "@/lib/field-validation";
 import { prisma } from "@/lib/prisma";
 import { syncEntityRelations } from "@/lib/entity-records";
 
@@ -51,7 +55,8 @@ type AttendanceField = {
   id: string;
   key: string;
   name: string;
-  options: Array<{ isActive: boolean; label?: string; value: string }>;
+  options: Array<{ id: string; isActive: boolean; label?: string; value: string }>;
+  multiple: boolean;
   required: boolean;
   searchable: boolean;
   sortOrder: number;
@@ -73,7 +78,9 @@ type AttendanceContext = {
     id: string;
     name: string;
   };
+  statusOptionValues: StatusOptionValues;
 };
+type StatusOptionValues = Record<AttendanceStatus, string>;
 
 export async function getAttendanceWorkflowDay({
   appViewId,
@@ -114,6 +121,7 @@ export async function getAttendanceWorkflowDay({
         config: context.context.config,
         date: parsedDate.date,
         personRecordIds: people.map((person) => person.id),
+        statusOptionValues: context.context.statusOptionValues,
         targetEntityTypeId: context.context.targetEntityType.id,
       });
   const attendanceByPersonId = new Map(
@@ -224,6 +232,7 @@ export async function saveAttendanceWorkflowDay({
       date: parsed.body.date,
       entry,
       person,
+      statusOptionValues: context.context.statusOptionValues,
       targetEntityType: context.context.targetEntityType,
       userId,
     }));
@@ -247,6 +256,7 @@ async function saveAttendanceEntry({
   entry,
   person,
   targetEntityType,
+  statusOptionValues,
   userId,
 }: {
   appId: string;
@@ -255,6 +265,7 @@ async function saveAttendanceEntry({
   date: Date;
   entry: AttendanceEntryInput;
   person: { displayName: string; id: string };
+  statusOptionValues: StatusOptionValues;
   targetEntityType: AttendanceContext["targetEntityType"];
   userId: string;
 }): Promise<AttendanceEntryResult> {
@@ -262,6 +273,7 @@ async function saveAttendanceEntry({
     config,
     date,
     personRecordIds: [person.id],
+    statusOptionValues,
     targetEntityTypeId: targetEntityType.id,
   }))[0];
 
@@ -273,6 +285,7 @@ async function saveAttendanceEntry({
       date,
       entry,
       person,
+      statusOptionValues,
       targetEntityType,
       userId,
     });
@@ -318,6 +331,7 @@ async function saveAttendanceEntry({
     contractId,
     entry,
     existing,
+    statusOptionValues,
     targetEntityType,
     userId,
   });
@@ -337,6 +351,7 @@ async function createAttendanceRecord({
   entry,
   person,
   targetEntityType,
+  statusOptionValues,
   userId,
 }: {
   appId: string;
@@ -345,11 +360,12 @@ async function createAttendanceRecord({
   date: Date;
   entry: AttendanceEntryInput;
   person: { displayName: string; id: string };
+  statusOptionValues: StatusOptionValues;
   targetEntityType: AttendanceContext["targetEntityType"];
   userId: string;
 }) {
   return prisma.$transaction(async (tx) => {
-    const values = attendanceValues({ config, date, entry });
+    const values = attendanceValues({ config, date, entry, statusOptionValues });
     const displayName = getRecordDisplayName(targetEntityType.fields, values) ||
       `${person.displayName} ${dateOnlyInputValue(date)}`;
     const record = await tx.entityRecord.create({
@@ -393,6 +409,7 @@ async function updateAttendanceRecord({
   contractId,
   entry,
   existing,
+  statusOptionValues,
   targetEntityType,
   userId,
 }: {
@@ -401,6 +418,7 @@ async function updateAttendanceRecord({
   contractId: string;
   entry: AttendanceEntryInput;
   existing: ExistingAttendance;
+  statusOptionValues: StatusOptionValues;
   targetEntityType: AttendanceContext["targetEntityType"];
   userId: string;
 }) {
@@ -409,7 +427,7 @@ async function updateAttendanceRecord({
       config.statusFieldId,
       ...(config.observationFieldId ? [config.observationFieldId] : []),
     ];
-    const newValues = attendanceMutableValues({ config, entry });
+    const newValues = attendanceMutableValues({ config, entry, statusOptionValues });
 
     await tx.entityValue.deleteMany({
       where: {
@@ -468,11 +486,13 @@ async function findExistingAttendances({
   config,
   date,
   personRecordIds,
+  statusOptionValues,
   targetEntityTypeId,
 }: {
   config: AttendanceConfig;
   date: Date;
   personRecordIds: string[];
+  statusOptionValues: StatusOptionValues;
   targetEntityTypeId: string;
 }): Promise<ExistingAttendance[]> {
   if (personRecordIds.length === 0) {
@@ -533,7 +553,7 @@ async function findExistingAttendances({
       continue;
     }
 
-    const status = record.values.find((value) => value.entityFieldId === config.statusFieldId)?.textValue;
+    const statusValue = record.values.find((value) => value.entityFieldId === config.statusFieldId)?.textValue;
 
     firstByPerson.set(personRecordId, {
       observation: config.observationFieldId
@@ -541,7 +561,7 @@ async function findExistingAttendances({
         : null,
       personRecordId,
       record,
-      status: status === "PRESENTE" || status === "AUSENTE" ? status : null,
+      status: domainStatusFromOptionValue(statusValue, statusOptionValues),
     });
   }
 
@@ -618,9 +638,11 @@ async function getAttendanceWorkflowContext({
             config: true,
             id: true,
             key: true,
+            multiple: true,
             name: true,
             options: {
               select: {
+                id: true,
                 isActive: true,
                 label: true,
                 value: true,
@@ -672,6 +694,7 @@ async function getAttendanceWorkflowContext({
       config,
       sourceEntityType,
       targetEntityType,
+      statusOptionValues: configValidation.statusOptionValues,
     },
   };
 }
@@ -695,7 +718,8 @@ function validateAttendanceRuntimeConfig({
   if (
     !personField ||
     personField.type !== "RELATION" ||
-    !fieldRelationTargetsEntity(personField.config, sourceEntityTypeId)
+    !fieldRelationTargetsEntity(personField.config, sourceEntityTypeId) ||
+    getRelationConfig(personField.config).relationKind !== "ONE"
   ) {
     return {
       ok: false as const,
@@ -710,21 +734,23 @@ function validateAttendanceRuntimeConfig({
     };
   }
 
-  if (!statusField || statusField.type !== "SELECT") {
+  if (!statusField || statusField.type !== "SELECT" || statusField.multiple) {
     return {
       ok: false as const,
       response: badRequest("La configuración de asistencia tiene un campo Estado inválido.", "INVALID_WORKFLOW_CONFIG"),
     };
   }
 
-  const statusOptions = new Set(
-    statusField.options.filter((option) => option.isActive).map((option) => option.value),
-  );
+  const optionMapping = getAttendanceStatusOptionValues({
+    absentOptionId: config.absentOptionId,
+    presentOptionId: config.presentOptionId,
+    statusField,
+  });
 
-  if (!statusOptions.has("PRESENTE") || !statusOptions.has("AUSENTE")) {
+  if (!optionMapping.ok) {
     return {
       ok: false as const,
-      response: badRequest("La configuración de asistencia no tiene estados compatibles.", "INVALID_WORKFLOW_CONFIG"),
+      response: badRequest(optionMapping.message, "INVALID_WORKFLOW_CONFIG"),
     };
   }
 
@@ -735,15 +761,11 @@ function validateAttendanceRuntimeConfig({
     };
   }
 
-  return { ok: true as const };
+  return { ok: true as const, statusOptionValues: optionMapping.statusOptionValues };
 }
 
 function fieldRelationTargetsEntity(config: Prisma.JsonValue | null, entityTypeId: string) {
-  if (!config || typeof config !== "object" || Array.isArray(config)) {
-    return false;
-  }
-
-  return (config as Record<string, unknown>).targetEntityTypeId === entityTypeId;
+  return getRelationConfig(config).targetEntityTypeId === entityTypeId;
 }
 
 function parseAttendanceDate(value: string | null) {
@@ -928,30 +950,93 @@ function attendanceValues({
   config,
   date,
   entry,
+  statusOptionValues,
 }: {
   config: AttendanceConfig;
   date: Date;
   entry: AttendanceEntryInput;
+  statusOptionValues: StatusOptionValues;
 }): SerializedFieldValue[] {
   return [
     { dateValue: date, fieldId: config.dateFieldId },
-    ...attendanceMutableValues({ config, entry }),
+    ...attendanceMutableValues({ config, entry, statusOptionValues }),
   ];
 }
 
 function attendanceMutableValues({
   config,
   entry,
+  statusOptionValues,
 }: {
   config: AttendanceConfig;
   entry: AttendanceEntryInput;
+  statusOptionValues: StatusOptionValues;
 }): SerializedFieldValue[] {
   return [
-    { fieldId: config.statusFieldId, textValue: entry.status },
+    { fieldId: config.statusFieldId, textValue: statusOptionValues[entry.status] },
     ...(config.observationFieldId && entry.observation
       ? [{ fieldId: config.observationFieldId, textValue: entry.observation }]
       : []),
   ];
+}
+
+function getAttendanceStatusOptionValues({
+  absentOptionId,
+  presentOptionId,
+  statusField,
+}: {
+  absentOptionId?: string;
+  presentOptionId?: string;
+  statusField: AttendanceField;
+}):
+  | { ok: true; statusOptionValues: StatusOptionValues }
+  | { ok: false; message: string } {
+  if (!presentOptionId || !absentOptionId) {
+    return {
+      ok: false,
+      message: "La configuración de asistencia debe seleccionar opciones para Presente y Ausente.",
+    };
+  }
+
+  if (presentOptionId === absentOptionId) {
+    return {
+      ok: false,
+      message: "La configuración de asistencia debe usar opciones distintas para Presente y Ausente.",
+    };
+  }
+
+  const presentOption = statusField.options.find((option) => option.id === presentOptionId);
+  const absentOption = statusField.options.find((option) => option.id === absentOptionId);
+
+  if (!presentOption?.isActive || !absentOption?.isActive) {
+    return {
+      ok: false,
+      message: "Las opciones de asistencia deben pertenecer al campo Estado y estar activas.",
+    };
+  }
+
+  return {
+    ok: true,
+    statusOptionValues: {
+      PRESENTE: presentOption.value,
+      AUSENTE: absentOption.value,
+    },
+  };
+}
+
+function domainStatusFromOptionValue(
+  value: string | null | undefined,
+  statusOptionValues: StatusOptionValues,
+) {
+  if (value === statusOptionValues.PRESENTE) {
+    return "PRESENTE";
+  }
+
+  if (value === statusOptionValues.AUSENTE) {
+    return "AUSENTE";
+  }
+
+  return null;
 }
 
 async function writeAttendanceValues(

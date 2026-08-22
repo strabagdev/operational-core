@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { getAuthorizedContract } from "./contracts";
 import { isEntityIconKey } from "./entity-icons";
+import { getRelationConfig } from "./field-validation";
 import { slugify } from "./format";
 import { prisma } from "./prisma";
 import {
@@ -58,6 +59,8 @@ export type AppViewConfig =
       personFieldId: string;
       dateFieldId: string;
       statusFieldId: string;
+      presentOptionId?: string;
+      absentOptionId?: string;
       observationFieldId?: string;
     }
   | { type: "BOARD"; entityTypeId: string; groupByFieldKey: string }
@@ -90,8 +93,10 @@ export function getAppViewInput(formData: FormData) {
       entityTypeIds: formData.getAll("entityTypeIds"),
       groupByFieldKey: formData.get("groupByFieldKey"),
       dateFieldId: formData.get("dateFieldId"),
+      absentOptionId: formData.get("absentOptionId"),
       observationFieldId: formData.get("observationFieldId"),
       personFieldId: formData.get("personFieldId"),
+      presentOptionId: formData.get("presentOptionId"),
       sourceEntityTypeId: formData.get("sourceEntityTypeId"),
       statusFieldId: formData.get("statusFieldId"),
       targetEntityTypeId: formData.get("targetEntityTypeId"),
@@ -127,6 +132,7 @@ export async function getAppViewAdminData(contractId: string, userId: string) {
             options: {
               orderBy: [{ sortOrder: "asc" }, { label: "asc" }],
               select: {
+                id: true,
                 isActive: true,
                 label: true,
                 value: true,
@@ -330,6 +336,36 @@ export function friendlyAppViewError(error: unknown) {
   return "No fue posible guardar la vista.";
 }
 
+export function appViewFieldErrors(error: unknown) {
+  if (error instanceof z.ZodError) {
+    return Object.fromEntries(
+      error.issues.map((issue) => [
+        issue.path.join(".") || "form",
+        [issue.message],
+      ]),
+    );
+  }
+
+  if (error instanceof AppViewConfigError && error.fieldName) {
+    return { [error.fieldName]: [error.message] };
+  }
+
+  if (
+    error instanceof Prisma.PrismaClientKnownRequestError &&
+    error.code === "P2002"
+  ) {
+    const target = Array.isArray(error.meta?.target)
+      ? error.meta.target.join(", ")
+      : "";
+
+    if (target.includes("slug")) {
+      return { slug: ["Ya existe una vista con ese slug en este contrato."] };
+    }
+  }
+
+  return undefined;
+}
+
 async function validateAppViewConfig({
   contractId,
   rawConfig,
@@ -356,7 +392,14 @@ async function validateAppViewConfig({
     if (config.workflowKey === "attendance") {
       validateAttendanceAppViewFields({
         config,
-        sourceEntityTypeId: sourceEntityType.id,
+        sourceEntityType: {
+          id: sourceEntityType.id,
+          name: sourceEntityType.name,
+        },
+        targetEntityType: {
+          id: targetEntityType.id,
+          name: targetEntityType.name,
+        },
         targetFields: targetEntityType.fields,
       });
     }
@@ -369,6 +412,8 @@ async function validateAppViewConfig({
       personFieldId: config.personFieldId,
       dateFieldId: config.dateFieldId,
       statusFieldId: config.statusFieldId,
+      presentOptionId: config.presentOptionId,
+      absentOptionId: config.absentOptionId,
       ...(config.observationFieldId ? { observationFieldId: config.observationFieldId } : {}),
     };
   }
@@ -410,6 +455,22 @@ const workflowConfigInputSchema = z.object({
   personFieldId: z.string().trim().min(1, "Selecciona el campo Persona."),
   dateFieldId: z.string().trim().min(1, "Selecciona el campo Fecha."),
   statusFieldId: z.string().trim().min(1, "Selecciona el campo Estado."),
+  presentOptionId: z.preprocess(
+    (value) => value === null ? undefined : value,
+    z
+      .string()
+      .trim()
+      .optional()
+      .transform((value) => value || undefined),
+  ),
+  absentOptionId: z.preprocess(
+    (value) => value === null ? undefined : value,
+    z
+      .string()
+      .trim()
+      .optional()
+      .transform((value) => value || undefined),
+  ),
   observationFieldId: z.preprocess(
     (value) => value === null ? undefined : value,
     z
@@ -442,9 +503,11 @@ async function requireEntityType(
           id: true,
           isActive: true,
           key: true,
+          multiple: true,
           name: true,
           options: {
             select: {
+              id: true,
               isActive: true,
               label: true,
               value: true,
@@ -483,17 +546,20 @@ function parseWorkflowConfigInput(rawConfig: unknown) {
 
 function validateAttendanceAppViewFields({
   config,
-  sourceEntityTypeId,
+  sourceEntityType,
+  targetEntityType,
   targetFields,
 }: {
   config: z.infer<typeof workflowConfigInputSchema>;
-  sourceEntityTypeId: string;
+  sourceEntityType: { id: string; name: string };
+  targetEntityType: { id: string; name: string };
   targetFields: Array<{
     config: Prisma.JsonValue | null;
     id: string;
     isActive: boolean;
+    multiple: boolean;
     name: string;
-    options: Array<{ isActive: boolean; value: string }>;
+    options: Array<{ id: string; isActive: boolean; value: string }>;
     type: string;
   }>;
 }) {
@@ -505,32 +571,83 @@ function validateAttendanceAppViewFields({
     : null;
 
   if (personField.type !== "RELATION") {
-    throw new AppViewConfigError("El campo Persona debe ser de tipo relación.");
+    throw new AppViewConfigError("El campo Persona debe ser de tipo relación.", "personFieldId");
   }
 
-  if (!fieldRelationTargetsEntity(personField.config, sourceEntityTypeId)) {
-    throw new AppViewConfigError("El campo Persona debe relacionar hacia la entidad fuente.");
+  if (!fieldRelationTargetsEntity(personField.config, sourceEntityType.id)) {
+    logAttendanceValidationIssue("person_relation_target", {
+      actualTargetEntityTypeId: getRelationConfig(personField.config).targetEntityTypeId ?? null,
+      expectedSourceEntityTypeId: sourceEntityType.id,
+      personFieldId: personField.id,
+      targetEntityTypeId: targetEntityType.id,
+    });
+    throw new AppViewConfigError(
+      `Este campo debe relacionar ${targetEntityType.name} con ${sourceEntityType.name}.`,
+      "personFieldId",
+    );
+  }
+
+  if (getRelationConfig(personField.config).relationKind !== "ONE") {
+    logAttendanceValidationIssue("person_relation_kind", {
+      actualRelationKind: getRelationConfig(personField.config).relationKind,
+      personFieldId: personField.id,
+      targetEntityTypeId: targetEntityType.id,
+    });
+    throw new AppViewConfigError("El campo Persona debe ser una relación simple.", "personFieldId");
   }
 
   if (dateField.type !== "DATE") {
-    throw new AppViewConfigError("El campo Fecha debe ser de tipo fecha.");
+    throw new AppViewConfigError("El campo Fecha debe ser de tipo fecha.", "dateFieldId");
   }
 
   if (statusField.type !== "SELECT") {
-    throw new AppViewConfigError("El campo Estado debe ser de tipo selección.");
+    throw new AppViewConfigError("El campo Estado debe ser de tipo selección.", "statusFieldId");
   }
 
-  const activeStatusValues = new Set(
-    statusField.options.filter((option) => option.isActive).map((option) => option.value),
-  );
+  if (statusField.multiple) {
+    throw new AppViewConfigError("El campo Estado debe ser de selección simple.", "statusFieldId");
+  }
 
-  if (!activeStatusValues.has("PRESENTE") || !activeStatusValues.has("AUSENTE")) {
-    throw new AppViewConfigError("El campo Estado debe incluir las opciones PRESENTE y AUSENTE.");
+  const presentOption = requireActiveStatusOption(statusField, config.presentOptionId, "Presente");
+  const absentOption = requireActiveStatusOption(statusField, config.absentOptionId, "Ausente");
+
+  if (presentOption.id === absentOption.id) {
+    logAttendanceValidationIssue("status_options", {
+      absentOptionId: config.absentOptionId ?? null,
+      presentOptionId: config.presentOptionId ?? null,
+      statusFieldId: statusField.id,
+      targetEntityTypeId: targetEntityType.id,
+    });
+    throw new AppViewConfigError("Selecciona opciones distintas para Presente y Ausente.", "absentOptionId");
   }
 
   if (observationField && observationField.type !== "TEXTAREA") {
-    throw new AppViewConfigError("El campo Observación debe ser de tipo texto largo.");
+    throw new AppViewConfigError("El campo Observación debe ser de tipo texto largo.", "observationFieldId");
   }
+}
+
+function requireActiveStatusOption(
+  statusField: {
+    id: string;
+    options: Array<{ id: string; isActive: boolean }>;
+  },
+  optionId: string | undefined,
+  label: string,
+) {
+  if (!optionId) {
+    throw new AppViewConfigError(`Selecciona la opción para ${label}.`, label === "Presente" ? "presentOptionId" : "absentOptionId");
+  }
+
+  const option = statusField.options.find((item) => item.id === optionId);
+
+  if (!option || !option.isActive) {
+    throw new AppViewConfigError(
+      `La opción para ${label} debe pertenecer al campo Estado y estar activa.`,
+      label === "Presente" ? "presentOptionId" : "absentOptionId",
+    );
+  }
+
+  return option;
 }
 
 function requireActiveTargetField<
@@ -550,11 +667,18 @@ function requireActiveTargetField<
 }
 
 function fieldRelationTargetsEntity(config: Prisma.JsonValue | null, entityTypeId: string) {
-  if (!config || typeof config !== "object" || Array.isArray(config)) {
-    return false;
+  return getRelationConfig(config).targetEntityTypeId === entityTypeId;
+}
+
+function logAttendanceValidationIssue(reason: string, details: Record<string, unknown>) {
+  if (process.env.NODE_ENV === "test") {
+    return;
   }
 
-  return (config as Record<string, unknown>).targetEntityTypeId === entityTypeId;
+  console.warn("attendance AppView validation failed", {
+    reason,
+    ...details,
+  });
 }
 
 function toJsonConfig(config: AppViewConfig): Prisma.InputJsonObject {
@@ -575,9 +699,12 @@ function parseFormBoolean(formData: FormData, key: string, defaultValue = false)
 }
 
 class AppViewConfigError extends Error {
-  constructor(message: string) {
+  fieldName?: string;
+
+  constructor(message: string, fieldName?: string) {
     super(message);
     this.name = "AppViewConfigError";
+    this.fieldName = fieldName;
   }
 }
 

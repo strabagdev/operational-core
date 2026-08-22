@@ -258,10 +258,35 @@ export function getRecordDisplayName(fields: DisplayField[], values: SerializedF
 
 export function getRelationConfig(config: unknown): RelationConfig {
   const parsed = parseFieldConfig(config);
+  const nestedRelation = getNestedRelationConfig(config);
 
   return {
-    targetEntityTypeId: parsed.targetEntityTypeId,
-    relationKind: parsed.relationKind ?? "ONE",
+    targetEntityTypeId: parsed.targetEntityTypeId ?? nestedRelation.targetEntityTypeId,
+    relationKind: parsed.relationKind ?? nestedRelation.relationKind ?? "ONE",
+  };
+}
+
+function getNestedRelationConfig(config: unknown): RelationConfig {
+  if (!config || typeof config !== "object" || Array.isArray(config)) {
+    return {};
+  }
+
+  const relation = (config as Record<string, unknown>).relation;
+
+  if (!relation || typeof relation !== "object" || Array.isArray(relation)) {
+    return {};
+  }
+
+  const raw = relation as Record<string, unknown>;
+  const relationKind = raw.relationKind === "MANY" || raw.relationKind === "ONE"
+    ? raw.relationKind
+    : undefined;
+
+  return {
+    targetEntityTypeId: typeof raw.targetEntityTypeId === "string"
+      ? raw.targetEntityTypeId
+      : undefined,
+    relationKind,
   };
 }
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useActionState, useMemo, useState } from "react";
 import type { AppViewType } from "@prisma/client";
 
 import { EntityIcon } from "@/components/entity-icon";
@@ -13,12 +13,20 @@ import {
 } from "@/lib/app-views";
 import { entityIconOptions } from "@/lib/entity-icons";
 
+import type { AppViewActionState } from "./actions";
+
 type AppViewEntityTypeOption = {
   fields: Array<{
     id: string;
     isActive: boolean;
     key: string;
     name: string;
+    options: Array<{
+      id: string;
+      isActive: boolean;
+      label: string;
+      value: string;
+    }>;
     type: string;
   }>;
   icon?: string | null;
@@ -27,8 +35,12 @@ type AppViewEntityTypeOption = {
 };
 
 type AppViewFormProps = {
-  action: (formData: FormData) => void | Promise<void>;
+  action: (
+    state: AppViewActionState,
+    formData: FormData,
+  ) => Promise<AppViewActionState>;
   entityTypes: AppViewEntityTypeOption[];
+  initialActionState?: AppViewActionState;
   initialValues?: {
     active: boolean;
     config: AppViewConfig;
@@ -44,53 +56,81 @@ type AppViewFormProps = {
 export function AppViewForm({
   action,
   entityTypes,
+  initialActionState,
   initialValues,
   submitLabel,
 }: AppViewFormProps) {
-  const [name, setName] = useState(initialValues?.name ?? "");
-  const [slug, setSlug] = useState(initialValues?.slug ?? "");
+  const [state, formAction, actionPending] = useActionState(
+    action,
+    initialActionState ?? { success: false },
+  );
+  const [name, setName] = useState(valueFromState(state, "name", initialValues?.name ?? ""));
+  const [slug, setSlug] = useState(valueFromState(state, "slug", initialValues?.slug ?? ""));
   const [slugTouched, setSlugTouched] = useState(Boolean(initialValues?.slug));
-  const [type, setType] = useState<AppViewType>(initialValues?.type ?? "RECORDS");
+  const [type, setType] = useState<AppViewType>(
+    valueFromState(state, "type", initialValues?.type ?? "RECORDS") as AppViewType,
+  );
   const [entityTypeId, setEntityTypeId] = useState(
-    initialValues?.config.type === "RECORDS" || initialValues?.config.type === "BOARD"
+    valueFromState(state, "entityTypeId") ||
+    (initialValues?.config.type === "RECORDS" || initialValues?.config.type === "BOARD"
       ? initialValues.config.entityTypeId
-      : entityTypes[0]?.id ?? "",
+      : entityTypes[0]?.id ?? ""),
   );
   const [sourceEntityTypeId, setSourceEntityTypeId] = useState(
-    initialValues?.config.type === "WORKFLOW"
+    valueFromState(state, "sourceEntityTypeId") ||
+    (initialValues?.config.type === "WORKFLOW"
       ? initialValues.config.sourceEntityTypeId
-      : entityTypes[0]?.id ?? "",
+      : entityTypes[0]?.id ?? ""),
   );
   const [targetEntityTypeId, setTargetEntityTypeId] = useState(
-    initialValues?.config.type === "WORKFLOW"
+    valueFromState(state, "targetEntityTypeId") ||
+    (initialValues?.config.type === "WORKFLOW"
       ? initialValues.config.targetEntityTypeId
-      : entityTypes[0]?.id ?? "",
+      : entityTypes[0]?.id ?? ""),
   );
   const targetEntityType = entityTypes.find((entityType) => entityType.id === targetEntityTypeId);
   const [personFieldId, setPersonFieldId] = useState(
-    initialValues?.config.type === "WORKFLOW"
+    valueFromState(state, "personFieldId") ||
+    (initialValues?.config.type === "WORKFLOW"
       ? initialValues.config.personFieldId
-      : firstActiveFieldId(targetEntityType, "RELATION"),
+      : firstActiveFieldId(targetEntityType, "RELATION")),
   );
   const [dateFieldId, setDateFieldId] = useState(
-    initialValues?.config.type === "WORKFLOW"
+    valueFromState(state, "dateFieldId") ||
+    (initialValues?.config.type === "WORKFLOW"
       ? initialValues.config.dateFieldId
-      : firstActiveFieldId(targetEntityType, "DATE"),
+      : firstActiveFieldId(targetEntityType, "DATE")),
   );
   const [statusFieldId, setStatusFieldId] = useState(
-    initialValues?.config.type === "WORKFLOW"
+    valueFromState(state, "statusFieldId") ||
+    (initialValues?.config.type === "WORKFLOW"
       ? initialValues.config.statusFieldId
-      : firstActiveFieldId(targetEntityType, "SELECT"),
+      : firstActiveFieldId(targetEntityType, "SELECT")),
+  );
+  const statusField = targetEntityType?.fields.find((field) => field.id === statusFieldId);
+  const [presentOptionId, setPresentOptionId] = useState(
+    valueFromState(state, "presentOptionId") ||
+    (initialValues?.config.type === "WORKFLOW"
+      ? initialValues.config.presentOptionId ?? ""
+      : firstActiveOptionId(statusField)),
+  );
+  const [absentOptionId, setAbsentOptionId] = useState(
+    valueFromState(state, "absentOptionId") ||
+    (initialValues?.config.type === "WORKFLOW"
+      ? initialValues.config.absentOptionId ?? ""
+      : secondActiveOptionId(statusField)),
   );
   const [observationFieldId, setObservationFieldId] = useState(
-    initialValues?.config.type === "WORKFLOW"
+    valueFromState(state, "observationFieldId") ||
+    (initialValues?.config.type === "WORKFLOW"
       ? initialValues.config.observationFieldId ?? ""
-      : "",
+      : ""),
   );
   const [dashboardEntityTypeIds, setDashboardEntityTypeIds] = useState<Set<string>>(
-    new Set(initialValues?.config.type === "DASHBOARD"
+    new Set(valuesFromState(state, "entityTypeIds") ??
+      (initialValues?.config.type === "DASHBOARD"
       ? initialValues.config.entityTypeIds
-      : entityTypes[0]?.id ? [entityTypes[0].id] : []),
+      : entityTypes[0]?.id ? [entityTypes[0].id] : [])),
   );
   const boardEntityType = entityTypes.find((entityType) => entityType.id === entityTypeId);
   const activeBoardFields = useMemo(
@@ -115,7 +155,8 @@ export function AppViewForm({
   }
 
   return (
-    <form action={action} className="grid gap-4">
+    <form action={formAction} className="grid gap-4">
+      <ActionErrorSummary state={state} />
       <label className="grid gap-2 text-sm font-medium">
         Nombre
         <input
@@ -132,6 +173,7 @@ export function AppViewForm({
           required
           value={name}
         />
+        <FieldError errors={state.fieldErrors?.name} />
       </label>
 
       <label className="grid gap-2 text-sm font-medium">
@@ -146,13 +188,14 @@ export function AppViewForm({
           required
           value={slug}
         />
+        <FieldError errors={state.fieldErrors?.slug} />
       </label>
 
       <label className="grid gap-2 text-sm font-medium">
         Icono opcional
         <select
           className="h-10 rounded-md border border-input bg-background px-3 text-sm font-normal outline-none ring-ring focus-visible:ring-2"
-          defaultValue={initialValues?.icon ?? ""}
+          defaultValue={valueFromState(state, "icon", initialValues?.icon ?? "")}
           name="icon"
         >
           <option value="">Sin icono</option>
@@ -162,6 +205,7 @@ export function AppViewForm({
             </option>
           ))}
         </select>
+        <FieldError errors={state.fieldErrors?.icon} />
       </label>
 
       <label className="grid gap-2 text-sm font-medium">
@@ -178,6 +222,7 @@ export function AppViewForm({
             </option>
           ))}
         </select>
+        <FieldError errors={state.fieldErrors?.type} />
       </label>
 
       <ConfigFields
@@ -185,15 +230,20 @@ export function AppViewForm({
         dashboardEntityTypeIds={dashboardEntityTypeIds}
         entityTypeId={entityTypeId}
         entityTypes={entityTypes}
+        fieldErrors={state.fieldErrors}
         groupByFieldKey={groupByFieldKey}
         dateFieldId={dateFieldId}
         setEntityTypeId={setEntityTypeId}
         observationFieldId={observationFieldId}
         personFieldId={personFieldId}
+        presentOptionId={presentOptionId}
+        absentOptionId={absentOptionId}
         setDateFieldId={setDateFieldId}
+        setAbsentOptionId={setAbsentOptionId}
         setGroupByFieldKey={setGroupByFieldKey}
         setObservationFieldId={setObservationFieldId}
         setPersonFieldId={setPersonFieldId}
+        setPresentOptionId={setPresentOptionId}
         setSourceEntityTypeId={setSourceEntityTypeId}
         setStatusFieldId={setStatusFieldId}
         setTargetEntityTypeId={setTargetEntityTypeId}
@@ -209,7 +259,7 @@ export function AppViewForm({
           Orden
           <input
             className="h-10 rounded-md border border-input bg-background px-3 text-sm outline-none ring-ring focus-visible:ring-2"
-            defaultValue={initialValues?.sortOrder ?? 0}
+            defaultValue={valueFromState(state, "sortOrder", String(initialValues?.sortOrder ?? 0))}
             min={0}
             name="sortOrder"
             type="number"
@@ -218,7 +268,7 @@ export function AppViewForm({
         <label className="flex items-end gap-2 pb-2 text-sm font-medium">
           <input
             className="h-4 w-4"
-            defaultChecked={initialValues?.active ?? true}
+            defaultChecked={state.values ? valueFromState(state, "active") === "on" : initialValues?.active ?? true}
             name="active"
             type="checkbox"
           />
@@ -226,7 +276,9 @@ export function AppViewForm({
         </label>
       </div>
 
-      <Button type="submit">{submitLabel}</Button>
+      <Button disabled={actionPending} type="submit">
+        {actionPending ? "Guardando..." : submitLabel}
+      </Button>
     </form>
   );
 }
@@ -237,14 +289,19 @@ function ConfigFields({
   dateFieldId,
   entityTypeId,
   entityTypes,
+  fieldErrors,
   groupByFieldKey,
   observationFieldId,
   personFieldId,
+  presentOptionId,
+  absentOptionId,
   setDateFieldId,
+  setAbsentOptionId,
   setEntityTypeId,
   setGroupByFieldKey,
   setObservationFieldId,
   setPersonFieldId,
+  setPresentOptionId,
   setSourceEntityTypeId,
   setStatusFieldId,
   setTargetEntityTypeId,
@@ -259,14 +316,19 @@ function ConfigFields({
   dateFieldId: string;
   entityTypeId: string;
   entityTypes: AppViewEntityTypeOption[];
+  fieldErrors?: Record<string, string[]>;
   groupByFieldKey: string;
   observationFieldId: string;
   personFieldId: string;
+  presentOptionId: string;
+  absentOptionId: string;
   setDateFieldId: (value: string) => void;
+  setAbsentOptionId: (value: string) => void;
   setEntityTypeId: (value: string) => void;
   setGroupByFieldKey: (value: string) => void;
   setObservationFieldId: (value: string) => void;
   setPersonFieldId: (value: string) => void;
+  setPresentOptionId: (value: string) => void;
   setSourceEntityTypeId: (value: string) => void;
   setStatusFieldId: (value: string) => void;
   setTargetEntityTypeId: (value: string) => void;
@@ -279,6 +341,8 @@ function ConfigFields({
   if (type === "WORKFLOW") {
     const targetEntityType = entityTypes.find((entityType) => entityType.id === targetEntityTypeId);
     const activeTargetFields = targetEntityType?.fields.filter((field) => field.isActive) ?? [];
+    const statusField = activeTargetFields.find((field) => field.id === statusFieldId);
+    const activeStatusOptions = statusField?.options.filter((option) => option.isActive) ?? [];
 
     return (
       <fieldset className="grid gap-3 rounded-md border border-border p-3">
@@ -289,6 +353,7 @@ function ConfigFields({
           onChange={setSourceEntityTypeId}
           options={entityTypes}
           value={sourceEntityTypeId}
+          errors={fieldErrors?.sourceEntityTypeId}
         />
         <EntitySelect
           label="Entidad destino"
@@ -299,11 +364,16 @@ function ConfigFields({
             setTargetEntityTypeId(value);
             setPersonFieldId(firstActiveFieldId(nextTarget, "RELATION"));
             setDateFieldId(firstActiveFieldId(nextTarget, "DATE"));
-            setStatusFieldId(firstActiveFieldId(nextTarget, "SELECT"));
+            const nextStatusFieldId = firstActiveFieldId(nextTarget, "SELECT");
+            const nextStatusField = nextTarget?.fields.find((field) => field.id === nextStatusFieldId);
+            setStatusFieldId(nextStatusFieldId);
+            setPresentOptionId(firstActiveOptionId(nextStatusField));
+            setAbsentOptionId(secondActiveOptionId(nextStatusField));
             setObservationFieldId(firstActiveFieldId(nextTarget, "TEXTAREA"));
           }}
           options={entityTypes}
           value={targetEntityTypeId}
+          errors={fieldErrors?.targetEntityTypeId}
         />
         <label className="grid gap-2 text-sm font-medium">
           Workflow
@@ -327,6 +397,7 @@ function ConfigFields({
             onChange={setPersonFieldId}
             preferredType="RELATION"
             value={personFieldId}
+            errors={fieldErrors?.personFieldId}
           />
           <FieldSelect
             fields={activeTargetFields}
@@ -335,14 +406,38 @@ function ConfigFields({
             onChange={setDateFieldId}
             preferredType="DATE"
             value={dateFieldId}
+            errors={fieldErrors?.dateFieldId}
           />
           <FieldSelect
             fields={activeTargetFields}
             label="Campo Estado"
             name="statusFieldId"
-            onChange={setStatusFieldId}
+            onChange={(value) => {
+              const nextStatusField = activeTargetFields.find((field) => field.id === value);
+
+              setStatusFieldId(value);
+              setPresentOptionId(firstActiveOptionId(nextStatusField));
+              setAbsentOptionId(secondActiveOptionId(nextStatusField));
+            }}
             preferredType="SELECT"
             value={statusFieldId}
+            errors={fieldErrors?.statusFieldId}
+          />
+          <OptionSelect
+            errors={fieldErrors?.presentOptionId}
+            label="Opción para Presente"
+            name="presentOptionId"
+            onChange={setPresentOptionId}
+            options={activeStatusOptions}
+            value={presentOptionId}
+          />
+          <OptionSelect
+            errors={fieldErrors?.absentOptionId}
+            label="Opción para Ausente"
+            name="absentOptionId"
+            onChange={setAbsentOptionId}
+            options={activeStatusOptions}
+            value={absentOptionId}
           />
           <FieldSelect
             fields={activeTargetFields}
@@ -352,6 +447,7 @@ function ConfigFields({
             onChange={setObservationFieldId}
             preferredType="TEXTAREA"
             value={observationFieldId}
+            errors={fieldErrors?.observationFieldId}
           />
         </div>
       </fieldset>
@@ -372,6 +468,7 @@ function ConfigFields({
           }}
           options={entityTypes}
           value={entityTypeId}
+          errors={fieldErrors?.entityTypeId}
         />
         <label className="grid gap-2 text-sm font-medium">
           Campo de agrupación
@@ -388,6 +485,7 @@ function ConfigFields({
               </option>
             ))}
           </select>
+          <FieldError errors={fieldErrors?.groupByFieldKey} />
         </label>
       </fieldset>
     );
@@ -426,12 +524,14 @@ function ConfigFields({
         onChange={setEntityTypeId}
         options={entityTypes}
         value={entityTypeId}
+        errors={fieldErrors?.entityTypeId}
       />
     </fieldset>
   );
 }
 
 function FieldSelect({
+  errors,
   fields,
   includeEmpty = false,
   label,
@@ -440,6 +540,7 @@ function FieldSelect({
   preferredType,
   value,
 }: {
+  errors?: string[];
   fields: AppViewEntityTypeOption["fields"];
   includeEmpty?: boolean;
   label: string;
@@ -468,6 +569,44 @@ function FieldSelect({
           </option>
         ))}
       </select>
+      <FieldError errors={errors} />
+    </label>
+  );
+}
+
+function OptionSelect({
+  errors,
+  label,
+  name,
+  onChange,
+  options,
+  value,
+}: {
+  errors?: string[];
+  label: string;
+  name: string;
+  onChange: (value: string) => void;
+  options: Array<{ id: string; label: string; value: string }>;
+  value: string;
+}) {
+  return (
+    <label className="grid gap-2 text-sm font-medium">
+      {label}
+      <select
+        className="h-10 rounded-md border border-input bg-background px-3 text-sm font-normal outline-none ring-ring focus-visible:ring-2"
+        name={name}
+        onChange={(event) => onChange(event.target.value)}
+        required
+        value={value}
+      >
+        <option value="">Selecciona una opción</option>
+        {options.map((option) => (
+          <option key={option.id} value={option.id}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+      <FieldError errors={errors} />
     </label>
   );
 }
@@ -479,13 +618,23 @@ function firstActiveFieldId(
   return entityType?.fields.find((field) => field.isActive && field.type === type)?.id ?? "";
 }
 
+function firstActiveOptionId(field: AppViewEntityTypeOption["fields"][number] | undefined) {
+  return field?.options.find((option) => option.isActive)?.id ?? "";
+}
+
+function secondActiveOptionId(field: AppViewEntityTypeOption["fields"][number] | undefined) {
+  return field?.options.filter((option) => option.isActive)[1]?.id ?? "";
+}
+
 function EntitySelect({
+  errors,
   label,
   name,
   onChange,
   options,
   value,
 }: {
+  errors?: string[];
   label: string;
   name: string;
   onChange: (value: string) => void;
@@ -509,6 +658,46 @@ function EntitySelect({
           </option>
         ))}
       </select>
+      <FieldError errors={errors} />
     </label>
   );
+}
+
+function ActionErrorSummary({ state }: { state: AppViewActionState }) {
+  if (!state.message) {
+    return null;
+  }
+
+  return (
+    <div
+      className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+      role="alert"
+    >
+      {state.message}
+    </div>
+  );
+}
+
+function FieldError({ errors }: { errors?: string[] }) {
+  if (!errors?.length) {
+    return null;
+  }
+
+  return <p className="text-xs font-normal text-destructive">{errors[0]}</p>;
+}
+
+function valueFromState(state: AppViewActionState, key: string, fallback = "") {
+  const value = state.values?.[key];
+
+  return Array.isArray(value) ? value[0] ?? fallback : value ?? fallback;
+}
+
+function valuesFromState(state: AppViewActionState, key: string) {
+  const value = state.values?.[key];
+
+  if (Array.isArray(value)) {
+    return value;
+  }
+
+  return value ? [value] : undefined;
 }

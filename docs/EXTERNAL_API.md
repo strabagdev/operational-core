@@ -467,6 +467,8 @@ Config shapes by `type`:
     "personFieldId": "person_relation_field_id",
     "dateFieldId": "date_field_id",
     "statusFieldId": "status_select_field_id",
+    "presentOptionId": "field_option_id_for_present",
+    "absentOptionId": "field_option_id_for_absent",
     "observationFieldId": "optional_textarea_field_id"
   },
   "BOARD": {
@@ -543,6 +545,8 @@ Success response:
 ### POST /api/v1/contracts/:contractId/views/:appViewId/workflow/attendance
 
 Creates or confirms attendance entries for one date. `clientRequestId` is optional but recommended for retryable clients. The workflow is functionally idempotent for the same Persona + Fecha + status: retries do not create duplicate attendance records.
+
+The API contract uses domain statuses `PRESENTE` and `AUSENTE`. Internally, Operational Core maps those statuses to the configured `FieldOption` ids on the AppView and persists the selected option's real `value`.
 
 Request:
 

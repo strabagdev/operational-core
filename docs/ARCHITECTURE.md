@@ -216,7 +216,9 @@ Example:
 - `Personas`: `nature = MASTER`
 - `Asistencias`: `nature = TRANSACTION`
 - `Directorio Personas`: `type = RECORDS`, `entityTypeId = Personas`
-- `Tomar asistencia`: `type = WORKFLOW`, `workflowKey = attendance`, `sourceEntityTypeId = Personas`, `targetEntityTypeId = Asistencias`, plus `personFieldId`, `dateFieldId`, `statusFieldId`, and optional `observationFieldId`
+- `Tomar asistencia`: `type = WORKFLOW`, `workflowKey = attendance`, `sourceEntityTypeId = Personas`, `targetEntityTypeId = Asistencias`, plus `personFieldId`, `dateFieldId`, `statusFieldId`, `presentOptionId`, `absentOptionId`, and optional `observationFieldId`
+
+Attendance uses domain statuses `PRESENTE` and `AUSENTE` in its API, but stores the actual `FieldOption.value` configured through `presentOptionId` and `absentOptionId`. This keeps the workflow independent from the visible option label and from the internal option value string.
 
 The current audit system does not yet include dedicated actions for AppView configuration changes. AppView administration reuses contract authorization but does not write audit events in this stage.
 

@@ -55,8 +55,8 @@ const entityTypeFindMany = vi.mocked(prisma.entityType.findMany);
 function entityType(overrides: Record<string, unknown> = {}) {
   return {
     fields: [
-      { id: "field_estado", isActive: true, key: "estado", name: "Estado", type: "SELECT" },
-      { id: "field_cerrado", isActive: false, key: "cerrado", name: "Cerrado", type: "BOOLEAN" },
+      { id: "field_estado", isActive: true, key: "estado", multiple: false, name: "Estado", type: "SELECT" },
+      { id: "field_cerrado", isActive: false, key: "cerrado", multiple: false, name: "Cerrado", type: "BOOLEAN" },
     ],
     id: "entity_1",
     name: "Personas",
@@ -165,6 +165,8 @@ describe("AppView config validation", () => {
         personFieldId: "person_field",
         dateFieldId: "date_field",
         statusFieldId: "status_field",
+        presentOptionId: "present_option",
+        absentOptionId: "absent_option",
         observationFieldId: "observation_field",
         type: "WORKFLOW",
         workflowKey: "attendance",
@@ -180,6 +182,8 @@ describe("AppView config validation", () => {
           personFieldId: "person_field",
           dateFieldId: "date_field",
           statusFieldId: "status_field",
+          presentOptionId: "present_option",
+          absentOptionId: "absent_option",
           observationFieldId: "observation_field",
         },
         type: "WORKFLOW",
@@ -202,6 +206,8 @@ describe("AppView config validation", () => {
           personFieldId: "person_field",
           dateFieldId: "date_field",
           statusFieldId: "status_field",
+          presentOptionId: "present_option",
+          absentOptionId: "absent_option",
           type: "WORKFLOW",
           workflowKey: "attendance",
         })),
@@ -217,6 +223,8 @@ describe("AppView config validation", () => {
         getAppViewInput(formData({
           dateFieldId: "date_field",
           personFieldId: "person_field",
+          presentOptionId: "present_option",
+          absentOptionId: "absent_option",
           sourceEntityTypeId: "people",
           statusFieldId: "status_field",
           targetEntityTypeId: "attendance",
@@ -272,6 +280,8 @@ describe("AppView config validation", () => {
         getAppViewInput(formData({
           dateFieldId: "date_field",
           personFieldId: "person_field",
+          presentOptionId: "present_option",
+          absentOptionId: "absent_option",
           sourceEntityTypeId: "people",
           statusFieldId: "status_field",
           targetEntityTypeId: "attendance",
@@ -312,8 +322,8 @@ describe("AppView config validation", () => {
             key: "estado",
             name: "Estado",
             options: [
-              { isActive: true, value: "PRESENTE" },
-              { isActive: true, value: "AUSENTE" },
+              { id: "present_option", isActive: true, value: "PRESENTE" },
+              { id: "absent_option", isActive: true, value: "AUSENTE" },
             ],
             type: "SELECT",
           },
@@ -327,6 +337,8 @@ describe("AppView config validation", () => {
         getAppViewInput(formData({
           dateFieldId: "date_field",
           personFieldId: "person_field",
+          presentOptionId: "present_option",
+          absentOptionId: "absent_option",
           sourceEntityTypeId: "people",
           statusFieldId: "status_field",
           targetEntityTypeId: "attendance",
@@ -334,7 +346,262 @@ describe("AppView config validation", () => {
           workflowKey: "attendance",
         })),
       ),
-    ).rejects.toThrow("El campo Persona debe relacionar hacia la entidad fuente.");
+    ).rejects.toThrow("Este campo debe relacionar Asistencias con Personas.");
+  });
+
+  it("accepts attendance relation config saved under a nested relation key", async () => {
+    entityTypeFindFirst
+      .mockResolvedValueOnce(entityType({ id: "people" }) as never)
+      .mockResolvedValueOnce(attendanceEntityType({
+        fields: [
+          attendanceField("person_field", "RELATION", {
+            config: { relation: { targetEntityTypeId: "people", relationKind: "ONE" } },
+          }),
+          attendanceField("date_field", "DATE"),
+          attendanceField("status_field", "SELECT", { options: attendanceStatusOptions() }),
+        ],
+      }) as never);
+
+    await createAppView(
+      "contract_1",
+      "user_1",
+      getAppViewInput(formData({
+        dateFieldId: "date_field",
+        personFieldId: "person_field",
+        presentOptionId: "present_option",
+        absentOptionId: "absent_option",
+        sourceEntityTypeId: "people",
+        statusFieldId: "status_field",
+        targetEntityTypeId: "attendance",
+        type: "WORKFLOW",
+        workflowKey: "attendance",
+      })),
+    );
+
+    expect(appViewCreate).toHaveBeenCalled();
+  });
+
+  it("accepts attendance status with additional options", async () => {
+    entityTypeFindFirst
+      .mockResolvedValueOnce(entityType({ id: "people" }) as never)
+      .mockResolvedValueOnce(attendanceEntityType({
+        fields: [
+          attendanceField("person_field", "RELATION"),
+          attendanceField("date_field", "DATE"),
+          attendanceField("status_field", "SELECT", {
+            options: [
+              ...attendanceStatusOptions(),
+              { id: "late_option", isActive: true, value: "atraso" },
+              { id: "leave_option", isActive: true, value: "permiso" },
+              { id: "vacation_option", isActive: true, value: "vacaciones" },
+            ],
+          }),
+        ],
+      }) as never);
+
+    await createAppView(
+      "contract_1",
+      "user_1",
+      getAppViewInput(formData({
+        dateFieldId: "date_field",
+        personFieldId: "person_field",
+        presentOptionId: "present_option",
+        absentOptionId: "absent_option",
+        sourceEntityTypeId: "people",
+        statusFieldId: "status_field",
+        targetEntityTypeId: "attendance",
+        type: "WORKFLOW",
+        workflowKey: "attendance",
+      })),
+    );
+
+    expect(appViewCreate).toHaveBeenCalled();
+  });
+
+  it("accepts attendance status options with lowercase values", async () => {
+    entityTypeFindFirst
+      .mockResolvedValueOnce(entityType({ id: "people" }) as never)
+      .mockResolvedValueOnce(attendanceEntityType({
+        fields: [
+          attendanceField("person_field", "RELATION"),
+          attendanceField("date_field", "DATE"),
+          attendanceField("status_field", "SELECT", {
+            options: [
+              { id: "present_option", isActive: true, value: "presente" },
+              { id: "absent_option", isActive: true, value: "ausente" },
+            ],
+          }),
+        ],
+      }) as never);
+
+    await createAppView(
+      "contract_1",
+      "user_1",
+      getAppViewInput(formData({
+        dateFieldId: "date_field",
+        personFieldId: "person_field",
+        presentOptionId: "present_option",
+        absentOptionId: "absent_option",
+        sourceEntityTypeId: "people",
+        statusFieldId: "status_field",
+        targetEntityTypeId: "attendance",
+        type: "WORKFLOW",
+        workflowKey: "attendance",
+      })),
+    );
+
+    expect(appViewCreate).toHaveBeenCalled();
+  });
+
+  it("accepts attendance status options with arbitrary values", async () => {
+    entityTypeFindFirst
+      .mockResolvedValueOnce(entityType({ id: "people" }) as never)
+      .mockResolvedValueOnce(attendanceEntityType({
+        fields: [
+          attendanceField("person_field", "RELATION"),
+          attendanceField("date_field", "DATE"),
+          attendanceField("status_field", "SELECT", {
+            options: [
+              { id: "present_option", isActive: true, value: "P" },
+              { id: "absent_option", isActive: true, value: "A" },
+            ],
+          }),
+        ],
+      }) as never);
+
+    await createAppView(
+      "contract_1",
+      "user_1",
+      getAppViewInput(formData({
+        dateFieldId: "date_field",
+        personFieldId: "person_field",
+        presentOptionId: "present_option",
+        absentOptionId: "absent_option",
+        sourceEntityTypeId: "people",
+        statusFieldId: "status_field",
+        targetEntityTypeId: "attendance",
+        type: "WORKFLOW",
+        workflowKey: "attendance",
+      })),
+    );
+
+    expect(appViewCreate).toHaveBeenCalled();
+  });
+
+  it("rejects attendance when an option id belongs to another field", async () => {
+    entityTypeFindFirst
+      .mockResolvedValueOnce(entityType({ id: "people" }) as never)
+      .mockResolvedValueOnce(attendanceEntityType() as never);
+
+    await expect(
+      createAppView(
+        "contract_1",
+        "user_1",
+        getAppViewInput(formData({
+          dateFieldId: "date_field",
+          personFieldId: "person_field",
+          presentOptionId: "foreign_option",
+          absentOptionId: "absent_option",
+          sourceEntityTypeId: "people",
+          statusFieldId: "status_field",
+          targetEntityTypeId: "attendance",
+          type: "WORKFLOW",
+          workflowKey: "attendance",
+        })),
+      ),
+    ).rejects.toThrow("La opción para Presente debe pertenecer al campo Estado y estar activa.");
+  });
+
+  it("rejects attendance when an option id is inactive", async () => {
+    entityTypeFindFirst
+      .mockResolvedValueOnce(entityType({ id: "people" }) as never)
+      .mockResolvedValueOnce(attendanceEntityType({
+        fields: [
+          attendanceField("person_field", "RELATION"),
+          attendanceField("date_field", "DATE"),
+          attendanceField("status_field", "SELECT", {
+            options: [
+              { id: "present_option", isActive: false, value: "presente" },
+              { id: "absent_option", isActive: true, value: "ausente" },
+            ],
+          }),
+        ],
+      }) as never);
+
+    await expect(
+      createAppView(
+        "contract_1",
+        "user_1",
+        getAppViewInput(formData({
+          dateFieldId: "date_field",
+          personFieldId: "person_field",
+          presentOptionId: "present_option",
+          absentOptionId: "absent_option",
+          sourceEntityTypeId: "people",
+          statusFieldId: "status_field",
+          targetEntityTypeId: "attendance",
+          type: "WORKFLOW",
+          workflowKey: "attendance",
+        })),
+      ),
+    ).rejects.toThrow("La opción para Presente debe pertenecer al campo Estado y estar activa.");
+  });
+
+  it("rejects attendance when present and absent use the same option", async () => {
+    entityTypeFindFirst
+      .mockResolvedValueOnce(entityType({ id: "people" }) as never)
+      .mockResolvedValueOnce(attendanceEntityType() as never);
+
+    await expect(
+      createAppView(
+        "contract_1",
+        "user_1",
+        getAppViewInput(formData({
+          dateFieldId: "date_field",
+          personFieldId: "person_field",
+          presentOptionId: "present_option",
+          absentOptionId: "present_option",
+          sourceEntityTypeId: "people",
+          statusFieldId: "status_field",
+          targetEntityTypeId: "attendance",
+          type: "WORKFLOW",
+          workflowKey: "attendance",
+        })),
+      ),
+    ).rejects.toThrow("Selecciona opciones distintas para Presente y Ausente.");
+  });
+
+  it("rejects attendance status when the select allows multiple values", async () => {
+    entityTypeFindFirst
+      .mockResolvedValueOnce(entityType({ id: "people" }) as never)
+      .mockResolvedValueOnce(attendanceEntityType({
+        fields: [
+          attendanceField("person_field", "RELATION"),
+          attendanceField("date_field", "DATE"),
+          attendanceField("status_field", "SELECT", {
+            multiple: true,
+            options: attendanceStatusOptions(),
+          }),
+        ],
+      }) as never);
+
+    await expect(
+      createAppView(
+        "contract_1",
+        "user_1",
+        getAppViewInput(formData({
+          dateFieldId: "date_field",
+          personFieldId: "person_field",
+          presentOptionId: "present_option",
+          absentOptionId: "absent_option",
+          sourceEntityTypeId: "people",
+          statusFieldId: "status_field",
+          targetEntityTypeId: "attendance",
+          type: "WORKFLOW",
+          workflowKey: "attendance",
+        })),
+      ),
+    ).rejects.toThrow("El campo Estado debe ser de selección simple.");
   });
 
   it("creates a valid BOARD view", async () => {
@@ -408,50 +675,53 @@ describe("AppView config validation", () => {
 function attendanceEntityType(overrides: Record<string, unknown> = {}) {
   return entityType({
     fields: [
-      {
-        config: { targetEntityTypeId: "people", relationKind: "ONE" },
-        id: "person_field",
-        isActive: true,
-        key: "persona",
-        name: "Persona",
-        options: [],
-        type: "RELATION",
-      },
-      {
-        config: null,
-        id: "date_field",
-        isActive: true,
-        key: "fecha",
-        name: "Fecha",
-        options: [],
-        type: "DATE",
-      },
-      {
-        config: null,
-        id: "status_field",
-        isActive: true,
-        key: "estado",
-        name: "Estado",
-        options: [
-          { isActive: true, value: "PRESENTE" },
-          { isActive: true, value: "AUSENTE" },
-        ],
-        type: "SELECT",
-      },
-      {
-        config: null,
-        id: "observation_field",
-        isActive: true,
-        key: "observacion",
-        name: "Observación",
-        options: [],
-        type: "TEXTAREA",
-      },
+      attendanceField("person_field", "RELATION"),
+      attendanceField("date_field", "DATE"),
+      attendanceField("status_field", "SELECT", { options: attendanceStatusOptions() }),
+      attendanceField("observation_field", "TEXTAREA"),
     ],
     id: "attendance",
     name: "Asistencias",
     ...overrides,
   });
+}
+
+function attendanceField(
+  id: string,
+  type: string,
+  overrides: Record<string, unknown> = {},
+) {
+  const names: Record<string, string> = {
+    date_field: "Fecha",
+    observation_field: "Observación",
+    person_field: "Persona",
+    status_field: "Estado",
+  };
+  const keys: Record<string, string> = {
+    date_field: "fecha",
+    observation_field: "observacion",
+    person_field: "persona",
+    status_field: "estado",
+  };
+
+  return {
+    config: type === "RELATION" ? { targetEntityTypeId: "people", relationKind: "ONE" } : null,
+    id,
+    isActive: true,
+    key: keys[id] ?? id,
+    multiple: false,
+    name: names[id] ?? id,
+    options: [],
+    type,
+    ...overrides,
+  };
+}
+
+function attendanceStatusOptions() {
+  return [
+    { id: "present_option", isActive: true, value: "PRESENTE" },
+    { id: "absent_option", isActive: true, value: "AUSENTE" },
+  ];
 }
 
 describe("AppView administration", () => {

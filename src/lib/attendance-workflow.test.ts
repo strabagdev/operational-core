@@ -124,7 +124,7 @@ describe("attendance workflow save policy", () => {
         data: expect.arrayContaining([
           expect.objectContaining({
             entityFieldId: "status_field",
-            textValue: "PRESENTE",
+            textValue: "presente",
           }),
         ]),
       }),
@@ -149,6 +149,23 @@ describe("attendance workflow save policy", () => {
           expect.objectContaining({
             entityFieldId: "observation_field",
             textValue: "Llegó con inducción hecha",
+          }),
+        ]),
+      }),
+    );
+  });
+
+  it("persists the real absent option value when creating AUSENTE", async () => {
+    await saveAttendanceWorkflowDay(requestBody({
+      entries: [{ personRecordId: "person_1", status: "AUSENTE" }],
+    }));
+
+    expect(tx.entityValue.createMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.arrayContaining([
+          expect.objectContaining({
+            entityFieldId: "status_field",
+            textValue: "ausente",
           }),
         ]),
       }),
@@ -223,7 +240,53 @@ describe("attendance workflow save policy", () => {
       },
     });
     expect(tx.entityRecord.update).toHaveBeenCalledTimes(1);
+    expect(tx.entityValue.createMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.arrayContaining([
+          expect.objectContaining({
+            entityFieldId: "status_field",
+            textValue: "ausente",
+          }),
+        ]),
+      }),
+    );
     expect(tx.auditEvent.create).toHaveBeenCalled();
+  });
+
+  it("maps arbitrary configured option values to domain statuses", async () => {
+    entityTypeFindFirst.mockImplementation((async (args: { where?: { id?: string } }) => {
+      const id = args?.where?.id;
+
+      if (id === "people") return sourceEntityType() as never;
+      if (id === "attendance") {
+        return attendanceEntityType({
+          statusOptions: [
+            { id: "present_option", isActive: true, label: "Presente", value: "P" },
+            { id: "absent_option", isActive: true, label: "Ausente", value: "A" },
+          ],
+        }) as never;
+      }
+
+      return null;
+    }) as never);
+    mockExistingAttendances([existingAttendance({ statusValue: "P" })]);
+
+    const result = await saveAttendanceWorkflowDay(requestBody({
+      entries: [{ personRecordId: "person_1", status: "AUSENTE" }],
+    }));
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: {
+        results: [
+          {
+            existing: { status: "PRESENTE" },
+            requestedStatus: "AUSENTE",
+            result: "CONFLICT",
+          },
+        ],
+      },
+    });
   });
 
   it("does not duplicate records for conflicts", async () => {
@@ -410,6 +473,8 @@ function appView() {
       personFieldId: "person_field",
       dateFieldId: "date_field",
       statusFieldId: "status_field",
+      presentOptionId: "present_option",
+      absentOptionId: "absent_option",
       observationFieldId: "observation_field",
     },
     id: "view_attendance",
@@ -426,12 +491,20 @@ function sourceEntityType() {
   };
 }
 
-function attendanceEntityType() {
+function attendanceEntityType({
+  statusOptions = [
+    { id: "present_option", isActive: true, label: "PRESENTE", value: "presente" },
+    { id: "absent_option", isActive: true, label: "AUSENTE", value: "ausente" },
+    { id: "late_option", isActive: true, label: "ATRASO", value: "atraso" },
+  ],
+}: {
+  statusOptions?: Array<{ id: string; isActive: boolean; label: string; value: string }>;
+} = {}) {
   return {
     fields: [
       field("person_field", "persona", "Persona", "RELATION"),
       field("date_field", "fecha", "Fecha", "DATE"),
-      field("status_field", "estado", "Estado", "SELECT"),
+      field("status_field", "estado", "Estado", "SELECT", { options: statusOptions }),
       field("observation_field", "observacion", "Observación", "TEXTAREA"),
     ],
     id: "attendance",
@@ -439,7 +512,13 @@ function attendanceEntityType() {
   };
 }
 
-function field(id: string, key: string, name: string, type: string) {
+function field(
+  id: string,
+  key: string,
+  name: string,
+  type: string,
+  overrides: Record<string, unknown> = {},
+) {
   return {
     config: type === "RELATION" ? { targetEntityTypeId: "people", relationKind: "ONE" } : null,
     id,
@@ -447,14 +526,16 @@ function field(id: string, key: string, name: string, type: string) {
     name,
     options: type === "SELECT"
       ? [
-          { isActive: true, label: "Presente", value: "PRESENTE" },
-          { isActive: true, label: "Ausente", value: "AUSENTE" },
+          { id: "present_option", isActive: true, label: "PRESENTE", value: "presente" },
+          { id: "absent_option", isActive: true, label: "AUSENTE", value: "ausente" },
         ]
       : [],
+    multiple: false,
     required: id !== "observation_field",
     searchable: true,
     sortOrder: 0,
     type,
+    ...overrides,
   };
 }
 
@@ -491,10 +572,12 @@ function mockExistingAttendances(records: Array<ReturnType<typeof existingAttend
 function existingAttendance({
   personRecordId = "person_1",
   status,
+  statusValue,
   updatedAt = new Date("2026-08-22T12:00:00.000Z"),
 }: {
   personRecordId?: string;
-  status: "PRESENTE" | "AUSENTE";
+  status?: "PRESENTE" | "AUSENTE";
+  statusValue?: string;
   updatedAt?: Date;
 }) {
   return {
@@ -511,7 +594,7 @@ function existingAttendance({
       {
         dateValue: null,
         entityFieldId: "status_field",
-        textValue: status,
+        textValue: statusValue ?? (status === "AUSENTE" ? "ausente" : "presente"),
       },
     ],
   };

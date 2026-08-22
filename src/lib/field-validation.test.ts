@@ -6,6 +6,7 @@ import {
   buildMergedFieldConfig,
   getPrimaryDisplayField,
   getRecordDisplayName,
+  getRelationConfig,
   getRecordListFields,
   normalizeRawFieldValue,
   parseFieldConfig,
@@ -261,6 +262,18 @@ describe("field validation", () => {
     expect(config.targetEntityTypeId).toBe("entity");
     expect(config.relationKind).toBe("MANY");
     expect(config.validation.required).toBe(true);
+  });
+
+  it("reads relation config from the API-style nested shape", () => {
+    expect(getRelationConfig({
+      relation: {
+        targetEntityTypeId: "entity_target",
+        relationKind: "MANY",
+      },
+    })).toEqual({
+      targetEntityTypeId: "entity_target",
+      relationKind: "MANY",
+    });
   });
 
   it("parses MONEY config with CLP fallback", () => {
