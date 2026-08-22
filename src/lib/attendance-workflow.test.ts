@@ -90,11 +90,11 @@ beforeEach(() => {
   entityRecordFindMany.mockImplementation(defaultEntityRecordFindMany());
   entityRecordCount.mockResolvedValue(0 as never);
   tx.entityRecord.create.mockResolvedValue({
-    displayName: "Ana 2026-08-22",
+    displayName: "Ana · 22-08-2026",
     id: "attendance_new",
   });
   tx.entityRecord.update.mockResolvedValue({
-    displayName: "Ana 2026-08-22",
+    displayName: "Ana · 22-08-2026",
     id: "attendance_existing",
   });
   tx.entityRelation.findMany.mockResolvedValue([]);
@@ -116,6 +116,11 @@ describe("attendance workflow dynamic status policy", () => {
         ],
       },
     });
+    expect(tx.entityRecord.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        displayName: "Ana · 22-08-2026",
+      }),
+    }));
     expect(tx.entityValue.createMany).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.arrayContaining([
@@ -144,6 +149,8 @@ describe("attendance workflow dynamic status policy", () => {
       },
     });
     expect(transaction).not.toHaveBeenCalled();
+    expect(tx.entityRecord.create).not.toHaveBeenCalled();
+    expect(tx.entityRecord.update).not.toHaveBeenCalled();
   });
 
   it("returns CONFLICT and does not update when an existing option is different", async () => {
@@ -209,6 +216,10 @@ describe("attendance workflow dynamic status policy", () => {
         ]),
       }),
     );
+    expect(tx.entityRecord.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: { displayName: "Ana · 22-08-2026" },
+      where: { id: "attendance_existing" },
+    }));
     expect(tx.auditEvent.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ action: "RECORD_UPDATED" }),
     }));
@@ -620,7 +631,7 @@ function existingAttendance({
   updatedAt?: Date;
 }) {
   return {
-    displayName: `${personRecordId} 2026-08-22`,
+    displayName: `${people().find((person) => person.id === personRecordId)?.displayName ?? personRecordId} · 22-08-2026`,
     id: "attendance_existing",
     outgoingRelations: [{ targetRecordId: personRecordId }],
     updatedAt,

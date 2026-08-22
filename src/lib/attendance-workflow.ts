@@ -10,7 +10,6 @@ import { stableRecordRequestHash } from "@/lib/api-record-writes";
 import { badRequest, conflict, forbidden, notFound } from "@/lib/api-response";
 import { dateOnlyInputValue, dateOnlyToUtcDate } from "@/lib/date-only";
 import {
-  getRecordDisplayName,
   getRelationConfig,
   type SerializedFieldValue,
 } from "@/lib/field-validation";
@@ -411,8 +410,7 @@ async function createAttendanceRecord({
 }) {
   return prisma.$transaction(async (tx) => {
     const values = attendanceValues({ config, date, entry, requestedOption });
-    const displayName = getRecordDisplayName(targetEntityType.fields, values) ||
-      `${person.displayName} ${dateOnlyInputValue(date)}`;
+    const displayName = attendanceDisplayName(person.displayName, date);
     const record = await tx.entityRecord.create({
       data: {
         displayName,
@@ -446,6 +444,14 @@ async function createAttendanceRecord({
 
     return record;
   });
+}
+
+function attendanceDisplayName(personDisplayName: string, date: Date) {
+  return `${personDisplayName} · ${formatAttendanceDate(date)}`;
+}
+
+function formatAttendanceDate(date: Date) {
+  return dateOnlyInputValue(date).split("-").reverse().join("-");
 }
 
 async function updateAttendanceRecord({

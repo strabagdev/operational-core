@@ -92,6 +92,14 @@ describe("entity record pagination UI", () => {
     expect(recordsTableSource).toContain("ArrowDown");
   });
 
+  it("does not add a synthetic displayName column to record listings", () => {
+    expect(recordsPageSource).toContain("const listFields = getRecordListFields(data.entityType.fields)");
+    expect(recordsPageSource).not.toContain("displayHeader");
+    expect(recordsPageSource).not.toContain("primaryField?.name ?? \"Nombre\"");
+    expect(recordsTableSource).not.toContain("displayHeader");
+    expect(recordsTableSource).not.toContain("<SortableHeader label={displayHeader}");
+  });
+
   it("keeps updated timestamps out of record listings", () => {
     expect(recordsTableSource).not.toContain('label="Actualizado"');
     expect(recordsTableSource).not.toContain("record.updatedAt");

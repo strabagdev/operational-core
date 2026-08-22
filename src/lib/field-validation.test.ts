@@ -468,7 +468,7 @@ describe("field display configuration", () => {
     )).toBe("Fallback");
   });
 
-  it("excludes primary from visible list fields and keeps official sortOrder", () => {
+  it("keeps configured primary as a real visible list field and preserves official sortOrder", () => {
     const fields = [
       recordField({
         id: "name",
@@ -492,7 +492,7 @@ describe("field display configuration", () => {
     ];
 
     expect(getPrimaryDisplayField(fields)?.id).toBe("name");
-    expect(getRecordListFields(fields).map((item) => item.name)).toEqual(["RUT", "Estado"]);
+    expect(getRecordListFields(fields).map((item) => item.name)).toEqual(["Nombre", "RUT", "Estado"]);
   });
 
   it("falls back to searchable fields and ignores listOrder for ordering", () => {
@@ -503,7 +503,7 @@ describe("field display configuration", () => {
       recordField({ id: "hidden", name: "Hidden", searchable: false, sortOrder: 0 }),
     ];
 
-    expect(getRecordListFields(fields).map((item) => item.name)).toEqual(["Cargo", "RUT"]);
+    expect(getRecordListFields(fields).map((item) => item.name)).toEqual(["name", "Cargo", "RUT"]);
 
     expect(getRecordListFields([
       recordField({

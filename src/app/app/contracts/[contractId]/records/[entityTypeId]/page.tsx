@@ -9,9 +9,7 @@ import { Button } from "@/components/ui/button";
 import {
   deserializeEntityValue,
   getEntityRecords,
-  getPrimaryDisplayField,
   getRecordListFields,
-  resolvePrimaryDisplaySortKey,
   resolveEntityRecordSort,
 } from "@/lib/entity-records";
 
@@ -64,13 +62,7 @@ export default async function EntityRecordsPage({
     notFound();
   }
 
-  const primaryField = getPrimaryDisplayField(data.entityType.fields);
   const listFields = getRecordListFields(data.entityType.fields);
-  const displayHeader = primaryField?.name ?? "Nombre";
-  const displaySortKey = resolvePrimaryDisplaySortKey({
-    fields: data.entityType.fields,
-    primaryField,
-  });
   const fieldsById = new Map(data.entityType.fields.map((field) => [field.id, field]));
   const basePath = `/app/contracts/${contractId}/records/${entityTypeId}`;
   const sortableFields = listFields.filter((field) =>
@@ -185,14 +177,6 @@ export default async function EntityRecordsPage({
           <EntityRecordsTable
             contractId={contractId}
             deleteAction={deleteEntityRecordsAction.bind(null, contractId, entityTypeId)}
-            displayHeader={displayHeader}
-            displaySort={sortHeader({
-              basePath,
-              currentSort: data.sort,
-              pageSize: data.pagination.pageSize,
-              query: q,
-              sortKey: displaySortKey,
-            })}
             entityTypeId={entityTypeId}
             key={`${entityTypeId}:${q ?? ""}:${tableRecords.map((record) => record.id).join("|")}`}
             listFields={listFields.map((field) => ({

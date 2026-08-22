@@ -51,16 +51,12 @@ type SortHeaderState = {
 export function EntityRecordsTable({
   contractId,
   deleteAction,
-  displayHeader,
-  displaySort,
   entityTypeId,
   listFields,
   records,
 }: {
   contractId: string;
   deleteAction: BulkAction;
-  displayHeader: string;
-  displaySort: SortHeaderState;
   entityTypeId: string;
   listFields: ListField[];
   records: RecordRow[];
@@ -172,9 +168,6 @@ export function EntityRecordsTable({
                   onChange={toggleAllVisible}
                 />
               </th>
-              <th className="py-3 pr-4 font-medium">
-                <SortableHeader label={displayHeader} sort={displaySort} />
-              </th>
               {listFields.map((field) => (
                 <th className="py-3 pr-4 font-medium" key={field.id}>
                   {field.sort ? (
@@ -200,17 +193,18 @@ export function EntityRecordsTable({
                       type="checkbox"
                     />
                   </td>
-                  <td className="py-3 pr-4 font-medium">
-                    <Link
-                      className="text-primary underline-offset-4 hover:underline"
-                      href={entityRecordDetailPath(contractId, entityTypeId, record.id)}
-                    >
-                      {record.displayName}
-                    </Link>
-                  </td>
-                  {listFields.map((field) => (
-                    <td className="py-3 pr-4" key={field.id}>
-                      {record.values.find((value) => value.fieldId === field.id)?.value ?? ""}
+                  {listFields.map((field, fieldIndex) => (
+                    <td className={fieldIndex === 0 ? "py-3 pr-4 font-medium" : "py-3 pr-4"} key={field.id}>
+                      {fieldIndex === 0 ? (
+                        <Link
+                          className="text-primary underline-offset-4 hover:underline"
+                          href={entityRecordDetailPath(contractId, entityTypeId, record.id)}
+                        >
+                          {record.values.find((value) => value.fieldId === field.id)?.value || "Ver registro"}
+                        </Link>
+                      ) : (
+                        record.values.find((value) => value.fieldId === field.id)?.value ?? ""
+                      )}
                     </td>
                   ))}
                   <td className="py-3">
@@ -233,7 +227,7 @@ export function EntityRecordsTable({
               <tr>
                 <td
                   className="py-6 text-sm text-muted-foreground"
-                  colSpan={3 + listFields.length}
+                  colSpan={2 + listFields.length}
                 >
                   No hay registros para estos filtros.
                 </td>

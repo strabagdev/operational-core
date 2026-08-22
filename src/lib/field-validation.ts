@@ -216,16 +216,15 @@ export function getPrimaryDisplayField<T extends DisplayField>(fields: T[]) {
 
 export function getRecordListFields<T extends DisplayField>(fields: T[]) {
   const orderedFields = orderEntityFields(fields);
-  const primaryField = getPrimaryDisplayField(orderedFields);
   const configuredFields = orderedFields.filter((field) => {
     const display = parseFieldConfig(field.config).display;
 
-    return display.showInList === true && field.id !== primaryField?.id;
+    return display.showInList === true;
   });
   const fieldsToShow =
     configuredFields.length > 0
       ? configuredFields
-      : orderedFields.filter((field) => field.searchable && field.id !== primaryField?.id);
+      : orderedFields.filter((field) => field.searchable);
 
   return orderEntityFields(fieldsToShow);
 }
