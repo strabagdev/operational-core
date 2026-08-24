@@ -136,10 +136,10 @@ export function EntityRecordsTable({
   }
 
   return (
-    <div className="grid gap-3">
+    <div className="flex min-h-0 flex-1 flex-col gap-3">
       {feedback ? (
         <p
-          className={feedback.success ? "text-sm text-muted-foreground" : "text-sm text-destructive"}
+          className={feedback.success ? "shrink-0 text-sm text-muted-foreground" : "shrink-0 text-sm text-destructive"}
           role="status"
         >
           {feedback.message}
@@ -147,7 +147,7 @@ export function EntityRecordsTable({
       ) : null}
 
       {selectedCount > 0 ? (
-        <div className="sticky top-2 z-10 flex flex-col gap-2 rounded-md border border-border bg-background p-3 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+        <div className="sticky top-2 z-10 flex shrink-0 flex-col gap-2 rounded-md border border-border bg-background p-3 shadow-sm sm:flex-row sm:items-center sm:justify-between">
           <p className="text-sm font-medium">{selectedCount} seleccionados</p>
           <div className="flex flex-wrap gap-2">
             <Button
@@ -174,9 +174,9 @@ export function EntityRecordsTable({
         </div>
       ) : null}
 
-      <div className="overflow-x-auto">
+      <div className="min-h-0 flex-1 overflow-auto">
         <table className="w-full min-w-[760px] text-left text-sm">
-          <thead className="border-b border-border text-muted-foreground">
+          <thead className="sticky top-0 z-20 border-b border-border bg-card text-muted-foreground shadow-sm">
             <tr>
               <th className="w-10 py-3 pr-3 font-medium">
                 <IndeterminateCheckbox

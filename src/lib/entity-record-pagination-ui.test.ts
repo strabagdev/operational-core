@@ -140,9 +140,10 @@ describe("entity record pagination UI", () => {
   });
 
   it("uses a sticky operational bar with entity, controls and actions", () => {
+    expect(recordsPageSource).toContain("flex h-[calc(100dvh-1.5rem)] min-h-0 w-full flex-col");
     expect(recordsPageSource).toContain("sticky top-0 z-40");
+    expect(recordsPageSource).toContain("shrink-0 border-b border-border");
     expect(recordsPageSource).toContain("bg-background/95");
-    expect(recordsPageSource).toContain("border-b border-border");
     expect(recordsPageSource).not.toContain("{data.contract.name}");
     expect(recordsPageSource).not.toContain("{data.contract.code}");
     expect(recordsPageSource).toContain("EntityIcon");
@@ -181,6 +182,15 @@ describe("entity record pagination UI", () => {
     expect(recordsTableSource).toContain("recordRowClassName(highlightedIds.has(record.id))");
   });
 
+  it("keeps toolbar, column headers and pagination outside row vertical scrolling", () => {
+    expect(recordsPageSource).toContain("min-h-0 flex-1 overflow-hidden rounded-md border");
+    expect(recordsPageSource).toContain("flex h-full min-h-0 flex-col p-4");
+    expect(recordsPageSource).toContain("flex shrink-0 flex-col gap-3 border-t");
+    expect(recordsTableSource).toContain("flex min-h-0 flex-1 flex-col gap-3");
+    expect(recordsTableSource).toContain("sticky top-0 z-20 border-b border-border bg-card");
+    expect(recordsTableSource).toContain("min-h-0 flex-1 overflow-auto");
+  });
+
   it("applies new-record highlight styles to table cells", () => {
     const globalsSource = readFileSync(new URL("../app/globals.css", import.meta.url), "utf8");
 
@@ -212,7 +222,7 @@ describe("entity record pagination UI", () => {
   });
 
   it("lets the record listing use the available horizontal space", () => {
-    expect(recordsPageSource).toContain('className="-mt-6 grid w-full gap-3"');
+    expect(recordsPageSource).toContain('className="-mt-6 flex h-[calc(100dvh-1.5rem)] min-h-0 w-full flex-col gap-3"');
     expect(recordsPageSource).not.toContain('className="grid max-w-6xl gap-6"');
   });
 
