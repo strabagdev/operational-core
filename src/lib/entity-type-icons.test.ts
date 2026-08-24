@@ -8,7 +8,7 @@ import {
 import { prisma } from "./prisma";
 
 vi.mock("./contracts", () => ({
-  getAuthorizedContract: vi.fn(async () => ({
+  getAuthorizedContractAdmin: vi.fn(async () => ({
     code: "CON",
     description: null,
     id: "contract_1",

@@ -4,7 +4,7 @@ import { notFound, redirect } from "next/navigation";
 import { auth } from "@/auth";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { getAuthorizedContract } from "@/lib/contracts";
+import { getAuthorizedContractAdmin } from "@/lib/contracts";
 
 import { createEntityTypeAction } from "../actions";
 import { EntityTypeForm } from "../entity-type-form";
@@ -24,7 +24,7 @@ export default async function NewEntityTypePage({
   }
 
   const { contractId } = await params;
-  const contract = await getAuthorizedContract(contractId, session.user.id);
+  const contract = await getAuthorizedContractAdmin(contractId, session.user.id);
 
   if (!contract) {
     notFound();

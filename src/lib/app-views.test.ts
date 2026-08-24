@@ -13,7 +13,7 @@ import {
 import { prisma } from "./prisma";
 
 vi.mock("./contracts", () => ({
-  getAuthorizedContract: vi.fn(async (contractId: string) => {
+  getAuthorizedContractAdmin: vi.fn(async (contractId: string) => {
     if (contractId === "blocked_contract") {
       return null;
     }

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { redirect } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { Edit, Power, PowerOff, Trash2 } from "lucide-react";
 
 import { auth } from "@/auth";
@@ -41,6 +41,10 @@ export default async function UserAdministrationPage({
     } else {
       throw loadError;
     }
+  }
+
+  if (!databaseConnectionFailed && !data?.organization) {
+    notFound();
   }
 
   return (

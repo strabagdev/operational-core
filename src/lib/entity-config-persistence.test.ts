@@ -9,7 +9,7 @@ import { supportedEntityFieldTypes } from "./field-editor-state";
 import { prisma } from "./prisma";
 
 vi.mock("./contracts", () => ({
-  getAuthorizedContract: vi.fn(async () => ({
+  getAuthorizedContractAdmin: vi.fn(async () => ({
     id: "contract_1",
     organizationId: "org_1",
     name: "Contrato",

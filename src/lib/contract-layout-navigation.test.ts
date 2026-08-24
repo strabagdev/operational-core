@@ -3,7 +3,10 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import { shouldHideContractContextHeader } from "../app/app/contracts/[contractId]/contract-context-header";
-import { isContractNavigationItemActive } from "./contract-layout-navigation";
+import {
+  getContractNavigationItems,
+  isContractNavigationItemActive,
+} from "./contract-layout-navigation";
 
 const railSource = readFileSync(
   new URL("../app/app/contracts/[contractId]/contract-navigation-rail.tsx", import.meta.url),
@@ -27,14 +30,27 @@ const contractContextHeaderSource = readFileSync(
 );
 
 describe("contract layout navigation", () => {
-  it("keeps every existing contract navigation route", () => {
-    expect(layoutSource).toContain("Resumen");
-    expect(layoutSource).toContain("Registros");
-    expect(layoutSource).toContain("Actividad");
-    expect(layoutSource).toContain("Configuración");
-    expect(layoutSource).toContain("/records");
-    expect(layoutSource).toContain("/activity");
-    expect(layoutSource).toContain("/settings");
+  it("keeps operational navigation available to contract members", () => {
+    expect(getContractNavigationItems({
+      contractId: "contract_1",
+      membershipRole: "MEMBER",
+    })).toEqual([
+      { href: "/app/contracts/contract_1", label: "Resumen" },
+      { href: "/app/contracts/contract_1/records", label: "Registros" },
+      { href: "/app/contracts/contract_1/activity", label: "Actividad" },
+    ]);
+  });
+
+  it("shows contract settings only to contract admins", () => {
+    expect(getContractNavigationItems({
+      contractId: "contract_1",
+      membershipRole: "ADMIN",
+    })).toEqual([
+      { href: "/app/contracts/contract_1", label: "Resumen" },
+      { href: "/app/contracts/contract_1/records", label: "Registros" },
+      { href: "/app/contracts/contract_1/activity", label: "Actividad" },
+      { href: "/app/contracts/contract_1/settings", label: "Configuración" },
+    ]);
   });
 
   it("uses a compact desktop rail with accessible icon links", () => {

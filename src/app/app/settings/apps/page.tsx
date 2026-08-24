@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { redirect } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { MoreHorizontal } from "lucide-react";
 
 import { auth } from "@/auth";
@@ -42,6 +42,11 @@ export default async function ExternalAppAdministrationPage({
   const params = await searchParams;
   const basePath = "/app/settings/apps";
   const data = await getExternalAppAdministration(session.user.id);
+
+  if (!data.organization) {
+    notFound();
+  }
+
   const closeHref = buildExternalAppsHref(basePath, params, {
     createApp: undefined,
     editApp: undefined,

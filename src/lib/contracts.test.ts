@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { getAuthorizedContract, getUserContracts } from "./contracts";
+import {
+  getAuthorizedContract,
+  getAuthorizedContractAdmin,
+  getUserContracts,
+} from "./contracts";
 import { prisma } from "./prisma";
 
 vi.mock("./prisma", () => ({
@@ -78,6 +82,63 @@ describe("contracts selector", () => {
           },
         },
       },
+    });
+  });
+
+  it("returns the user's contract membership role with visible contracts", async () => {
+    contractFindMany.mockResolvedValueOnce([
+      {
+        id: "contract_1",
+        name: "Contrato",
+        organization: {
+          id: "org_1",
+          memberships: [{ role: "MEMBER" }],
+          name: "Organización",
+        },
+      },
+    ] as never);
+
+    await expect(getUserContracts("user_1")).resolves.toMatchObject([
+      {
+        id: "contract_1",
+        membershipRole: "MEMBER",
+        organization: {
+          id: "org_1",
+          name: "Organización",
+        },
+      },
+    ]);
+  });
+
+  it("does not authorize contract settings for MEMBER users", async () => {
+    contractFindFirst.mockResolvedValueOnce({
+      id: "member_contract",
+      membershipRole: "MEMBER",
+      name: "Contrato",
+      organization: {
+        id: "org_1",
+        memberships: [{ role: "MEMBER" }],
+        name: "Organización",
+      },
+    } as never);
+
+    await expect(getAuthorizedContractAdmin("member_contract", "user_1")).resolves.toBeNull();
+  });
+
+  it("authorizes contract settings for ADMIN users", async () => {
+    contractFindFirst.mockResolvedValueOnce({
+      id: "admin_contract",
+      name: "Contrato",
+      organization: {
+        id: "org_1",
+        memberships: [{ role: "ADMIN" }],
+        name: "Organización",
+      },
+    } as never);
+
+    await expect(getAuthorizedContractAdmin("admin_contract", "user_1")).resolves.toMatchObject({
+      id: "admin_contract",
+      membershipRole: "ADMIN",
     });
   });
 });

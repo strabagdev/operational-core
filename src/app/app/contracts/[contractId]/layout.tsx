@@ -4,6 +4,7 @@ import { notFound, redirect } from "next/navigation";
 import { auth } from "@/auth";
 import { ThemeToggleButton } from "@/components/theme-toggle-button";
 import { Button } from "@/components/ui/button";
+import { getContractNavigationItems } from "@/lib/contract-layout-navigation";
 import { getAuthorizedContract } from "@/lib/contracts";
 
 import { ContractContextHeader } from "./contract-context-header";
@@ -30,21 +31,10 @@ export default async function ContractLayout({
     notFound();
   }
 
-  const navigation = [
-    { label: "Resumen" as const, href: `/app/contracts/${contract.id}` },
-    {
-      label: "Registros" as const,
-      href: `/app/contracts/${contract.id}/records`,
-    },
-    {
-      label: "Actividad" as const,
-      href: `/app/contracts/${contract.id}/activity`,
-    },
-    {
-      label: "Configuración" as const,
-      href: `/app/contracts/${contract.id}/settings`,
-    },
-  ];
+  const navigation = getContractNavigationItems({
+    contractId: contract.id,
+    membershipRole: contract.membershipRole,
+  });
 
   return (
     <div className="flex min-h-screen bg-background">

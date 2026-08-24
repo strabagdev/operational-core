@@ -1,19 +1,18 @@
-import { NextResponse } from "next/server";
-
 import {
+  authCookieDeletionHeader,
   authCookieNamesToClear,
-  authCookieDeletionOptions,
 } from "@/lib/auth-cookies";
 
 export const runtime = "nodejs";
 
-export async function POST(request: Request) {
-  const response = NextResponse.redirect(new URL("/login", request.url), {
+export async function POST() {
+  const response = new Response(null, {
+    headers: { Location: "/login" },
     status: 303,
   });
 
   for (const cookieName of authCookieNamesToClear) {
-    response.cookies.set(cookieName, "", authCookieDeletionOptions(cookieName));
+    response.headers.append("Set-Cookie", authCookieDeletionHeader(cookieName));
   }
 
   return response;

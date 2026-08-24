@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   appViewAccessFriendlyError,
+  getEffectiveAppViewsForUserContract,
   getAppViewAccessAdminData,
   updateUserAppViewAccess,
   userCanAccessAppView,
@@ -223,6 +224,36 @@ describe("UserAppViewAccess administration", () => {
       contractId: "contract_1",
       userId: "user_1",
     })).resolves.toBe(false);
+  });
+
+  it("lists only active AppViews assigned to a member in a contract", async () => {
+    appViewFindMany.mockResolvedValueOnce([appView({ id: "assigned_view" })] as never);
+
+    await expect(getEffectiveAppViewsForUserContract({
+      contractId: "contract_1",
+      userId: "member_1",
+    })).resolves.toEqual([expect.objectContaining({ id: "assigned_view" })]);
+    expect(appViewFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: {
+        active: true,
+        contractId: "contract_1",
+        userAccesses: {
+          some: {
+            contractId: "contract_1",
+            userId: "member_1",
+          },
+        },
+      },
+    }));
+  });
+
+  it("does not list unassigned AppViews for a member", async () => {
+    appViewFindMany.mockResolvedValueOnce([] as never);
+
+    await expect(getEffectiveAppViewsForUserContract({
+      contractId: "contract_1",
+      userId: "member_without_access",
+    })).resolves.toEqual([]);
   });
 
   it("surfaces duplicate assignment failures clearly", () => {

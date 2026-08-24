@@ -4,7 +4,7 @@ import Link from "next/link";
 import { auth } from "@/auth";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { getAuthorizedContract } from "@/lib/contracts";
+import { getAuthorizedContractAdmin } from "@/lib/contracts";
 
 export default async function SettingsPage({
   params,
@@ -18,7 +18,7 @@ export default async function SettingsPage({
   }
 
   const { contractId } = await params;
-  const contract = await getAuthorizedContract(contractId, session.user.id);
+  const contract = await getAuthorizedContractAdmin(contractId, session.user.id);
 
   if (!contract) {
     notFound();

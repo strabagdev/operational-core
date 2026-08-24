@@ -1,7 +1,7 @@
 import { Prisma, type AppView, type AppViewType } from "@prisma/client";
 import { z } from "zod";
 
-import { getAuthorizedContract } from "./contracts";
+import { getAuthorizedContractAdmin } from "./contracts";
 import { isEntityIconKey } from "./entity-icons";
 import { getRelationConfig } from "./field-validation";
 import { slugify } from "./format";
@@ -105,7 +105,7 @@ export function getAppViewInput(formData: FormData) {
 }
 
 export async function getAppViewAdminData(contractId: string, userId: string) {
-  const contract = await getAuthorizedContract(contractId, userId);
+  const contract = await getAuthorizedContractAdmin(contractId, userId);
 
   if (!contract) {
     return null;
@@ -183,7 +183,7 @@ export async function createAppView(
   userId: string,
   input: ReturnType<typeof getAppViewInput>,
 ) {
-  const contract = await getAuthorizedContract(contractId, userId);
+  const contract = await getAuthorizedContractAdmin(contractId, userId);
 
   if (!contract) {
     return null;

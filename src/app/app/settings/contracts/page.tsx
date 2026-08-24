@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { redirect } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { MoreHorizontal } from "lucide-react";
 import { type ContractStatus } from "@prisma/client";
 
@@ -66,6 +66,11 @@ export default async function ContractAdministrationPage({
     query: params.q,
     status,
   });
+
+  if (data.organizations.length === 0) {
+    notFound();
+  }
+
   const closeHref = buildContractsHref(basePath, params, {
     archiveContract: undefined,
     createContract: undefined,

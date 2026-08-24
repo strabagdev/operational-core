@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 
 import { getAppViewTypeLabel, parseAppViewConfig, summarizeAppViewConfig } from "./app-views";
+import { canManageViewAccess } from "./capabilities";
 import { prisma } from "./prisma";
 
 export type AppViewAccessInput = {
@@ -309,7 +310,7 @@ async function getContractAdminContext({
     },
   });
 
-  if (membership?.role !== "ADMIN") {
+  if (!canManageViewAccess({ membershipRole: membership?.role })) {
     return null;
   }
 

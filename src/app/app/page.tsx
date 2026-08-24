@@ -11,6 +11,11 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
+import {
+  canManageContract,
+  canManageExternalApps,
+  canManageUsers,
+} from "@/lib/capabilities";
 import { getInactiveUserOrganizations, getUserContracts } from "@/lib/contracts";
 import { getPlatformNavigationItems } from "@/lib/platform-navigation";
 
@@ -26,28 +31,38 @@ export default async function AppPage() {
     getInactiveUserOrganizations(session.user.id),
   ]);
   const platformNavigation = getPlatformNavigationItems(session.user.platformRole);
+  const adminContract = contracts.find((contract) =>
+    canManageContract({ membershipRole: contract.membershipRole }),
+  );
+  const adminContext = { membershipRole: adminContract?.membershipRole };
 
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-4xl flex-col gap-8 px-6 py-10">
       <header className="space-y-2">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
-          <h1 className="text-2xl font-semibold">Operational Core</h1>
-          <p className="text-sm text-muted-foreground">
-            Selecciona un contrato para continuar.
-          </p>
+            <h1 className="text-2xl font-semibold">Operational Core</h1>
+            <p className="text-sm text-muted-foreground">
+              Selecciona un contrato para continuar.
+            </p>
           </div>
-          <div className="flex flex-wrap gap-2 sm:justify-end">
-            <Button asChild variant="outline">
-              <Link href="/app/settings/users">Usuarios</Link>
-            </Button>
-            <Button asChild variant="outline">
-              <Link href="/app/settings/contracts">Administrar contratos</Link>
-            </Button>
-            <Button asChild variant="outline">
-              <Link href="/app/settings/apps">Aplicaciones externas</Link>
-            </Button>
-          </div>
+          {adminContract ? (
+            <div className="flex flex-wrap gap-2 sm:justify-end">
+              {canManageUsers(adminContext) ? (
+                <Button asChild variant="outline">
+                  <Link href="/app/settings/users">Usuarios</Link>
+                </Button>
+              ) : null}
+              <Button asChild variant="outline">
+                <Link href="/app/settings/contracts">Administrar contratos</Link>
+              </Button>
+              {canManageExternalApps(adminContext) ? (
+                <Button asChild variant="outline">
+                  <Link href="/app/settings/apps">Aplicaciones externas</Link>
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
         </div>
       </header>
 

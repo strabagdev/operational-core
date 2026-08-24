@@ -8,12 +8,16 @@ import {
 } from "@/lib/user-admin";
 
 import UserAdministrationPage from "./page";
+import { notFound } from "next/navigation";
 
 vi.mock("@/auth", () => ({
   auth: vi.fn(),
 }));
 
 vi.mock("next/navigation", () => ({
+  notFound: vi.fn(() => {
+    throw new Error("not-found");
+  }),
   redirect: vi.fn((path: string) => {
     throw new Error(`redirect:${path}`);
   }),
@@ -44,5 +48,21 @@ describe("/app/settings/users page", () => {
 
     expect(html).toContain(userAdminDatabaseConnectionMessage);
     expect(html).toContain("Reintentar");
+  });
+
+  it("blocks direct access for non-admin members", async () => {
+    vi.mocked(auth).mockResolvedValueOnce({
+      user: { id: "member_1" },
+    } as never);
+    vi.mocked(getUserAdministration).mockResolvedValueOnce({
+      organization: null,
+      organizations: [],
+      users: [],
+    } as never);
+
+    await expect(UserAdministrationPage({
+      searchParams: Promise.resolve({}),
+    })).rejects.toThrow("not-found");
+    expect(notFound).toHaveBeenCalled();
   });
 });

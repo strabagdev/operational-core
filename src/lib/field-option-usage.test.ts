@@ -7,11 +7,11 @@ import {
 import { prisma } from "./prisma";
 
 const mocks = vi.hoisted(() => ({
-  getAuthorizedContract: vi.fn(),
+  getAuthorizedContractAdmin: vi.fn(),
 }));
 
 vi.mock("./contracts", () => ({
-  getAuthorizedContract: mocks.getAuthorizedContract,
+  getAuthorizedContractAdmin: mocks.getAuthorizedContractAdmin,
 }));
 
 vi.mock("./prisma", () => ({
@@ -98,7 +98,7 @@ function tx(type: "SELECT" | "MULTISELECT", usageCount: number) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.getAuthorizedContract.mockResolvedValue(contract());
+  mocks.getAuthorizedContractAdmin.mockResolvedValue(contract());
   entityTypeFindFirst.mockResolvedValue(entityType() as never);
   transaction.mockImplementation(async (callback) => callback(tx("SELECT", 0) as never));
 });

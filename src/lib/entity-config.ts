@@ -1,7 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
 
-import { getAuthorizedContract } from "./contracts";
+import { getAuthorizedContractAdmin } from "./contracts";
 import {
   buildMergedFieldConfig,
   buildMergedFieldDisplayConfig,
@@ -403,7 +403,7 @@ export function friendlyActionError(error: unknown) {
 }
 
 export async function getContractEntityTypes(contractId: string, userId: string) {
-  const contract = await getAuthorizedContract(contractId, userId);
+  const contract = await getAuthorizedContractAdmin(contractId, userId);
 
   if (!contract) {
     return null;
@@ -429,7 +429,7 @@ export async function getAuthorizedEntityType(
   entityTypeId: string,
   userId: string,
 ) {
-  const contract = await getAuthorizedContract(contractId, userId);
+  const contract = await getAuthorizedContractAdmin(contractId, userId);
 
   if (!contract) {
     return null;
@@ -471,7 +471,7 @@ export async function createEntityType(
   userId: string,
   input: z.infer<typeof entityTypeSchema>,
 ) {
-  const contract = await getAuthorizedContract(contractId, userId);
+  const contract = await getAuthorizedContractAdmin(contractId, userId);
 
   if (!contract) {
     return null;

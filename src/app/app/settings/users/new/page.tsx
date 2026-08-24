@@ -1,9 +1,10 @@
 import Link from "next/link";
-import { redirect } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 
 import { auth } from "@/auth";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { getUserAdministration } from "@/lib/user-admin";
 
 import { createUserAction } from "../actions";
 import { UserForm } from "../user-form";
@@ -20,6 +21,11 @@ export default async function NewUserPage({
   }
 
   const { error, notice } = await searchParams;
+  const data = await getUserAdministration({ userId: session.user.id });
+
+  if (!data.organization) {
+    notFound();
+  }
 
   return (
     <main className="mx-auto grid min-h-screen w-full max-w-4xl gap-6 px-6 py-10">

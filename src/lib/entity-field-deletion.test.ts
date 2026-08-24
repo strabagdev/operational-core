@@ -8,11 +8,11 @@ import {
 import { prisma } from "./prisma";
 
 const mocks = vi.hoisted(() => ({
-  getAuthorizedContract: vi.fn(),
+  getAuthorizedContractAdmin: vi.fn(),
 }));
 
 vi.mock("./contracts", () => ({
-  getAuthorizedContract: mocks.getAuthorizedContract,
+  getAuthorizedContractAdmin: mocks.getAuthorizedContractAdmin,
 }));
 
 vi.mock("./prisma", () => ({
@@ -98,7 +98,7 @@ function tx(fieldResult: ReturnType<typeof field> | null = field()) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.getAuthorizedContract.mockResolvedValue(contract());
+  mocks.getAuthorizedContractAdmin.mockResolvedValue(contract());
   entityTypeFindFirst.mockResolvedValue(entityType() as never);
   entityValueCount.mockResolvedValue(0);
   entityRelationCount.mockResolvedValue(0);
