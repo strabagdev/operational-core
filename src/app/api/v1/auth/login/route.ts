@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   apiAccessTokenExpiresIn,
   ApiAuthConfigurationError,
+  apiDatabaseUnavailableResponse,
   apiRefreshTokenCookieHeader,
   getApiRefreshTokenTransport,
   issueApiRefreshToken,
@@ -11,6 +12,7 @@ import {
   verifyApiCredentials,
 } from "@/lib/api-auth";
 import { badRequest, internalError, success, unauthorized } from "@/lib/api-response";
+import { isDatabaseUnavailableError } from "@/lib/prisma-resilience";
 
 const loginSchema = z.object({
   clientId: z.string().trim().min(1),
@@ -36,22 +38,23 @@ export async function POST(request: Request) {
   }
 
   const { clientId, ...credentials } = parsedBody.data;
-  const user = await verifyApiCredentials(credentials);
-
-  if (!user) {
-    return unauthorized("Credenciales invalidas", "INVALID_CREDENTIALS");
-  }
-
-  const appResult = await resolveApiLoginExternalApp({
-    clientId,
-    userId: user.id,
-  });
-
-  if (!appResult.ok) {
-    return appResult.response;
-  }
 
   try {
+    const user = await verifyApiCredentials(credentials);
+
+    if (!user) {
+      return unauthorized("Credenciales invalidas", "INVALID_CREDENTIALS");
+    }
+
+    const appResult = await resolveApiLoginExternalApp({
+      clientId,
+      userId: user.id,
+    });
+
+    if (!appResult.ok) {
+      return appResult.response;
+    }
+
     const accessToken = await signApiAccessToken({
       app: appResult.app,
       user,
@@ -82,6 +85,10 @@ export async function POST(request: Request) {
         "Autenticacion API no configurada",
         "API_AUTH_SECRET_MISSING",
       );
+    }
+
+    if (isDatabaseUnavailableError(error)) {
+      return apiDatabaseUnavailableResponse();
     }
 
     throw error;

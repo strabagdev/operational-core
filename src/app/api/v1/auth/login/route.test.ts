@@ -8,6 +8,7 @@ import { POST } from "./route";
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    $disconnect: vi.fn(),
     apiRefreshToken: {
       create: vi.fn(),
     },
@@ -161,6 +162,30 @@ describe("POST /api/v1/auth/login", () => {
         message: "Credenciales invalidas",
       },
     });
+  });
+
+  it("returns 503 when credential validation cannot reach the database", async () => {
+    const connectionError = Object.assign(
+      new Error("Server has closed the connection"),
+      { code: "P1017", name: "PrismaClientKnownRequestError" },
+    );
+    userFindUnique.mockRejectedValue(connectionError);
+
+    const response = await POST(loginRequest({
+      email: "user@example.com",
+      clientId: "opco_app_client_1",
+      password: "secret123",
+    }));
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({
+      ok: false,
+      error: {
+        code: "DB_UNAVAILABLE",
+        message: "Servicio temporalmente no disponible.",
+      },
+    });
+    expect(apiRefreshTokenCreate).not.toHaveBeenCalled();
   });
 
   it("returns 401 for an invalid password", async () => {

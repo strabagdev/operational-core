@@ -178,6 +178,8 @@ Web and native clients use different refresh-token transports. Web receives `opc
 
 Contract-scoped API access derives organization, app, contract, and membership from the database on every protected request. Clients cannot choose organization or role through request payloads.
 
+Prisma/PostgreSQL transient connection failures are treated as infrastructure errors, not authentication or authorization failures. Central read-only helpers may retry a failed read once after a connection reset/disconnect. Persistent database unavailability is surfaced as `DB_UNAVAILABLE`/503 for `/api/v1` and as a recoverable web error state. Mutations and write transactions are not retried automatically.
+
 Dynamic entity definitions and records are exposed through `/api/v1/contracts/:contractId/entities`. Record write endpoints reuse the same server-side validation layer used by the web UI instead of maintaining a parallel validation engine. `EntityField.key` is the external JSON key for record values.
 
 Client experiences are exposed through `/api/v1/contracts/:contractId/views`. The endpoint returns only active `AppView` rows assigned to the authenticated user through `UserAppViewAccess`.

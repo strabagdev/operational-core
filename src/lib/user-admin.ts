@@ -5,6 +5,11 @@ import { z } from "zod";
 import { getAppViewTypeLabel, parseAppViewConfig, summarizeAppViewConfig } from "./app-views";
 import { assertCanRemovePlatformAdmin, PlatformAuthError } from "./platform-auth";
 import { prisma } from "./prisma";
+import {
+  DatabaseUnavailableError,
+  isPrismaConnectionError,
+  withPrismaReadRetry,
+} from "./prisma-resilience";
 
 export const organizationMustKeepAdminMessage =
   "La organización debe mantener al menos un administrador.";
@@ -14,8 +19,6 @@ export const userHasHistoryCannotDeleteMessage =
   "Este usuario posee actividad histórica y no puede eliminarse. Puedes desactivarlo.";
 export const userAdminDatabaseConnectionMessage =
   "No fue posible conectar con la base de datos. Intenta nuevamente.";
-
-const prismaConnectivityErrorCodes = new Set(["P1000", "P1001", "P1002", "P1008", "P1017"]);
 
 const roleSchema = z.enum(["ADMIN", "MEMBER"]);
 const userStatusSchema = z.enum(["active", "inactive"]).default("active");
@@ -667,31 +670,7 @@ export function isUserAdminDatabaseConnectionError(
 }
 
 export function isPrismaConnectivityError(error: unknown) {
-  if (!error || typeof error !== "object") {
-    return false;
-  }
-
-  const candidate = error as {
-    code?: unknown;
-    errorCode?: unknown;
-    message?: unknown;
-    name?: unknown;
-  };
-  const code = typeof candidate.code === "string"
-    ? candidate.code
-    : typeof candidate.errorCode === "string"
-      ? candidate.errorCode
-      : undefined;
-
-  if (code && prismaConnectivityErrorCodes.has(code)) {
-    return true;
-  }
-
-  return (
-    candidate.name === "PrismaClientInitializationError" &&
-    typeof candidate.message === "string" &&
-    candidate.message.includes("Can't reach database server")
-  );
+  return isPrismaConnectionError(error);
 }
 
 async function getAdminOrganizations(userId: string) {
@@ -798,28 +777,15 @@ async function withReadOnlyConnectivityRetry<T>(
   callback: () => Promise<T>,
 ) {
   try {
-    return await callback();
+    return await withPrismaReadRetry(callback, {
+      context: `user-admin.${operation}`,
+      delayMs: 250,
+    });
   } catch (error) {
-    if (!isPrismaConnectivityError(error)) {
-      throw error;
+    if (error instanceof DatabaseUnavailableError) {
+      throw new UserAdminDatabaseConnectionError(error.cause);
     }
 
-    console.error(`[user-admin] ${operation} failed with database connectivity error; retrying once.`, error);
-    await delay(250);
-
-    try {
-      return await callback();
-    } catch (retryError) {
-      if (!isPrismaConnectivityError(retryError)) {
-        throw retryError;
-      }
-
-      console.error(`[user-admin] ${operation} retry failed with database connectivity error.`, retryError);
-      throw new UserAdminDatabaseConnectionError(retryError);
-    }
+    throw error;
   }
-}
-
-function delay(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }

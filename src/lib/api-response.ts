@@ -84,3 +84,10 @@ export function internalError(
 ) {
   return apiError({ code, message, status: 500 });
 }
+
+export function serviceUnavailable(
+  message = "Servicio temporalmente no disponible.",
+  code = "DB_UNAVAILABLE",
+) {
+  return apiError({ code, message, status: 503 });
+}

@@ -10,6 +10,7 @@ import { POST } from "./route";
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    $disconnect: vi.fn(),
     $transaction: vi.fn(),
     apiRefreshToken: {
       create: vi.fn(),
@@ -235,6 +236,26 @@ describe("POST /api/v1/auth/refresh", () => {
         message: "Refresh token no valido",
       },
     });
+  });
+
+  it("returns 503 when the refresh token read cannot reach the database", async () => {
+    const connectionError = Object.assign(
+      new Error("Server has closed the connection"),
+      { code: "P1017", name: "PrismaClientKnownRequestError" },
+    );
+    apiRefreshTokenFindUnique.mockRejectedValue(connectionError);
+
+    const response = await POST(refreshRequest());
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({
+      ok: false,
+      error: {
+        code: "DB_UNAVAILABLE",
+        message: "Servicio temporalmente no disponible.",
+      },
+    });
+    expect(transaction).not.toHaveBeenCalled();
   });
 
   it("rejects web cookie refresh from an unauthorized origin before using the token", async () => {

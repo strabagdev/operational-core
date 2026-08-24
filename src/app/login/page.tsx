@@ -2,6 +2,7 @@ import { AuthError } from "next-auth";
 import { redirect } from "next/navigation";
 
 import { auth, signIn } from "@/auth";
+import { isDatabaseUnavailableError } from "@/lib/prisma-resilience";
 import { isInitialSetupRequired } from "@/lib/setup";
 
 async function loginAction(formData: FormData) {
@@ -15,6 +16,10 @@ async function loginAction(formData: FormData) {
     });
   } catch (error) {
     if (error instanceof AuthError) {
+      if (isDatabaseUnavailableError(error)) {
+        throw error;
+      }
+
       redirect("/login?error=invalid-credentials");
     }
 

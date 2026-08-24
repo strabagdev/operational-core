@@ -7,10 +7,15 @@ import {
   forbidden,
   internalError,
   notFound,
+  serviceUnavailable,
   unauthorized,
 } from "@/lib/api-response";
 import { isAuthorizedApiOrigin } from "@/lib/api-cors";
 import { prisma } from "@/lib/prisma";
+import {
+  isDatabaseUnavailableError,
+  withPrismaReadRetry,
+} from "@/lib/prisma-resilience";
 
 export const apiAccessTokenExpiresIn = 60 * 60;
 export const apiRefreshTokenCookieName = "opco_api_refresh_token";
@@ -124,6 +129,20 @@ export type ApiOperationalContextResult =
       ok: false;
       response: Response;
     };
+
+type ApiOperationalMembershipRow = {
+  organization: {
+    active: boolean;
+    contracts: Array<{
+      id: string;
+      name: string;
+    }>;
+    id: string;
+    name: string;
+  };
+  organizationId: string;
+  role: "ADMIN" | "MEMBER";
+};
 
 export type ApiTokenVerificationResult =
   | {
@@ -244,6 +263,13 @@ function apiAuthConfigurationFailureResponse() {
   );
 }
 
+export function apiDatabaseUnavailableResponse() {
+  return serviceUnavailable(
+    "Servicio temporalmente no disponible.",
+    "DB_UNAVAILABLE",
+  );
+}
+
 export function apiRefreshFailureResponse(reason: ApiRefreshFailureReason) {
   if (reason === "app-inactive") {
     return forbidden("Aplicacion inactiva", apiRefreshErrorCodes[reason]);
@@ -348,18 +374,21 @@ export async function verifyApiCredentials(input: {
   email: string;
   password: string;
 }) {
-  const user = await prisma.user.findUnique({
-    select: {
-      active: true,
-      email: true,
-      id: true,
-      name: true,
-      passwordHash: true,
-    },
-    where: {
-      email: normalizeApiLoginEmail(input.email),
-    },
-  });
+  const user = await withPrismaReadRetry(
+    () => prisma.user.findUnique({
+      select: {
+        active: true,
+        email: true,
+        id: true,
+        name: true,
+        passwordHash: true,
+      },
+      where: {
+        email: normalizeApiLoginEmail(input.email),
+      },
+    }),
+    { context: "api.auth.login.user" },
+  );
 
   if (!user?.passwordHash || user.active === false) {
     return null;
@@ -379,22 +408,25 @@ export async function verifyApiCredentials(input: {
 }
 
 export async function getApiUserOrganization(userId: string) {
-  const memberships = await prisma.membership.findMany({
-    orderBy: {
-      organizationId: "asc",
-    },
-    select: {
-      organization: {
-        select: {
-          active: true,
-        },
+  const memberships = await withPrismaReadRetry(
+    () => prisma.membership.findMany({
+      orderBy: {
+        organizationId: "asc",
       },
-      organizationId: true,
-    },
-    where: {
-      userId,
-    },
-  });
+      select: {
+        organization: {
+          select: {
+            active: true,
+          },
+        },
+        organizationId: true,
+      },
+      where: {
+        userId,
+      },
+    }),
+    { context: "api.auth.user.organization" },
+  );
   const organizationIds = [...new Set(
     memberships.map((membership) => membership.organizationId),
   )];
@@ -444,19 +476,22 @@ export async function resolveApiLoginExternalApp({
     };
   }
 
-  const app = await prisma.externalApp.findUnique({
-    select: {
-      active: true,
-      clientId: true,
-      id: true,
-      name: true,
-      organizationId: true,
-      slug: true,
-    },
-    where: {
-      clientId,
-    },
-  });
+  const app = await withPrismaReadRetry(
+    () => prisma.externalApp.findUnique({
+      select: {
+        active: true,
+        clientId: true,
+        id: true,
+        name: true,
+        organizationId: true,
+        slug: true,
+      },
+      where: {
+        clientId,
+      },
+    }),
+    { context: "api.auth.login.app" },
+  );
 
   if (!app || app.organizationId !== organization.organizationId) {
     return {
@@ -526,15 +561,18 @@ function buildApiRefreshTokenIssue() {
 
 export async function rotateApiRefreshToken(token: string): Promise<ApiRefreshResult> {
   const tokenHash = hashApiRefreshToken(token);
-  const storedToken = await prisma.apiRefreshToken.findUnique({
-    include: {
-      externalApp: true,
-      user: true,
-    },
-    where: {
-      tokenHash,
-    },
-  });
+  const storedToken = await withPrismaReadRetry(
+    () => prisma.apiRefreshToken.findUnique({
+      include: {
+        externalApp: true,
+        user: true,
+      },
+      where: {
+        tokenHash,
+      },
+    }),
+    { context: "api.auth.refresh.token" },
+  );
 
   if (!storedToken) {
     return {
@@ -825,17 +863,20 @@ export async function getAuthenticatedApiUser(request: Request): Promise<ApiAuth
     return verifiedToken;
   }
 
-  const user = await prisma.user.findUnique({
-    select: {
-      active: true,
-      email: true,
-      id: true,
-      name: true,
-    },
-    where: {
-      id: verifiedToken.payload.sub,
-    },
-  });
+  const user = await withPrismaReadRetry(
+    () => prisma.user.findUnique({
+      select: {
+        active: true,
+        email: true,
+        id: true,
+        name: true,
+      },
+      where: {
+        id: verifiedToken.payload.sub,
+      },
+    }),
+    { context: "api.auth.bearer.user" },
+  );
 
   if (!user) {
     return {
@@ -860,19 +901,22 @@ export async function getAuthenticatedApiUser(request: Request): Promise<ApiAuth
     };
   }
 
-  const app = await prisma.externalApp.findUnique({
-    select: {
-      active: true,
-      clientId: true,
-      id: true,
-      name: true,
-      organizationId: true,
-      slug: true,
-    },
-    where: {
-      id: verifiedToken.payload.appId,
-    },
-  });
+  const app = await withPrismaReadRetry(
+    () => prisma.externalApp.findUnique({
+      select: {
+        active: true,
+        clientId: true,
+        id: true,
+        name: true,
+        organizationId: true,
+        slug: true,
+      },
+      where: {
+        id: verifiedToken.payload.appId,
+      },
+    }),
+    { context: "api.auth.bearer.app" },
+  );
 
   if (!app || app.clientId !== verifiedToken.payload.clientId) {
     return {
@@ -934,6 +978,13 @@ export async function requireApiUser(
       };
     }
 
+    if (isDatabaseUnavailableError(error)) {
+      return {
+        ok: false,
+        response: apiDatabaseUnavailableResponse(),
+      };
+    }
+
     throw error;
   }
 }
@@ -941,29 +992,45 @@ export async function requireApiUser(
 export async function getApiOperationalContext(
   userId: string,
 ): Promise<ApiOperationalContextResult> {
-  const memberships = await prisma.membership.findMany({
-    include: {
-      organization: {
+  let memberships: ApiOperationalMembershipRow[];
+
+  try {
+    memberships = await withPrismaReadRetry(
+      () => prisma.membership.findMany({
         include: {
-          contracts: {
-            where: {
-              status: "ACTIVE",
-            },
-            orderBy: {
-              name: "asc",
+          organization: {
+            include: {
+              contracts: {
+                where: {
+                  status: "ACTIVE",
+                },
+                orderBy: {
+                  name: "asc",
+                },
+              },
             },
           },
         },
-      },
-    },
-    orderBy: [
-      { organization: { name: "asc" } },
-      { role: "asc" },
-    ],
-    where: {
-      userId,
-    },
-  });
+        orderBy: [
+          { organization: { name: "asc" } },
+          { role: "asc" },
+        ],
+        where: {
+          userId,
+        },
+      }),
+      { context: "api.context.memberships" },
+    );
+  } catch (error) {
+    if (isDatabaseUnavailableError(error)) {
+      return {
+        ok: false,
+        response: apiDatabaseUnavailableResponse(),
+      };
+    }
+
+    throw error;
+  }
 
   const organizationIds = new Set(
     memberships.map((membership) => membership.organizationId),
@@ -1024,67 +1091,84 @@ export async function requireApiContractAccess(
     return userResult;
   }
 
-  const contract = await prisma.contract.findFirst({
-    select: {
-      id: true,
-      name: true,
-      organization: {
+  try {
+    const contract = await withPrismaReadRetry(
+      () => prisma.contract.findFirst({
         select: {
           id: true,
           name: true,
+          organization: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+          organizationId: true,
         },
-      },
-      organizationId: true,
-    },
-    where: {
-      id: contractId,
-      organization: {
-        active: true,
-      },
-      status: "ACTIVE",
-    },
-  });
+        where: {
+          id: contractId,
+          organization: {
+            active: true,
+          },
+          status: "ACTIVE",
+        },
+      }),
+      { context: "api.contract.contract" },
+    );
 
-  if (!contract) {
+    if (!contract) {
+      return {
+        ok: false,
+        response: notFound("Contrato no encontrado", "CONTRACT_NOT_FOUND"),
+      };
+    }
+
+    const membership = await withPrismaReadRetry(
+      () => prisma.membership.findUnique({
+        select: {
+          role: true,
+        },
+        where: {
+          userId_organizationId: {
+            organizationId: contract.organizationId,
+            userId: userResult.user.id,
+          },
+        },
+      }),
+      { context: "api.contract.membership" },
+    );
+
+    if (!membership) {
+      return {
+        ok: false,
+        response: forbidden(
+          "No tienes acceso a este contrato",
+          "CONTRACT_FORBIDDEN",
+        ),
+      };
+    }
+
     return {
-      ok: false,
-      response: notFound("Contrato no encontrado", "CONTRACT_NOT_FOUND"),
-    };
-  }
-
-  const membership = await prisma.membership.findUnique({
-    select: {
-      role: true,
-    },
-    where: {
-      userId_organizationId: {
-        organizationId: contract.organizationId,
-        userId: userResult.user.id,
+      ok: true,
+      context: {
+        app: userResult.app,
+        contract: {
+          id: contract.id,
+          name: contract.name,
+          organization: contract.organization,
+        },
+        membership,
+        user: userResult.user,
       },
-    },
-  });
-
-  if (!membership) {
-    return {
-      ok: false,
-      response: forbidden(
-        "No tienes acceso a este contrato",
-        "CONTRACT_FORBIDDEN",
-      ),
     };
-  }
+  } catch (error) {
+    if (isDatabaseUnavailableError(error)) {
+      return {
+        ok: false,
+        response: apiDatabaseUnavailableResponse(),
+      };
+    }
 
-  return {
-    ok: true,
-    context: {
-      app: userResult.app,
-      contract: {
-        id: contract.id,
-        name: contract.name,
-        organization: contract.organization,
-      },
-      membership,
-      user: userResult.user,
-    },
-  };
+    throw error;
+  }
 }

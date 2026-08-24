@@ -2,6 +2,7 @@ import bcrypt from "bcrypt";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { authorizeWebCredentials } from "@/lib/web-auth";
+import { DatabaseUnavailableError } from "@/lib/prisma-resilience";
 import { prisma } from "@/lib/prisma";
 
 vi.mock("@/lib/prisma", () => ({
@@ -16,6 +17,7 @@ const userFindUnique = vi.mocked(prisma.user.findUnique);
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.spyOn(console, "error").mockImplementation(() => {});
 });
 
 describe("Auth.js web credentials", () => {
@@ -52,5 +54,20 @@ describe("Auth.js web credentials", () => {
       email: "user@example.com",
       password: "secret123",
     })).resolves.toBeNull();
+  });
+
+  it("does not convert a persistent database failure into invalid credentials", async () => {
+    const connectionError = Object.assign(
+      new Error("Server has closed the connection"),
+      { code: "P1017", name: "PrismaClientKnownRequestError" },
+    );
+    userFindUnique.mockRejectedValue(connectionError);
+
+    await expect(authorizeWebCredentials({
+      email: "user@example.com",
+      password: "secret123",
+    })).rejects.toBeInstanceOf(DatabaseUnavailableError);
+
+    expect(userFindUnique).toHaveBeenCalledTimes(2);
   });
 });

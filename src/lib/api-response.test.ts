@@ -6,6 +6,7 @@ import {
   forbidden,
   internalError,
   notFound,
+  serviceUnavailable,
   success,
   unauthorized,
 } from "./api-response";
@@ -90,6 +91,19 @@ describe("API JSON responses", () => {
       error: {
         code: "INTERNAL_ERROR",
         message: "Error interno",
+      },
+    });
+  });
+
+  it("builds a stable database unavailable response without internals", async () => {
+    const response = serviceUnavailable();
+
+    expect(response.status).toBe(503);
+    expect(await responseBody(response)).toEqual({
+      ok: false,
+      error: {
+        code: "DB_UNAVAILABLE",
+        message: "Servicio temporalmente no disponible.",
       },
     });
   });

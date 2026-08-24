@@ -9,6 +9,7 @@ import {
   extractBearerToken,
   getApiAuthSecret,
   getAuthenticatedApiUser,
+  requireApiUser,
   requireApiContractAccess,
   signApiAccessToken,
   verifyApiAccessToken,
@@ -17,6 +18,7 @@ import { prisma } from "@/lib/prisma";
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    $disconnect: vi.fn(),
     contract: {
       findFirst: vi.fn(),
     },
@@ -537,5 +539,29 @@ describe("API contract access", () => {
     }
     expect(contractFindFirst).not.toHaveBeenCalled();
     expect(membershipFindUnique).not.toHaveBeenCalled();
+  });
+
+  it("returns 503 instead of token invalid when bearer DB validation is unavailable", async () => {
+    const connectionError = Object.assign(
+      new Error("Server has closed the connection"),
+      { code: "P1017", name: "PrismaClientKnownRequestError" },
+    );
+    userFindUnique.mockRejectedValue(connectionError);
+
+    const result = await requireApiUser(await apiRequestWithUserToken());
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.response.status).toBe(503);
+      expect(await responseBody(result.response)).toEqual({
+        ok: false,
+        error: {
+          code: "DB_UNAVAILABLE",
+          message: "Servicio temporalmente no disponible.",
+        },
+      });
+    }
+    expect(userFindUnique).toHaveBeenCalledTimes(2);
+    expect(contractFindFirst).not.toHaveBeenCalled();
   });
 });

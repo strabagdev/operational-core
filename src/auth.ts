@@ -5,6 +5,7 @@ import Credentials from "next-auth/providers/credentials";
 import { getAuthCookieOptions } from "@/lib/auth-cookies";
 import { applyAuthenticatedUserToToken } from "@/lib/auth-token";
 import { prisma } from "@/lib/prisma";
+import { withPrismaReadRetry } from "@/lib/prisma-resilience";
 import { authorizeWebCredentials } from "@/lib/web-auth";
 
 function requiredEnv(name: string) {
@@ -50,10 +51,13 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         return { ...session, user: undefined };
       }
 
-      const user = await prisma.user.findUnique({
-        select: { active: true, platformRole: true },
-        where: { id: userId },
-      });
+      const user = await withPrismaReadRetry(
+        () => prisma.user.findUnique({
+          select: { active: true, platformRole: true },
+          where: { id: userId },
+        }),
+        { context: "web.auth.session.user" },
+      );
 
       if (!user?.active) {
         return { ...session, user: undefined };

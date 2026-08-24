@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   apiAccessTokenExpiresIn,
   ApiAuthConfigurationError,
+  apiDatabaseUnavailableResponse,
   apiRefreshFailureResponse,
   apiRefreshTokenCookieHeader,
   extractApiRefreshTokenCookie,
@@ -11,6 +12,7 @@ import {
   rotateApiRefreshToken,
 } from "@/lib/api-auth";
 import { badRequest, internalError, success } from "@/lib/api-response";
+import { isDatabaseUnavailableError } from "@/lib/prisma-resilience";
 
 const nativeRefreshSchema = z.object({
   refreshToken: z.string().trim().min(1),
@@ -82,6 +84,10 @@ export async function POST(request: Request) {
         "Autenticacion API no configurada",
         "API_AUTH_SECRET_MISSING",
       );
+    }
+
+    if (isDatabaseUnavailableError(error)) {
+      return apiDatabaseUnavailableResponse();
     }
 
     throw error;

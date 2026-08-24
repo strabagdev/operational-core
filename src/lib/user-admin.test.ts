@@ -22,6 +22,7 @@ import { prisma } from "./prisma";
 
 vi.mock("./prisma", () => ({
   prisma: {
+    $disconnect: vi.fn(),
     $transaction: vi.fn(),
     appView: {
       findMany: vi.fn(),
@@ -167,8 +168,12 @@ describe("user administration", () => {
     expect(result.organization).toEqual(adminOrganization);
     expect(organizationFindMany).toHaveBeenCalledTimes(2);
     expect(consoleError).toHaveBeenCalledWith(
-      expect.stringContaining("retrying once"),
-      connectivityError,
+      "[db] transient connection error",
+      expect.objectContaining({
+        category: "prisma_connection",
+        context: "user-admin.getAdminOrganizations",
+        retryAttempted: true,
+      }),
     );
 
     consoleError.mockRestore();

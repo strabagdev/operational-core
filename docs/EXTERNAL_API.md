@@ -2,7 +2,7 @@
 
 Operational Core exposes an external JSON API under `/api/v1`.
 
-The API is versioned from the first route so future incompatible changes can live under a new prefix without changing existing clients. All implemented `/api/v1` endpoints return JSON envelopes:
+The API is versioned from the first route so future incompatible changes can live under a new prefix without changing existing clients. Business endpoints under `/api/v1` return JSON envelopes:
 
 Success:
 
@@ -24,6 +24,20 @@ Error:
   }
 }
 ```
+
+Temporary infrastructure failures use a stable 503 response:
+
+```json
+{
+  "ok": false,
+  "error": {
+    "code": "DB_UNAVAILABLE",
+    "message": "Servicio temporalmente no disponible."
+  }
+}
+```
+
+Operational Core may retry read-only Prisma/PostgreSQL validations once when a transient connection error is detected. Writes are not retried automatically; clients must rely on documented idempotency keys or submit a new explicit request.
 
 ## Web Auth And API Auth
 
@@ -395,6 +409,7 @@ Status policy:
 | 401 | The request is not authenticated, the token is invalid/expired, the token user no longer exists, or the token app is invalid/cross-tenant/deleted. |
 | 403 | The user and app are authenticated, but the app is inactive, or the active contract exists but belongs to an organization where the user has no membership. |
 | 404 | The requested active contract does not exist. Inactive contracts are treated as unavailable. |
+| 503 | Operational Core cannot validate the database-backed auth or contract context because PostgreSQL is temporarily unavailable. The response code is `DB_UNAVAILABLE`, not a token or permission error. |
 
 This preserves organization isolation: changing a `contractId` cannot grant access to another organization's contract.
 
@@ -1029,7 +1044,7 @@ This model makes retries safe after network failures and protects concurrent dup
 
 ## Health
 
-`GET /api/v1/health` is public and returns:
+`GET /api/v1/health` is public liveness only. It does not query PostgreSQL and returns:
 
 ```json
 {
@@ -1040,6 +1055,27 @@ This model makes retries safe after network failures and protects concurrent dup
   }
 }
 ```
+
+`GET /api/v1/ready` is public readiness. It performs a minimal PostgreSQL check through Prisma.
+
+Ready:
+
+```json
+{
+  "status": "ready"
+}
+```
+
+Database unavailable:
+
+```json
+{
+  "status": "not_ready",
+  "reason": "database"
+}
+```
+
+Readiness never runs migrations or modifies data.
 
 ## Current Limitations
 
