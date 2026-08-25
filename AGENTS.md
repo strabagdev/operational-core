@@ -52,11 +52,15 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - Leer `docs/ARCHITECTURE.md` antes de cambios arquitectónicos.
 - Leer `docs/EXTERNAL_API.md` antes de tocar `/api/v1`.
 - Leer `docs/HARDENING.md` antes de cambiar offline, sync, resiliencia Prisma, recuperacion de storage, hardening de auth u operational readiness.
+- Leer `docs/OPERATIONS.md` antes de trabajo productivo de DB, deploy o recovery.
 - Mantener docs sincronizados cuando cambie contrato.
 - No usar Playwright salvo solicitud explícita.
 - Preferir verificación productiva read-only.
 - Datos temporales de prueba deben identificarse y limpiarse.
 - No modificar datos productivos arbitrariamente.
+- Nunca hacer restore sobre production desde flujos automaticos o de desarrollo.
+- Migraciones productivas usan `prisma migrate deploy`.
+- No asumir exito de backup sin verificacion de restore.
 - No commit/push salvo solicitud explícita.
 - No force push / rebase / squash salvo instrucción explícita.
 

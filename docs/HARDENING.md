@@ -22,6 +22,8 @@ Fecha de apertura: 2026-08-25.
 | Hardening 1B | PENDING | Retry de lecturas Prisma, `DB_UNAVAILABLE`, `/health` vs `/ready`, auth resiliente a DB temporal. |
 | Hardening 1C | PENDING | Telemetria de sync, scope por `ownerKey + contractId + entityTypeId`, push/refresh/reconcile, `lastSuccessfulSyncAt`. |
 | Hardening 1D | PENDING | `SQLITE_UNAVAILABLE`, retry local, reset explicito, proteccion de pendientes. |
+| Hardening 2A | DOCUMENTED | Backup PostgreSQL, restore staging, restore drill y verificacion read-only. |
+| Hardening 2B | DOCUMENTED | Staging, deploy, migraciones, rollback, smoke test y RPO/RTO. |
 | Auth / Permissions | PENDING | Semantica MEMBER/ADMIN/PLATFORM_ADMIN y restricciones de administracion. |
 | Pending | PENDING | Backup/restore, staging y restore drill. |
 
@@ -299,6 +301,76 @@ Criterios:
 - Restaurar backup.
 - Confirmar que pendientes se conservan y pueden sincronizarse una sola vez.
 - Registrar evidencia, fecha y resultado del drill.
+
+## Hardening 2A
+
+### Backup / Restore / Restore Drill
+
+Estado: DOCUMENTED.
+
+Alcance documentado:
+
+- Backup logico PostgreSQL con `pg_dump --format=custom`.
+- Naming `opco-<environment>-YYYYMMDD-HHMMSS.dump`.
+- Backups fuera del repo.
+- Checksum SHA-256 recomendado.
+- Restore mediante `pg_restore` solo contra `development` o `staging`.
+- Restore bloqueado para `production` en scripts de desarrollo.
+- Verificacion read-only post-restore con counts basicos.
+- Restore drill documentado en `docs/OPERATIONS.md`.
+
+Evidencia:
+
+- `scripts/db-backup.sh`.
+- `scripts/db-restore.sh`.
+- `scripts/db-verify-restore.sh`.
+- `docs/OPERATIONS.md`.
+
+Pendiente externo:
+
+- PENDING EXTERNAL INFRA: confirmar almacenamiento externo de backups.
+- PENDING EXTERNAL INFRA: ejecutar restore drill real contra DB segura de staging/test.
+- PENDING EXTERNAL INFRA: medir tiempos reales de backup/restore para afirmar RPO/RTO.
+
+No resuelto:
+
+- No existe backup verificable desde el repo.
+- No se ha probado restore real en esta fase.
+- No se afirma ninguna capacidad de backup Railway no verificada.
+
+## Hardening 2B
+
+### Staging / Deploy / Rollback
+
+Estado: DOCUMENTED.
+
+Alcance documentado:
+
+- Staging recomendado como app, DB, dominio, secrets y `ExternalApp/clientId` separados.
+- Flujo production: backup, revision de migrations, deploy, `prisma migrate deploy`, readiness y smoke test.
+- Rollback separado entre codigo y base de datos.
+- Restore de DB reservado para incidentes graves bajo procedimiento.
+- PWA/client rollback sin borrar SQLite ni pending automaticamente.
+- RPO/RTO inicial recomendado: RPO <= 24h, RTO <= 2h.
+- Retencion inicial recomendada: diarios 7 dias, semanales 4 semanas, mensuales 3 meses.
+
+Evidencia:
+
+- `docs/OPERATIONS.md`.
+- `/api/v1/health` y `/api/v1/ready` existen.
+- Prisma migrations existen bajo `prisma/migrations`.
+
+Pendiente externo:
+
+- PENDING EXTERNAL INFRA: verificar o crear staging real fuera del repo.
+- PENDING EXTERNAL INFRA: verificar dashboard/proveedor de deploy y backups.
+- PENDING EXTERNAL INFRA: configurar client staging en `opco-client`.
+
+No resuelto:
+
+- No hay config Railway versionada.
+- No hay CI/CD versionado detectado.
+- No se afirma que staging exista actualmente.
 
 ## Required Checks
 
