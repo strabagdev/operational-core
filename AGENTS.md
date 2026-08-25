@@ -51,6 +51,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 - Leer `docs/ARCHITECTURE.md` antes de cambios arquitectónicos.
 - Leer `docs/EXTERNAL_API.md` antes de tocar `/api/v1`.
+- Leer `docs/HARDENING.md` antes de cambiar offline, sync, resiliencia Prisma, recuperacion de storage, hardening de auth u operational readiness.
 - Mantener docs sincronizados cuando cambie contrato.
 - No usar Playwright salvo solicitud explícita.
 - Preferir verificación productiva read-only.
