@@ -522,7 +522,7 @@ Important: AppView access controls which experience appears to the user. It is n
 
 ### GET /api/v1/contracts/:contractId/views/:appViewId/workflow/state-update
 
-Returns the configured generic state-update workflow. The AppView must be active, assigned to the authenticated user, belong to the contract, and use `workflowKey = "state-update"`.
+Returns the configured generic state-update workflow. The AppView must be active, assigned to the authenticated user, belong to the contract, and use a workflow registered as compatible with the state-update engine. Current compatible keys are `state-update` and the `attendance` preset.
 
 Query:
 
@@ -538,7 +538,7 @@ State field option ids are `FieldOption.id` values. Clients should cache definit
 
 ### POST /api/v1/contracts/:contractId/views/:appViewId/workflow/state-update
 
-Creates a state-update event or updates the current matching target record according to the AppView config.
+Creates a state-update event or updates the current matching target record according to the AppView config. Compatibility presets such as `attendance` keep their stored `workflowKey` but are normalized internally to the state-update config shape for this endpoint.
 
 Request:
 

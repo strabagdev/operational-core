@@ -1,4 +1,5 @@
 export const workflowKeys = ["attendance", "state-update"] as const;
+export const stateUpdateCompatibleWorkflowKeys = ["attendance", "state-update"] as const;
 
 export type WorkflowKey = typeof workflowKeys[number];
 
@@ -9,6 +10,10 @@ export const workflowOptions = [
 
 export function isWorkflowKey(value: unknown): value is WorkflowKey {
   return typeof value === "string" && workflowKeys.includes(value as WorkflowKey);
+}
+
+export function isStateUpdateCompatibleWorkflow(value: unknown): value is typeof stateUpdateCompatibleWorkflowKeys[number] {
+  return typeof value === "string" && stateUpdateCompatibleWorkflowKeys.includes(value as typeof stateUpdateCompatibleWorkflowKeys[number]);
 }
 
 export function getWorkflowLabel(workflowKey: string) {

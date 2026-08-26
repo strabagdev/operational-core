@@ -6,7 +6,12 @@ import {
   createAuditEvent,
 } from "@/lib/audit";
 import { userCanAccessAppView } from "@/lib/app-view-access";
-import { parseAppViewConfig, type StateUpdateWorkflowConfig } from "@/lib/app-views";
+import {
+  parseAppViewConfig,
+  type AppViewConfig,
+  type AttendanceWorkflowConfig,
+  type StateUpdateWorkflowConfig,
+} from "@/lib/app-views";
 import { stableRecordRequestHash } from "@/lib/api-record-writes";
 import { badRequest, conflict, forbidden, internalError, notFound } from "@/lib/api-response";
 import { dateOnlyInputValue, dateOnlyToUtcDate } from "@/lib/date-only";
@@ -25,6 +30,7 @@ import {
   validateRelationValues,
 } from "@/lib/entity-records";
 import { prisma } from "@/lib/prisma";
+import { isStateUpdateCompatibleWorkflow } from "@/lib/workflow-catalog";
 
 type StateUpdateField = {
   config: Prisma.JsonValue | null;
@@ -379,9 +385,18 @@ async function getStateUpdateWorkflowContext({
     };
   }
 
-  const parsedConfig = parseAppViewConfig(appView);
+  const parsedConfig = parseStateUpdateAppViewConfig(appView);
 
-  if (parsedConfig.type !== "WORKFLOW" || parsedConfig.workflowKey !== "state-update") {
+  if (!parsedConfig || parsedConfig.type !== "WORKFLOW" || !isStateUpdateCompatibleWorkflow(parsedConfig.workflowKey)) {
+    return {
+      ok: false as const,
+      response: badRequest("La vista no está configurada para actualización de estado.", "INVALID_WORKFLOW"),
+    };
+  }
+
+  const stateUpdateConfig = normalizeStateUpdateCompatibleConfig(parsedConfig);
+
+  if (!stateUpdateConfig) {
     return {
       ok: false as const,
       response: badRequest("La vista no está configurada para actualización de estado.", "INVALID_WORKFLOW"),
@@ -390,9 +405,33 @@ async function getStateUpdateWorkflowContext({
 
   return getStateUpdateContextForConfig({
     appView: { id: appView.id, name: appView.name, slug: appView.slug },
-    config: parsedConfig,
+    config: stateUpdateConfig,
     contractId,
   });
+}
+
+function parseStateUpdateAppViewConfig(appView: Parameters<typeof parseAppViewConfig>[0]) {
+  try {
+    return parseAppViewConfig(appView);
+  } catch {
+    return null;
+  }
+}
+
+export function normalizeStateUpdateCompatibleConfig(config: AppViewConfig): StateUpdateWorkflowConfig | null {
+  if (config.type !== "WORKFLOW") {
+    return null;
+  }
+
+  if (config.workflowKey === "state-update") {
+    return config;
+  }
+
+  if (config.workflowKey === "attendance") {
+    return attendanceStateUpdateConfig(config as AttendanceWorkflowConfig);
+  }
+
+  return null;
 }
 
 export async function getStateUpdateContextForConfig({

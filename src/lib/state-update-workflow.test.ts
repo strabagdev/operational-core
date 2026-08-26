@@ -4,6 +4,7 @@ import { userCanAccessAppView } from "@/lib/app-view-access";
 import { prisma } from "@/lib/prisma";
 import {
   getStateUpdateWorkflow,
+  normalizeStateUpdateCompatibleConfig,
   saveStateUpdateWorkflow,
 } from "@/lib/state-update-workflow";
 
@@ -172,6 +173,142 @@ describe("state-update workflow runtime", () => {
     }));
     expect(tx.entityRecord.update).toHaveBeenCalled();
   });
+
+  it("normalizes attendance AppViews to the state-update config shape", () => {
+    expect(normalizeStateUpdateCompatibleConfig(attendanceConfig())).toEqual({
+      type: "WORKFLOW",
+      workflowKey: "state-update",
+      sourceEntityTypeId: "people",
+      targetEntityTypeId: "attendance",
+      subjectFieldId: "person_field",
+      stateFields: [{ fieldId: "status_field", required: true, defaultOptionId: "present_option" }],
+      extraFieldIds: ["observation_field"],
+      dateFieldId: "date_field",
+      uniqueness: { mode: "subject-date" },
+      historyMode: "update-current",
+    });
+  });
+
+  it("accepts an attendance AppView through the generic state-update GET", async () => {
+    useAttendanceRuntime();
+
+    const result = await getStateUpdateWorkflow(query({
+      appViewId: "view_attendance",
+      subjectRecordId: "person_1",
+    }));
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: {
+        appView: { id: "view_attendance" },
+        stateFields: [
+          {
+            field: { id: "status_field", name: "Estado" },
+            options: [
+              { optionId: "present_option", label: "Presente" },
+              { optionId: "late_option", label: "Atraso" },
+              { optionId: "absent_option", label: "Ausente" },
+            ],
+          },
+        ],
+        extraFields: [{ id: "observation_field", name: "Observación" }],
+        subjectEntityType: { id: "people" },
+        targetEntityType: { id: "attendance" },
+      },
+    });
+  });
+
+  it("creates attendance via the generic state-update POST", async () => {
+    useAttendanceRuntime();
+
+    const result = await saveStateUpdateWorkflow(attendanceSaveBody({
+      states: { status_field: "present_option" },
+    }));
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: { result: { recordId: "state_new", result: "CREATED", subjectRecordId: "person_1" } },
+    });
+    expect(tx.entityRecord.create).toHaveBeenCalled();
+  });
+
+  it("returns UNCHANGED for the same attendance state through the generic POST", async () => {
+    useAttendanceRuntime([existingAttendanceState()]);
+
+    const result = await saveStateUpdateWorkflow(attendanceSaveBody({
+      states: { status_field: "present_option" },
+    }));
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: { result: { recordId: "attendance_existing", result: "UNCHANGED", subjectRecordId: "person_1" } },
+    });
+    expect(tx.entityRecord.update).not.toHaveBeenCalled();
+  });
+
+  it("returns CONFLICT for a different attendance state through the generic POST", async () => {
+    useAttendanceRuntime([existingAttendanceState()]);
+
+    const result = await saveStateUpdateWorkflow(attendanceSaveBody({
+      states: { status_field: "absent_option" },
+    }));
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: {
+        result: {
+          result: "CONFLICT",
+          differences: [
+            {
+              fieldId: "status_field",
+              existingOptionId: "present_option",
+              requestedOptionId: "absent_option",
+            },
+          ],
+        },
+      },
+    });
+    expect(tx.entityRecord.update).not.toHaveBeenCalled();
+  });
+
+  it("updates attendance with overwrite through the generic state-update POST", async () => {
+    useAttendanceRuntime([existingAttendanceState()]);
+
+    const result = await saveStateUpdateWorkflow(attendanceSaveBody({
+      expectedUpdatedAt: "2026-08-22T12:00:00.000Z",
+      overwrite: true,
+      states: { status_field: "absent_option" },
+    }));
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: { result: { recordId: "state_existing", result: "UPDATED", subjectRecordId: "person_1" } },
+    });
+    expect(tx.entityRecord.update).toHaveBeenCalled();
+  });
+
+  it("keeps INVALID_WORKFLOW for workflows not compatible with state-update", async () => {
+    appViewFindFirst.mockResolvedValue(appView({
+      config: {
+        workflowKey: "inspection",
+        sourceEntityTypeId: "equipment",
+        targetEntityTypeId: "equipment_state",
+      },
+    }) as never);
+
+    const result = await saveStateUpdateWorkflow(saveBody({
+      states: { operational_field: "operational_ok" },
+    }));
+
+    expect(result).toMatchObject({
+      ok: false,
+      response: expect.objectContaining({ status: 400 }),
+    });
+    await expect(result.ok ? null : result.response.json()).resolves.toMatchObject({
+      ok: false,
+      error: { code: "INVALID_WORKFLOW" },
+    });
+  });
 });
 
 function query(overrides: Partial<Parameters<typeof getStateUpdateWorkflow>[0]> = {}) {
@@ -209,6 +346,17 @@ function appView(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function attendanceAppView(overrides: Record<string, unknown> = {}) {
+  return {
+    config: attendanceConfig(),
+    id: "view_attendance",
+    name: "Tomar asistencia",
+    slug: "asistencia",
+    type: "WORKFLOW",
+    ...overrides,
+  };
+}
+
 function stateConfig() {
   return {
     workflowKey: "state-update",
@@ -223,6 +371,20 @@ function stateConfig() {
     dateFieldId: "date_field",
     uniqueness: { mode: "subject-date" },
     historyMode: "update-current",
+  };
+}
+
+function attendanceConfig() {
+  return {
+    type: "WORKFLOW" as const,
+    workflowKey: "attendance" as const,
+    sourceEntityTypeId: "people",
+    targetEntityTypeId: "attendance",
+    personFieldId: "person_field",
+    dateFieldId: "date_field",
+    statusFieldId: "status_field",
+    defaultCheckInOptionId: "present_option",
+    observationFieldId: "observation_field",
   };
 }
 
@@ -258,6 +420,43 @@ function targetEntityType() {
     ],
     id: "equipment_state",
     name: "Estados equipo",
+  };
+}
+
+function attendanceSourceEntityType() {
+  return {
+    fields: [field("person_name_field", "nombre", "Nombre", "TEXT", {
+      entityTypeId: "people",
+      searchable: true,
+    })],
+    id: "people",
+    name: "Personas",
+  };
+}
+
+function attendanceTargetEntityType() {
+  return {
+    fields: [
+      field("person_field", "persona", "Persona", "RELATION", {
+        config: { targetEntityTypeId: "people", relationKind: "ONE" },
+        entityTypeId: "attendance",
+      }),
+      field("date_field", "fecha", "Fecha", "DATE", { entityTypeId: "attendance" }),
+      field("status_field", "estado", "Estado", "SELECT", {
+        entityTypeId: "attendance",
+        options: [
+          option("present_option", "Presente", "PRESENTE"),
+          option("late_option", "Atraso", "ATRASO"),
+          option("absent_option", "Ausente", "AUSENTE"),
+        ],
+      }),
+      field("observation_field", "observacion", "Observación", "TEXTAREA", {
+        entityTypeId: "attendance",
+        required: false,
+      }),
+    ],
+    id: "attendance",
+    name: "Asistencias",
   };
 }
 
@@ -303,8 +502,42 @@ function defaultRecordFindMany(records: Array<ReturnType<typeof existingState>> 
   }) as never;
 }
 
+function attendanceRecordFindMany(records: Array<ReturnType<typeof existingAttendanceState>> = []) {
+  return (async (args: { where?: { entityTypeId?: string; id?: string } }) => {
+    if (args.where?.entityTypeId === "people") {
+      return [{ displayName: "Persona 1", id: "person_1" }] as never;
+    }
+
+    return records as never;
+  }) as never;
+}
+
 function mockExistingState(records: Array<ReturnType<typeof existingState>>) {
   entityRecordFindMany.mockImplementation(defaultRecordFindMany(records));
+}
+
+function useAttendanceRuntime(records: Array<ReturnType<typeof existingAttendanceState>> = []) {
+  appViewFindFirst.mockResolvedValue(attendanceAppView() as never);
+  entityTypeFindFirst.mockImplementation((async (args: { where?: { id?: string } }) => {
+    if (args.where?.id === "people") return attendanceSourceEntityType() as never;
+    if (args.where?.id === "attendance") return attendanceTargetEntityType() as never;
+    return null;
+  }) as never);
+  entityRecordFindMany.mockImplementation(attendanceRecordFindMany(records));
+}
+
+function attendanceSaveBody(body: Record<string, unknown>) {
+  return {
+    appId: "app_1",
+    appViewId: "view_attendance",
+    body: {
+      date: "2026-08-22",
+      subjectRecordId: "person_1",
+      ...body,
+    },
+    contractId: "contract_1",
+    userId: "user_1",
+  };
 }
 
 function existingState() {
@@ -317,6 +550,20 @@ function existingState() {
       { booleanValue: null, dateValue: new Date("2026-08-22T00:00:00.000Z"), decimalValue: null, entityFieldId: "date_field", integerValue: null, jsonValue: null, textValue: null },
       { booleanValue: null, dateValue: null, decimalValue: null, entityFieldId: "operational_field", integerValue: null, jsonValue: null, textValue: "operativo" },
       { booleanValue: null, dateValue: null, decimalValue: null, entityFieldId: "availability_field", integerValue: null, jsonValue: null, textValue: "disponible" },
+    ],
+  };
+}
+
+function existingAttendanceState() {
+  return {
+    displayName: "Persona 1 · 22-08-2026",
+    id: "attendance_existing",
+    outgoingRelations: [{ sourceFieldId: "person_field", targetRecordId: "person_1" }],
+    updatedAt: new Date("2026-08-22T12:00:00.000Z"),
+    values: [
+      { booleanValue: null, dateValue: new Date("2026-08-22T00:00:00.000Z"), decimalValue: null, entityFieldId: "date_field", integerValue: null, jsonValue: null, textValue: null },
+      { booleanValue: null, dateValue: null, decimalValue: null, entityFieldId: "status_field", integerValue: null, jsonValue: null, textValue: "PRESENTE" },
+      { booleanValue: null, dateValue: null, decimalValue: null, entityFieldId: "observation_field", integerValue: null, jsonValue: null, textValue: null },
     ],
   };
 }
