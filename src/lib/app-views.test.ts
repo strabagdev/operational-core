@@ -590,6 +590,130 @@ describe("AppView config validation", () => {
     ).rejects.toThrow("El campo Estado debe ser de selección simple.");
   });
 
+  it("creates a valid state-update workflow with multiple state fields", async () => {
+    entityTypeFindFirst
+      .mockResolvedValueOnce(entityType({ id: "equipment", name: "Equipos" }) as never)
+      .mockResolvedValueOnce(stateUpdateEntityType() as never);
+
+    await createAppView(
+      "contract_1",
+      "user_1",
+      getAppViewInput(formData({
+        dateFieldId: "date_field",
+        extraFieldIds: ["observation_field", "cost_field"],
+        historyMode: "update-current",
+        requiredStateFieldIds: ["status_field"],
+        sourceEntityTypeId: "equipment",
+        "stateFieldDefaultOptionId:status_field": "present_option",
+        stateFieldIds: ["status_field", "availability_field"],
+        subjectFieldId: "person_field",
+        targetEntityTypeId: "attendance",
+        type: "WORKFLOW",
+        uniquenessMode: "subject-date",
+        workflowKey: "state-update",
+      })),
+    );
+
+    expect(appViewCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        config: {
+          workflowKey: "state-update",
+          sourceEntityTypeId: "equipment",
+          targetEntityTypeId: "attendance",
+          subjectFieldId: "person_field",
+          stateFields: [
+            { fieldId: "status_field", required: true, defaultOptionId: "present_option" },
+            { fieldId: "availability_field", required: false, defaultOptionId: undefined },
+          ],
+          extraFieldIds: ["observation_field", "cost_field"],
+          dateFieldId: "date_field",
+          uniqueness: { mode: "subject-date" },
+          historyMode: "update-current",
+        },
+        type: "WORKFLOW",
+      }),
+    }));
+  });
+
+  it("rejects state-update when a state field is not SELECT single", async () => {
+    entityTypeFindFirst
+      .mockResolvedValueOnce(entityType({ id: "equipment", name: "Equipos" }) as never)
+      .mockResolvedValueOnce(stateUpdateEntityType({
+        fields: [
+          attendanceField("person_field", "RELATION", {
+            config: { targetEntityTypeId: "equipment", relationKind: "ONE" },
+          }),
+          attendanceField("date_field", "DATE"),
+          attendanceField("status_field", "TEXT"),
+        ],
+      }) as never);
+
+    await expect(
+      createAppView(
+        "contract_1",
+        "user_1",
+        getAppViewInput(formData({
+          sourceEntityTypeId: "equipment",
+          stateFieldIds: ["status_field"],
+          subjectFieldId: "person_field",
+          targetEntityTypeId: "attendance",
+          type: "WORKFLOW",
+          workflowKey: "state-update",
+        })),
+      ),
+    ).rejects.toThrow("Los campos de estado deben ser selección simple.");
+  });
+
+  it("rejects state-update when the subject relation points elsewhere", async () => {
+    entityTypeFindFirst
+      .mockResolvedValueOnce(entityType({ id: "equipment", name: "Equipos" }) as never)
+      .mockResolvedValueOnce(stateUpdateEntityType({
+        fields: [
+          attendanceField("person_field", "RELATION", {
+            config: { targetEntityTypeId: "people", relationKind: "ONE" },
+          }),
+          attendanceField("status_field", "SELECT", { options: attendanceStatusOptions() }),
+        ],
+      }) as never);
+
+    await expect(
+      createAppView(
+        "contract_1",
+        "user_1",
+        getAppViewInput(formData({
+          sourceEntityTypeId: "equipment",
+          stateFieldIds: ["status_field"],
+          subjectFieldId: "person_field",
+          targetEntityTypeId: "attendance",
+          type: "WORKFLOW",
+          workflowKey: "state-update",
+        })),
+      ),
+    ).rejects.toThrow("El campo sujeto debe relacionar con Equipos.");
+  });
+
+  it("rejects state-update when an extra field is outside the target", async () => {
+    entityTypeFindFirst
+      .mockResolvedValueOnce(entityType({ id: "equipment", name: "Equipos" }) as never)
+      .mockResolvedValueOnce(stateUpdateEntityType() as never);
+
+    await expect(
+      createAppView(
+        "contract_1",
+        "user_1",
+        getAppViewInput(formData({
+          extraFieldIds: ["foreign_field"],
+          sourceEntityTypeId: "equipment",
+          stateFieldIds: ["status_field"],
+          subjectFieldId: "person_field",
+          targetEntityTypeId: "attendance",
+          type: "WORKFLOW",
+          workflowKey: "state-update",
+        })),
+      ),
+    ).rejects.toThrow("Selecciona un campo activo válido para Campo extra.");
+  });
+
   it("creates a valid BOARD view", async () => {
     await createAppView(
       "contract_1",
@@ -668,6 +792,29 @@ function attendanceEntityType(overrides: Record<string, unknown> = {}) {
     ],
     id: "attendance",
     name: "Asistencias",
+    ...overrides,
+  });
+}
+
+function stateUpdateEntityType(overrides: Record<string, unknown> = {}) {
+  return entityType({
+    fields: [
+      attendanceField("person_field", "RELATION", {
+        config: { targetEntityTypeId: "equipment", relationKind: "ONE" },
+      }),
+      attendanceField("date_field", "DATE"),
+      attendanceField("status_field", "SELECT", { options: attendanceStatusOptions() }),
+      attendanceField("availability_field", "SELECT", {
+        options: [
+          { id: "available_option", isActive: true, value: "available" },
+          { id: "unavailable_option", isActive: true, value: "unavailable" },
+        ],
+      }),
+      attendanceField("observation_field", "TEXTAREA"),
+      attendanceField("cost_field", "MONEY"),
+    ],
+    id: "attendance",
+    name: "Estados",
     ...overrides,
   });
 }

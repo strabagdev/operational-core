@@ -89,36 +89,76 @@ export function AppViewForm({
       : entityTypes[0]?.id ?? ""),
   );
   const targetEntityType = entityTypes.find((entityType) => entityType.id === targetEntityTypeId);
+  const [workflowKey, setWorkflowKey] = useState(
+    valueFromState(state, "workflowKey") ||
+    (initialValues?.config.type === "WORKFLOW" ? initialValues.config.workflowKey : "attendance"),
+  );
   const [personFieldId, setPersonFieldId] = useState(
     valueFromState(state, "personFieldId") ||
-    (initialValues?.config.type === "WORKFLOW"
+    (initialValues?.config.type === "WORKFLOW" && initialValues.config.workflowKey === "attendance"
       ? initialValues.config.personFieldId
+      : firstActiveFieldId(targetEntityType, "RELATION")),
+  );
+  const [subjectFieldId, setSubjectFieldId] = useState(
+    valueFromState(state, "subjectFieldId") ||
+    (initialValues?.config.type === "WORKFLOW" && initialValues.config.workflowKey === "state-update"
+      ? initialValues.config.subjectFieldId
       : firstActiveFieldId(targetEntityType, "RELATION")),
   );
   const [dateFieldId, setDateFieldId] = useState(
     valueFromState(state, "dateFieldId") ||
-    (initialValues?.config.type === "WORKFLOW"
-      ? initialValues.config.dateFieldId
+    (initialValues?.config.type === "WORKFLOW" && "dateFieldId" in initialValues.config
+      ? initialValues.config.dateFieldId ?? ""
       : firstActiveFieldId(targetEntityType, "DATE")),
   );
   const [statusFieldId, setStatusFieldId] = useState(
     valueFromState(state, "statusFieldId") ||
-    (initialValues?.config.type === "WORKFLOW"
+    (initialValues?.config.type === "WORKFLOW" && initialValues.config.workflowKey === "attendance"
       ? initialValues.config.statusFieldId
       : firstActiveFieldId(targetEntityType, "SELECT")),
   );
   const statusField = targetEntityType?.fields.find((field) => field.id === statusFieldId);
   const [defaultCheckInOptionId, setDefaultCheckInOptionId] = useState(
     valueFromState(state, "defaultCheckInOptionId") ||
-    (initialValues?.config.type === "WORKFLOW"
+    (initialValues?.config.type === "WORKFLOW" && initialValues.config.workflowKey === "attendance"
       ? initialValues.config.defaultCheckInOptionId ?? ""
       : firstActiveOptionId(statusField)),
   );
   const [observationFieldId, setObservationFieldId] = useState(
     valueFromState(state, "observationFieldId") ||
-    (initialValues?.config.type === "WORKFLOW"
+    (initialValues?.config.type === "WORKFLOW" && initialValues.config.workflowKey === "attendance"
       ? initialValues.config.observationFieldId ?? ""
       : ""),
+  );
+  const [stateFieldIds, setStateFieldIds] = useState<Set<string>>(
+    new Set(valuesFromState(state, "stateFieldIds") ??
+      (initialValues?.config.type === "WORKFLOW" && initialValues.config.workflowKey === "state-update"
+        ? initialValues.config.stateFields.map((field) => field.fieldId)
+        : statusFieldId ? [statusFieldId] : [])),
+  );
+  const [requiredStateFieldIds, setRequiredStateFieldIds] = useState<Set<string>>(
+    new Set(valuesFromState(state, "requiredStateFieldIds") ??
+      (initialValues?.config.type === "WORKFLOW" && initialValues.config.workflowKey === "state-update"
+        ? initialValues.config.stateFields.filter((field) => field.required).map((field) => field.fieldId)
+        : statusFieldId ? [statusFieldId] : [])),
+  );
+  const [extraFieldIds, setExtraFieldIds] = useState<Set<string>>(
+    new Set(valuesFromState(state, "extraFieldIds") ??
+      (initialValues?.config.type === "WORKFLOW" && initialValues.config.workflowKey === "state-update"
+        ? initialValues.config.extraFieldIds
+        : [])),
+  );
+  const [uniquenessMode, setUniquenessMode] = useState(
+    valueFromState(state, "uniquenessMode") ||
+    (initialValues?.config.type === "WORKFLOW" && initialValues.config.workflowKey === "state-update"
+      ? initialValues.config.uniqueness.mode
+      : "none"),
+  );
+  const [historyMode, setHistoryMode] = useState(
+    valueFromState(state, "historyMode") ||
+    (initialValues?.config.type === "WORKFLOW" && initialValues.config.workflowKey === "state-update"
+      ? initialValues.config.historyMode
+      : "append"),
   );
   const [dashboardEntityTypeIds, setDashboardEntityTypeIds] = useState<Set<string>>(
     new Set(valuesFromState(state, "entityTypeIds") ??
@@ -227,23 +267,37 @@ export function AppViewForm({
         fieldErrors={state.fieldErrors}
         groupByFieldKey={groupByFieldKey}
         dateFieldId={dateFieldId}
+        extraFieldIds={extraFieldIds}
         setEntityTypeId={setEntityTypeId}
         observationFieldId={observationFieldId}
         personFieldId={personFieldId}
+        subjectFieldId={subjectFieldId}
         defaultCheckInOptionId={defaultCheckInOptionId}
+        historyMode={historyMode}
+        requiredStateFieldIds={requiredStateFieldIds}
         setDateFieldId={setDateFieldId}
+        setExtraFieldIds={setExtraFieldIds}
         setGroupByFieldKey={setGroupByFieldKey}
+        setHistoryMode={setHistoryMode}
         setObservationFieldId={setObservationFieldId}
         setPersonFieldId={setPersonFieldId}
+        setRequiredStateFieldIds={setRequiredStateFieldIds}
         setDefaultCheckInOptionId={setDefaultCheckInOptionId}
         setSourceEntityTypeId={setSourceEntityTypeId}
+        setStateFieldIds={setStateFieldIds}
         setStatusFieldId={setStatusFieldId}
+        setSubjectFieldId={setSubjectFieldId}
         setTargetEntityTypeId={setTargetEntityTypeId}
+        setUniquenessMode={setUniquenessMode}
+        setWorkflowKey={setWorkflowKey}
         sourceEntityTypeId={sourceEntityTypeId}
+        stateFieldIds={stateFieldIds}
         statusFieldId={statusFieldId}
         targetEntityTypeId={targetEntityTypeId}
         toggleDashboardEntity={toggleDashboardEntity}
         type={type}
+        uniquenessMode={uniquenessMode}
+        workflowKey={workflowKey}
       />
 
       <div className="grid gap-4 sm:grid-cols-2">
@@ -281,50 +335,78 @@ function ConfigFields({
   dateFieldId,
   entityTypeId,
   entityTypes,
+  extraFieldIds,
   fieldErrors,
   groupByFieldKey,
+  historyMode,
   defaultCheckInOptionId,
   observationFieldId,
   personFieldId,
+  requiredStateFieldIds,
   setDateFieldId,
   setDefaultCheckInOptionId,
   setEntityTypeId,
+  setExtraFieldIds,
   setGroupByFieldKey,
+  setHistoryMode,
   setObservationFieldId,
   setPersonFieldId,
+  setRequiredStateFieldIds,
   setSourceEntityTypeId,
+  setStateFieldIds,
   setStatusFieldId,
+  setSubjectFieldId,
   setTargetEntityTypeId,
+  setUniquenessMode,
+  setWorkflowKey,
   sourceEntityTypeId,
+  stateFieldIds,
   statusFieldId,
+  subjectFieldId,
   targetEntityTypeId,
   toggleDashboardEntity,
   type,
+  uniquenessMode,
+  workflowKey,
 }: {
   activeBoardFields: AppViewEntityTypeOption["fields"];
   dashboardEntityTypeIds: Set<string>;
   dateFieldId: string;
   entityTypeId: string;
   entityTypes: AppViewEntityTypeOption[];
+  extraFieldIds: Set<string>;
   fieldErrors?: Record<string, string[]>;
   groupByFieldKey: string;
+  historyMode: string;
   defaultCheckInOptionId: string;
   observationFieldId: string;
   personFieldId: string;
+  requiredStateFieldIds: Set<string>;
   setDateFieldId: (value: string) => void;
   setDefaultCheckInOptionId: (value: string) => void;
   setEntityTypeId: (value: string) => void;
+  setExtraFieldIds: (value: Set<string>) => void;
   setGroupByFieldKey: (value: string) => void;
+  setHistoryMode: (value: string) => void;
   setObservationFieldId: (value: string) => void;
   setPersonFieldId: (value: string) => void;
+  setRequiredStateFieldIds: (value: Set<string>) => void;
   setSourceEntityTypeId: (value: string) => void;
+  setStateFieldIds: (value: Set<string>) => void;
   setStatusFieldId: (value: string) => void;
+  setSubjectFieldId: (value: string) => void;
   setTargetEntityTypeId: (value: string) => void;
+  setUniquenessMode: (value: string) => void;
+  setWorkflowKey: (value: string) => void;
   sourceEntityTypeId: string;
+  stateFieldIds: Set<string>;
   statusFieldId: string;
+  subjectFieldId: string;
   targetEntityTypeId: string;
   toggleDashboardEntity: (entityTypeId: string, checked: boolean) => void;
   type: AppViewType;
+  uniquenessMode: string;
+  workflowKey: string;
 }) {
   if (type === "WORKFLOW") {
     const targetEntityType = entityTypes.find((entityType) => entityType.id === targetEntityTypeId);
@@ -351,12 +433,16 @@ function ConfigFields({
 
             setTargetEntityTypeId(value);
             setPersonFieldId(firstActiveFieldId(nextTarget, "RELATION"));
+            setSubjectFieldId(firstActiveFieldId(nextTarget, "RELATION"));
             setDateFieldId(firstActiveFieldId(nextTarget, "DATE"));
             const nextStatusFieldId = firstActiveFieldId(nextTarget, "SELECT");
             const nextStatusField = nextTarget?.fields.find((field) => field.id === nextStatusFieldId);
             setStatusFieldId(nextStatusFieldId);
             setDefaultCheckInOptionId(firstActiveOptionId(nextStatusField));
             setObservationFieldId(firstActiveFieldId(nextTarget, "TEXTAREA"));
+            setStateFieldIds(nextStatusFieldId ? new Set([nextStatusFieldId]) : new Set());
+            setRequiredStateFieldIds(nextStatusFieldId ? new Set([nextStatusFieldId]) : new Set());
+            setExtraFieldIds(new Set());
           }}
           options={entityTypes}
           value={targetEntityTypeId}
@@ -367,7 +453,8 @@ function ConfigFields({
           <select
             className="h-10 rounded-md border border-input bg-background px-3 text-sm font-normal outline-none ring-ring focus-visible:ring-2"
             name="workflowKey"
-            defaultValue="attendance"
+            onChange={(event) => setWorkflowKey(event.target.value)}
+            value={workflowKey}
           >
             {appViewWorkflowOptions.map((option) => (
               <option key={option.value} value={option.value}>
@@ -376,58 +463,136 @@ function ConfigFields({
             ))}
           </select>
         </label>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <FieldSelect
-            fields={activeTargetFields}
-            label="Campo Persona"
-            name="personFieldId"
-            onChange={setPersonFieldId}
-            preferredType="RELATION"
-            value={personFieldId}
-            errors={fieldErrors?.personFieldId}
-          />
-          <FieldSelect
-            fields={activeTargetFields}
-            label="Campo Fecha"
-            name="dateFieldId"
-            onChange={setDateFieldId}
-            preferredType="DATE"
-            value={dateFieldId}
-            errors={fieldErrors?.dateFieldId}
-          />
-          <FieldSelect
-            fields={activeTargetFields}
-            label="Campo Estado"
-            name="statusFieldId"
-            onChange={(value) => {
-              const nextStatusField = activeTargetFields.find((field) => field.id === value);
+        {workflowKey === "state-update" ? (
+          <div className="grid gap-3">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <FieldSelect
+                fields={activeTargetFields}
+                label="Campo Sujeto"
+                name="subjectFieldId"
+                onChange={setSubjectFieldId}
+                preferredType="RELATION"
+                value={subjectFieldId}
+                errors={fieldErrors?.subjectFieldId}
+              />
+              <FieldSelect
+                fields={activeTargetFields}
+                includeEmpty
+                label="Campo Fecha"
+                name="dateFieldId"
+                onChange={setDateFieldId}
+                preferredType="DATE"
+                value={dateFieldId}
+                errors={fieldErrors?.dateFieldId}
+              />
+              <SelectControl
+                label="Unicidad"
+                name="uniquenessMode"
+                onChange={setUniquenessMode}
+                options={[
+                  { label: "Sin unicidad", value: "none" },
+                  { label: "Sujeto", value: "subject" },
+                  { label: "Sujeto + fecha", value: "subject-date" },
+                ]}
+                value={uniquenessMode}
+              />
+              <SelectControl
+                label="Historial"
+                name="historyMode"
+                onChange={setHistoryMode}
+                options={[
+                  { label: "Agregar evento", value: "append" },
+                  { label: "Actualizar actual", value: "update-current" },
+                ]}
+                value={historyMode}
+              />
+            </div>
+            <FieldChecklist
+              fields={activeTargetFields.filter((field) => field.type === "SELECT")}
+              label="Campos de estado"
+              name="stateFieldIds"
+              requiredName="requiredStateFieldIds"
+              selected={stateFieldIds}
+              requiredSelected={requiredStateFieldIds}
+              setRequiredSelected={setRequiredStateFieldIds}
+              setSelected={setStateFieldIds}
+            />
+            {activeTargetFields
+              .filter((field) => stateFieldIds.has(field.id))
+              .map((field) => (
+                <OptionSelect
+                  key={field.id}
+                  label={`Opción por defecto · ${field.name}`}
+                  name={`stateFieldDefaultOptionId:${field.id}`}
+                  onChange={() => undefined}
+                  options={field.options.filter((option) => option.isActive)}
+                  value=""
+                  includeEmpty
+                />
+              ))}
+            <FieldChecklist
+              fields={activeTargetFields.filter((field) => stateUpdateExtraFieldTypes.has(field.type))}
+              label="Campos extra"
+              name="extraFieldIds"
+              selected={extraFieldIds}
+              setSelected={setExtraFieldIds}
+            />
+            <FieldError errors={fieldErrors?.stateFieldIds ?? fieldErrors?.extraFieldIds} />
+          </div>
+        ) : (
+          <div className="grid gap-3 sm:grid-cols-2">
+            <FieldSelect
+              fields={activeTargetFields}
+              label="Campo Persona"
+              name="personFieldId"
+              onChange={setPersonFieldId}
+              preferredType="RELATION"
+              value={personFieldId}
+              errors={fieldErrors?.personFieldId}
+            />
+            <FieldSelect
+              fields={activeTargetFields}
+              label="Campo Fecha"
+              name="dateFieldId"
+              onChange={setDateFieldId}
+              preferredType="DATE"
+              value={dateFieldId}
+              errors={fieldErrors?.dateFieldId}
+            />
+            <FieldSelect
+              fields={activeTargetFields}
+              label="Campo Estado"
+              name="statusFieldId"
+              onChange={(value) => {
+                const nextStatusField = activeTargetFields.find((field) => field.id === value);
 
-              setStatusFieldId(value);
-              setDefaultCheckInOptionId(firstActiveOptionId(nextStatusField));
-            }}
-            preferredType="SELECT"
-            value={statusFieldId}
-            errors={fieldErrors?.statusFieldId}
-          />
-          <OptionSelect
-            errors={fieldErrors?.defaultCheckInOptionId}
-            label="Estado por defecto de checking"
-            name="defaultCheckInOptionId"
-            onChange={setDefaultCheckInOptionId}
-            options={activeStatusOptions}
-            value={defaultCheckInOptionId}
-          />
-          <FieldSelect
-            fields={activeTargetFields}
-            includeEmpty
-            label="Campo Observación"
-            name="observationFieldId"
-            onChange={setObservationFieldId}
-            preferredType="TEXTAREA"
-            value={observationFieldId}
-            errors={fieldErrors?.observationFieldId}
-          />
-        </div>
+                setStatusFieldId(value);
+                setDefaultCheckInOptionId(firstActiveOptionId(nextStatusField));
+              }}
+              preferredType="SELECT"
+              value={statusFieldId}
+              errors={fieldErrors?.statusFieldId}
+            />
+            <OptionSelect
+              errors={fieldErrors?.defaultCheckInOptionId}
+              label="Estado por defecto de checking"
+              name="defaultCheckInOptionId"
+              onChange={setDefaultCheckInOptionId}
+              options={activeStatusOptions}
+              value={defaultCheckInOptionId}
+            />
+            <FieldSelect
+              fields={activeTargetFields}
+              includeEmpty
+              label="Campo Observación"
+              name="observationFieldId"
+              onChange={setObservationFieldId}
+              preferredType="TEXTAREA"
+              value={observationFieldId}
+              errors={fieldErrors?.observationFieldId}
+            />
+          </div>
+        )}
       </fieldset>
     );
   }
@@ -554,6 +719,7 @@ function FieldSelect({
 
 function OptionSelect({
   errors,
+  includeEmpty = false,
   label,
   name,
   onChange,
@@ -561,6 +727,7 @@ function OptionSelect({
   value,
 }: {
   errors?: string[];
+  includeEmpty?: boolean;
   label: string;
   name: string;
   onChange: (value: string) => void;
@@ -574,10 +741,10 @@ function OptionSelect({
         className="h-10 rounded-md border border-input bg-background px-3 text-sm font-normal outline-none ring-ring focus-visible:ring-2"
         name={name}
         onChange={(event) => onChange(event.target.value)}
-        required
+        required={!includeEmpty}
         value={value}
       >
-        <option value="">Selecciona una opción</option>
+        <option value="">{includeEmpty ? "Sin opción por defecto" : "Selecciona una opción"}</option>
         {options.map((option) => (
           <option key={option.id} value={option.id}>
             {option.label}
@@ -586,6 +753,111 @@ function OptionSelect({
       </select>
       <FieldError errors={errors} />
     </label>
+  );
+}
+
+function SelectControl({
+  label,
+  name,
+  onChange,
+  options,
+  value,
+}: {
+  label: string;
+  name: string;
+  onChange: (value: string) => void;
+  options: Array<{ label: string; value: string }>;
+  value: string;
+}) {
+  return (
+    <label className="grid gap-2 text-sm font-medium">
+      {label}
+      <select
+        className="h-10 rounded-md border border-input bg-background px-3 text-sm font-normal outline-none ring-ring focus-visible:ring-2"
+        name={name}
+        onChange={(event) => onChange(event.target.value)}
+        value={value}
+      >
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function FieldChecklist({
+  fields,
+  label,
+  name,
+  requiredName,
+  requiredSelected,
+  selected,
+  setRequiredSelected,
+  setSelected,
+}: {
+  fields: AppViewEntityTypeOption["fields"];
+  label: string;
+  name: string;
+  requiredName?: string;
+  requiredSelected?: Set<string>;
+  selected: Set<string>;
+  setRequiredSelected?: (value: Set<string>) => void;
+  setSelected: (value: Set<string>) => void;
+}) {
+  return (
+    <fieldset className="grid gap-2 rounded-md border border-border p-3">
+      <legend className="px-1 text-sm font-medium">{label}</legend>
+      <div className="grid gap-2 sm:grid-cols-2">
+        {fields.map((field) => (
+          <div className="grid gap-1" key={field.id}>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                checked={selected.has(field.id)}
+                className="h-4 w-4"
+                name={name}
+                onChange={(event) => {
+                  const next = new Set(selected);
+                  if (event.target.checked) {
+                    next.add(field.id);
+                  } else {
+                    next.delete(field.id);
+                  }
+                  setSelected(next);
+                }}
+                type="checkbox"
+                value={field.id}
+              />
+              {field.name}
+            </label>
+            {requiredName && selected.has(field.id) ? (
+              <label className="ml-6 flex items-center gap-2 text-xs text-muted-foreground">
+                <input
+                  checked={requiredSelected?.has(field.id) ?? false}
+                  className="h-3.5 w-3.5"
+                  name={requiredName}
+                  onChange={(event) => {
+                    if (!setRequiredSelected || !requiredSelected) return;
+                    const next = new Set(requiredSelected);
+                    if (event.target.checked) {
+                      next.add(field.id);
+                    } else {
+                      next.delete(field.id);
+                    }
+                    setRequiredSelected(next);
+                  }}
+                  type="checkbox"
+                  value={field.id}
+                />
+                Obligatorio
+              </label>
+            ) : null}
+          </div>
+        ))}
+      </div>
+    </fieldset>
   );
 }
 
@@ -599,6 +871,20 @@ function firstActiveFieldId(
 function firstActiveOptionId(field: AppViewEntityTypeOption["fields"][number] | undefined) {
   return field?.options.find((option) => option.isActive)?.id ?? "";
 }
+
+const stateUpdateExtraFieldTypes = new Set([
+  "TEXT",
+  "TEXTAREA",
+  "INTEGER",
+  "DECIMAL",
+  "MONEY",
+  "BOOLEAN",
+  "DATE",
+  "TIME",
+  "DATETIME",
+  "SELECT",
+  "RELATION",
+]);
 
 function EntitySelect({
   errors,

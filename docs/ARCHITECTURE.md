@@ -207,11 +207,26 @@ An AppView assignment means the experience is visible/available to the user. It 
 Current `AppView.type` values:
 
 - `RECORDS`: generic listing/detail/edit experience for one `EntityType`; config stores `entityTypeId`.
-- `WORKFLOW`: specialized operation that can read one entity and write another; config stores `workflowKey`, `sourceEntityTypeId`, `targetEntityTypeId`, and workflow-specific field ids. The only current workflow key is `attendance` (`Asistencia`). The attendance renderer is not implemented yet.
+- `WORKFLOW`: renderer family for operational actions that read one entity and write or update another. `workflowKey` selects the concrete behavior. Current keys are `state-update` and the compatibility preset `attendance`.
 - `BOARD`: grouped board for one `EntityType`; config stores `entityTypeId` and `groupByFieldKey`.
 - `DASHBOARD`: summary view over multiple entity types; config stores `entityTypeIds`.
 
-Although `AppView.config` is stored as JSON, it is not treated as arbitrary JSON. Server-side validators check the required shape for each type, verify every referenced `EntityType` belongs to the same contract, and for `BOARD` verify the grouping field exists and is active in that entity type.
+Although `AppView.config` is stored as JSON, it is not treated as arbitrary JSON. Server-side validators check the required shape for each type, verify every referenced `EntityType` belongs to the same contract, and for `BOARD` verify the grouping field exists and is active in that entity type. Workflow configs are also validated against active target fields, relation targets, and supported field types.
+
+`state-update` is the generic workflow primitive for operational experiences where one subject record has one or more state fields changed, optional extra fields captured, optional date semantics, configurable uniqueness, and optional current-record update behavior. Its config stores:
+
+- `sourceEntityTypeId`: entity being operated on, such as Equipos or Personas.
+- `targetEntityTypeId`: entity where the event/current state is persisted.
+- `subjectFieldId`: `RELATION` field on the target entity pointing to the source entity.
+- `stateFields`: one or more single `SELECT` fields, each with `required` and optional `defaultOptionId`.
+- `extraFieldIds`: supported normal target fields such as text, number, date/time, select, boolean, money, and relation.
+- `dateFieldId`: optional `DATE` target field.
+- `uniqueness.mode`: `none`, `subject`, or `subject-date`, enforced as domain logic over EAV records.
+- `historyMode`: `append` creates a new target record; `update-current` updates the matching current record and returns explicit conflicts before overwriting changed state.
+
+Runtime behavior belongs to the common `state-update` engine: field validation, active option lookup, subject search, current/latest summary, idempotent POST shape, conflict detection, overwrite confirmation with `expectedUpdatedAt`, generic record persistence, relation persistence, and audit writes. Instance-specific behavior belongs in the AppView config. `attendance` remains as a preset/adapter during migration: it keeps `workflowKey = "attendance"` and the existing API response shape, but maps internally to a `state-update` config with Persona, Fecha, Estado, Observación, `subject-date`, and `update-current`.
+
+This is intentionally not a BPM engine. Arbitrary conditions, custom scripts, branching, approvals, timers, escalations, and visual workflow design are outside this primitive.
 
 Example:
 

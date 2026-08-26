@@ -10,7 +10,6 @@ import {
   getWorkflowLabel,
   workflowKeys,
   workflowOptions,
-  type WorkflowKey,
 } from "./workflow-catalog";
 
 const slugRegex = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -51,9 +50,14 @@ export const appViewCommonSchema = z.object({
 
 export type AppViewConfig =
   | { type: "RECORDS"; entityTypeId: string }
-  | {
+  | AttendanceWorkflowConfig
+  | StateUpdateWorkflowConfig
+  | { type: "BOARD"; entityTypeId: string; groupByFieldKey: string }
+  | { type: "DASHBOARD"; entityTypeIds: string[] };
+
+export type AttendanceWorkflowConfig = {
       type: "WORKFLOW";
-      workflowKey: WorkflowKey;
+      workflowKey: "attendance";
       sourceEntityTypeId: string;
       targetEntityTypeId: string;
       personFieldId: string;
@@ -61,9 +65,27 @@ export type AppViewConfig =
       statusFieldId: string;
       defaultCheckInOptionId: string;
       observationFieldId?: string;
-    }
-  | { type: "BOARD"; entityTypeId: string; groupByFieldKey: string }
-  | { type: "DASHBOARD"; entityTypeIds: string[] };
+    };
+
+export type StateUpdateWorkflowConfig = {
+  type: "WORKFLOW";
+  workflowKey: "state-update";
+  sourceEntityTypeId: string;
+  targetEntityTypeId: string;
+  subjectFieldId: string;
+  stateFields: Array<{
+    defaultOptionId?: string;
+    fieldId: string;
+    label?: string;
+    required: boolean;
+  }>;
+  extraFieldIds: string[];
+  dateFieldId?: string;
+  uniqueness: {
+    mode: "none" | "subject" | "subject-date";
+  };
+  historyMode: "append" | "update-current";
+};
 
 export type AppViewInput = z.infer<typeof appViewCommonSchema> & {
   config: AppViewConfig;
@@ -93,11 +115,22 @@ export function getAppViewInput(formData: FormData) {
       groupByFieldKey: formData.get("groupByFieldKey"),
       dateFieldId: formData.get("dateFieldId"),
       defaultCheckInOptionId: formData.get("defaultCheckInOptionId") ?? formData.get("presentOptionId"),
+      extraFieldIds: formData.getAll("extraFieldIds"),
+      historyMode: formData.get("historyMode"),
       observationFieldId: formData.get("observationFieldId"),
       personFieldId: formData.get("personFieldId"),
+      requiredStateFieldIds: formData.getAll("requiredStateFieldIds"),
       sourceEntityTypeId: formData.get("sourceEntityTypeId"),
+      stateFieldIds: formData.getAll("stateFieldIds"),
+      stateFieldDefaultOptions: Object.fromEntries(
+        Array.from(formData.entries())
+          .filter(([key]) => key.startsWith("stateFieldDefaultOptionId:"))
+          .map(([key, value]) => [key.slice("stateFieldDefaultOptionId:".length), value]),
+      ),
       statusFieldId: formData.get("statusFieldId"),
+      subjectFieldId: formData.get("subjectFieldId"),
       targetEntityTypeId: formData.get("targetEntityTypeId"),
+      uniquenessMode: formData.get("uniquenessMode"),
       workflow: formData.get("workflow"),
       workflowKey: formData.get("workflowKey") ?? formData.get("workflow"),
     },
@@ -400,18 +433,39 @@ async function validateAppViewConfig({
         },
         targetFields: targetEntityType.fields,
       });
+      return {
+        type,
+        workflowKey: config.workflowKey,
+        sourceEntityTypeId: config.sourceEntityTypeId,
+        targetEntityTypeId: config.targetEntityTypeId,
+        personFieldId: config.personFieldId,
+        dateFieldId: config.dateFieldId,
+        statusFieldId: config.statusFieldId,
+        defaultCheckInOptionId: config.defaultCheckInOptionId,
+        ...(config.observationFieldId ? { observationFieldId: config.observationFieldId } : {}),
+      };
     }
+
+    validateStateUpdateAppViewFields({
+      config,
+      sourceEntityType: {
+        id: sourceEntityType.id,
+        name: sourceEntityType.name,
+      },
+      targetFields: targetEntityType.fields,
+    });
 
     return {
       type,
       workflowKey: config.workflowKey,
       sourceEntityTypeId: config.sourceEntityTypeId,
       targetEntityTypeId: config.targetEntityTypeId,
-      personFieldId: config.personFieldId,
-      dateFieldId: config.dateFieldId,
-      statusFieldId: config.statusFieldId,
-      defaultCheckInOptionId: config.defaultCheckInOptionId,
-      ...(config.observationFieldId ? { observationFieldId: config.observationFieldId } : {}),
+      subjectFieldId: config.subjectFieldId,
+      stateFields: config.stateFields,
+      extraFieldIds: config.extraFieldIds,
+      ...(config.dateFieldId ? { dateFieldId: config.dateFieldId } : {}),
+      uniqueness: config.uniqueness,
+      historyMode: config.historyMode,
     };
   }
 
@@ -445,10 +499,14 @@ const recordsConfigInputSchema = z.object({
   entityTypeId: z.string().trim().min(1, "Selecciona una entidad."),
 });
 
-const workflowConfigInputSchema = z.object({
+const workflowBaseConfigInputSchema = z.object({
   workflowKey: z.enum(workflowKeys),
   sourceEntityTypeId: z.string().trim().min(1, "Selecciona una entidad fuente."),
   targetEntityTypeId: z.string().trim().min(1, "Selecciona una entidad destino."),
+});
+
+const attendanceWorkflowConfigInputSchema = workflowBaseConfigInputSchema.extend({
+  workflowKey: z.literal("attendance"),
   personFieldId: z.string().trim().min(1, "Selecciona el campo Persona."),
   dateFieldId: z.string().trim().min(1, "Selecciona el campo Fecha."),
   statusFieldId: z.string().trim().min(1, "Selecciona el campo Estado."),
@@ -467,6 +525,25 @@ const workflowConfigInputSchema = z.object({
       .optional()
       .transform((value) => value || undefined),
   ),
+});
+
+const stateUpdateWorkflowConfigInputSchema = workflowBaseConfigInputSchema.extend({
+  workflowKey: z.literal("state-update"),
+  subjectFieldId: z.string().trim().min(1, "Selecciona el campo sujeto."),
+  stateFields: z.array(z.object({
+    defaultOptionId: z.string().trim().optional().transform((value) => value || undefined),
+    fieldId: z.string().trim().min(1),
+    required: z.boolean(),
+  })).min(1, "Selecciona al menos un campo de estado."),
+  extraFieldIds: z.array(z.string().trim().min(1)).default([]),
+  dateFieldId: z.preprocess(
+    (value) => value === null ? undefined : value,
+    z.string().trim().optional().transform((value) => value || undefined),
+  ),
+  uniqueness: z.object({
+    mode: z.enum(["none", "subject", "subject-date"]),
+  }),
+  historyMode: z.enum(["append", "update-current"]),
 });
 
 const boardConfigInputSchema = z.object({
@@ -521,15 +598,44 @@ async function requireEntityType(
 
 function parseWorkflowConfigInput(rawConfig: unknown) {
   if (!rawConfig || typeof rawConfig !== "object" || Array.isArray(rawConfig)) {
-    return workflowConfigInputSchema.parse(rawConfig);
+    return z.discriminatedUnion("workflowKey", [
+      attendanceWorkflowConfigInputSchema,
+      stateUpdateWorkflowConfigInputSchema,
+    ]).parse(rawConfig);
   }
 
   const raw = rawConfig as Record<string, unknown>;
+  const workflowKey = raw.workflowKey ?? raw.workflow;
 
-  return workflowConfigInputSchema.parse({
+  if (workflowKey === "state-update") {
+    const stateFieldIds = stringArray(raw.stateFieldIds ?? raw.stateFields);
+    const requiredStateFieldIds = new Set(stringArray(raw.requiredStateFieldIds));
+    const defaultOptions = isRecord(raw.stateFieldDefaultOptions)
+      ? raw.stateFieldDefaultOptions
+      : {};
+
+    return stateUpdateWorkflowConfigInputSchema.parse({
+      ...raw,
+      workflowKey,
+      extraFieldIds: stringArray(raw.extraFieldIds),
+      historyMode: raw.historyMode ?? "append",
+      stateFields: Array.isArray(raw.stateFields) && raw.stateFields.every(isRecord)
+        ? raw.stateFields
+        : stateFieldIds.map((fieldId) => ({
+            fieldId,
+            required: requiredStateFieldIds.has(fieldId),
+            defaultOptionId: defaultOptions[fieldId],
+          })),
+      uniqueness: isRecord(raw.uniqueness)
+        ? raw.uniqueness
+        : { mode: raw.uniquenessMode ?? "none" },
+    });
+  }
+
+  return attendanceWorkflowConfigInputSchema.parse({
     ...raw,
     defaultCheckInOptionId: raw.defaultCheckInOptionId ?? raw.presentOptionId,
-    workflowKey: raw.workflowKey ?? raw.workflow,
+    workflowKey,
   });
 }
 
@@ -539,7 +645,7 @@ function validateAttendanceAppViewFields({
   targetEntityType,
   targetFields,
 }: {
-  config: z.infer<typeof workflowConfigInputSchema>;
+  config: z.infer<typeof attendanceWorkflowConfigInputSchema>;
   sourceEntityType: { id: string; name: string };
   targetEntityType: { id: string; name: string };
   targetFields: Array<{
@@ -604,6 +710,101 @@ function validateAttendanceAppViewFields({
   }
 }
 
+function validateStateUpdateAppViewFields({
+  config,
+  sourceEntityType,
+  targetFields,
+}: {
+  config: z.infer<typeof stateUpdateWorkflowConfigInputSchema>;
+  sourceEntityType: { id: string; name: string };
+  targetFields: Array<{
+    config: Prisma.JsonValue | null;
+    id: string;
+    isActive: boolean;
+    multiple: boolean;
+    name: string;
+    options: Array<{ id: string; isActive: boolean }>;
+    type: string;
+  }>;
+}) {
+  const subjectField = requireActiveTargetField(targetFields, config.subjectFieldId, "Sujeto");
+
+  if (subjectField.type !== "RELATION") {
+    throw new AppViewConfigError("El campo sujeto debe ser de tipo relación.", "subjectFieldId");
+  }
+
+  if (!fieldRelationTargetsEntity(subjectField.config, sourceEntityType.id)) {
+    throw new AppViewConfigError(
+      `El campo sujeto debe relacionar con ${sourceEntityType.name}.`,
+      "subjectFieldId",
+    );
+  }
+
+  if (getRelationConfig(subjectField.config).relationKind !== "ONE") {
+    throw new AppViewConfigError("El campo sujeto debe ser una relación simple.", "subjectFieldId");
+  }
+
+  const stateFieldIds = new Set<string>();
+  for (const stateField of config.stateFields) {
+    if (stateFieldIds.has(stateField.fieldId)) {
+      throw new AppViewConfigError("No repitas campos de estado.", "stateFieldIds");
+    }
+    stateFieldIds.add(stateField.fieldId);
+    const field = requireActiveTargetField(targetFields, stateField.fieldId, "Estado");
+
+    if (field.type !== "SELECT" || field.multiple) {
+      throw new AppViewConfigError("Los campos de estado deben ser selección simple.", "stateFieldIds");
+    }
+
+    if (stateField.defaultOptionId) {
+      const option = field.options.find((item) => item.id === stateField.defaultOptionId);
+      if (!option || !option.isActive) {
+        throw new AppViewConfigError("La opción por defecto debe pertenecer al campo de estado y estar activa.");
+      }
+    }
+  }
+
+  if (config.dateFieldId) {
+    const dateField = requireActiveTargetField(targetFields, config.dateFieldId, "Fecha");
+    if (dateField.type !== "DATE") {
+      throw new AppViewConfigError("El campo Fecha debe ser de tipo fecha.", "dateFieldId");
+    }
+  }
+
+  if (config.uniqueness.mode === "subject-date" && !config.dateFieldId) {
+    throw new AppViewConfigError("La unicidad sujeto-fecha requiere un campo Fecha.", "dateFieldId");
+  }
+
+  const configuredFieldIds = new Set([
+    config.subjectFieldId,
+    config.dateFieldId,
+    ...config.stateFields.map((field) => field.fieldId),
+  ].filter(Boolean));
+  for (const extraFieldId of config.extraFieldIds) {
+    if (configuredFieldIds.has(extraFieldId)) {
+      throw new AppViewConfigError("Los campos extra no deben repetir sujeto, fecha ni estados.", "extraFieldIds");
+    }
+    const field = requireActiveTargetField(targetFields, extraFieldId, "Campo extra");
+    if (!stateUpdateExtraFieldTypes.has(field.type)) {
+      throw new AppViewConfigError("Ese tipo de campo extra no está soportado.", "extraFieldIds");
+    }
+  }
+}
+
+const stateUpdateExtraFieldTypes = new Set([
+  "TEXT",
+  "TEXTAREA",
+  "INTEGER",
+  "DECIMAL",
+  "MONEY",
+  "BOOLEAN",
+  "DATE",
+  "TIME",
+  "DATETIME",
+  "SELECT",
+  "RELATION",
+]);
+
 function requireActiveStatusOption(
   statusField: {
     id: string;
@@ -656,6 +857,18 @@ function logAttendanceValidationIssue(reason: string, details: Record<string, un
     reason,
     ...details,
   });
+}
+
+function stringArray(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function toJsonConfig(config: AppViewConfig): Prisma.InputJsonObject {

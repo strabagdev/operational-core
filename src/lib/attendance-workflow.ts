@@ -1,20 +1,19 @@
 import { Prisma, type EntityFieldType } from "@prisma/client";
 
-import {
-  buildValueChanges,
-  createAuditEvent,
-} from "@/lib/audit";
 import { userCanAccessAppView } from "@/lib/app-view-access";
 import { parseAppViewConfig, type AppViewConfig } from "@/lib/app-views";
 import { stableRecordRequestHash } from "@/lib/api-record-writes";
 import { badRequest, conflict, forbidden, notFound } from "@/lib/api-response";
-import { dateOnlyInputValue, dateOnlyToUtcDate } from "@/lib/date-only";
-import {
-  getRelationConfig,
-  type SerializedFieldValue,
-} from "@/lib/field-validation";
+import { dateOnlyToUtcDate } from "@/lib/date-only";
+import { getRelationConfig } from "@/lib/field-validation";
 import { prisma } from "@/lib/prisma";
-import { syncEntityRelations } from "@/lib/entity-records";
+import {
+  attendanceStateUpdateConfig,
+  getStateUpdateContextForConfig,
+  mapStateUpdateException,
+  saveStateUpdateEntry,
+  type StateUpdateResult,
+} from "@/lib/state-update-workflow";
 
 export type AttendanceEntryInput = {
   expectedUpdatedAt?: string;
@@ -87,7 +86,6 @@ type AttendanceContext = {
     name: string;
   };
   statusOptions: AttendanceStatusOption[];
-  statusOptionsById: Map<string, AttendanceStatusOption>;
   statusOptionsByValue: Map<string, AttendanceStatusOption>;
 };
 const attendanceSearchLimit = 20;
@@ -244,6 +242,15 @@ export async function saveAttendanceWorkflowDay({
       });
   const peopleById = new Map(people.map((person) => [person.id, person]));
   const results: AttendanceEntryResult[] = [];
+  const stateUpdateContext = await getStateUpdateContextForConfig({
+    appView: context.context.appView,
+    config: attendanceStateUpdateConfig(context.context.config),
+    contractId,
+  });
+
+  if (!stateUpdateContext.ok) {
+    return stateUpdateContext;
+  }
 
   for (const entry of parsed.body.entries) {
     const person = peopleById.get(entry.personRecordId);
@@ -258,17 +265,34 @@ export async function saveAttendanceWorkflowDay({
       continue;
     }
 
-    results.push(await saveAttendanceEntry({
+    const stateUpdateResult = await saveStateUpdateEntry({
       appId,
-      config: context.context.config,
+      context: stateUpdateContext.context,
       contractId,
-      date: parsed.body.date,
-      entry,
-      person,
-      statusOptionsById: context.context.statusOptionsById,
-      statusOptionsByValue: context.context.statusOptionsByValue,
-      targetEntityType: context.context.targetEntityType,
+      input: {
+        date: parsed.body.date,
+        dateValue: parsed.body.dateValue,
+        expectedUpdatedAt: entry.expectedUpdatedAt,
+        extraValues: context.context.config.observationFieldId
+          ? { [context.context.config.observationFieldId]: entry.observation ?? null }
+          : {},
+        overwrite: entry.overwrite === true,
+        states: { [context.context.config.statusFieldId]: entry.statusOptionId },
+        subjectRecordId: entry.personRecordId,
+      },
       userId,
+    }).catch((error) => mapStateUpdateException(error));
+
+    results.push(mapStateUpdateResultToAttendance({
+      personRecordId: entry.personRecordId,
+      result: stateUpdateResult.ok
+        ? stateUpdateResult.result
+        : {
+            code: "STATE_UPDATE_FAILED",
+            message: "No fue posible guardar la asistencia.",
+            result: "ERROR",
+          },
+      statusFieldId: context.context.config.statusFieldId,
     }));
   }
 
@@ -282,239 +306,50 @@ export async function saveAttendanceWorkflowDay({
   };
 }
 
-async function saveAttendanceEntry({
-  appId,
-  config,
-  contractId,
-  date,
-  entry,
-  person,
-  targetEntityType,
-  statusOptionsById,
-  statusOptionsByValue,
-  userId,
+function mapStateUpdateResultToAttendance({
+  personRecordId,
+  result,
+  statusFieldId,
 }: {
-  appId: string;
-  config: AttendanceConfig;
-  contractId: string;
-  date: Date;
-  entry: AttendanceEntryInput;
-  person: { displayName: string; id: string };
-  statusOptionsById: Map<string, AttendanceStatusOption>;
-  statusOptionsByValue: Map<string, AttendanceStatusOption>;
-  targetEntityType: AttendanceContext["targetEntityType"];
-  userId: string;
-}): Promise<AttendanceEntryResult> {
-  const requestedOption = statusOptionsById.get(entry.statusOptionId);
-
-  if (!requestedOption) {
+  personRecordId: string;
+  result: StateUpdateResult | { code: string; message: string; result: "ERROR" };
+  statusFieldId: string;
+}): AttendanceEntryResult {
+  if (result.result === "CREATED" || result.result === "UNCHANGED" || result.result === "UPDATED") {
     return {
-      code: "INVALID_STATUS_OPTION",
-      message: "El estado solicitado no pertenece al campo Estado configurado o está inactivo.",
-      personRecordId: entry.personRecordId,
-      result: "ERROR",
+      personRecordId,
+      recordId: result.recordId,
+      result: result.result,
     };
   }
 
-  const existing = (await findExistingAttendances({
-    config,
-    date,
-    personRecordIds: [person.id],
-    statusOptionsByValue,
-    targetEntityTypeId: targetEntityType.id,
-  }))[0];
-
-  if (!existing) {
-    const record = await createAttendanceRecord({
-      appId,
-      config,
-      contractId,
-      date,
-      entry,
-      person,
-      requestedOption,
-      targetEntityType,
-      userId,
-    });
+  if (result.result === "CONFLICT") {
+    const difference = result.differences.find((item) => item.fieldId === statusFieldId) ?? result.differences[0];
 
     return {
-      personRecordId: entry.personRecordId,
-      recordId: record.id,
-      result: "CREATED",
+      existing: {
+        recordId: result.existing.recordId,
+        statusLabel: difference?.existingLabel ?? null,
+        statusOptionId: difference?.existingOptionId ?? null,
+        updatedAt: result.existing.updatedAt,
+      },
+      personRecordId,
+      requested: {
+        statusLabel: difference?.requestedLabel ?? "",
+        statusOptionId: difference?.requestedOptionId ?? "",
+      },
+      result: "CONFLICT",
     };
   }
-
-  if (existing.statusOption?.id === entry.statusOptionId) {
-    return {
-      personRecordId: entry.personRecordId,
-      recordId: existing.record.id,
-      result: "UNCHANGED",
-    };
-  }
-
-  if (!entry.overwrite) {
-    return conflictResult(entry, existing, requestedOption);
-  }
-
-  if (!entry.expectedUpdatedAt) {
-    return {
-      code: "OVERWRITE_EXPECTATION_REQUIRED",
-      message: "overwrite requiere expectedUpdatedAt.",
-      personRecordId: entry.personRecordId,
-      result: "ERROR",
-    };
-  }
-
-  if (existing.record.updatedAt.toISOString() !== entry.expectedUpdatedAt) {
-    return conflictResult(entry, existing, requestedOption);
-  }
-
-  const record = await updateAttendanceRecord({
-    appId,
-    config,
-    contractId,
-    entry,
-    existing,
-    requestedOption,
-    targetEntityType,
-    userId,
-  });
 
   return {
-    personRecordId: entry.personRecordId,
-    recordId: record.id,
-    result: "UPDATED",
+    code: "code" in result && result.code === "INVALID_STATE_OPTION"
+      ? "INVALID_STATUS_OPTION"
+      : "code" in result ? result.code : "STATE_UPDATE_FAILED",
+    message: "message" in result ? result.message : "No fue posible guardar la asistencia.",
+    personRecordId,
+    result: "ERROR",
   };
-}
-
-async function createAttendanceRecord({
-  appId,
-  config,
-  contractId,
-  date,
-  entry,
-  person,
-  targetEntityType,
-  requestedOption,
-  userId,
-}: {
-  appId: string;
-  config: AttendanceConfig;
-  contractId: string;
-  date: Date;
-  entry: AttendanceEntryInput;
-  person: { displayName: string; id: string };
-  requestedOption: AttendanceStatusOption;
-  targetEntityType: AttendanceContext["targetEntityType"];
-  userId: string;
-}) {
-  return prisma.$transaction(async (tx) => {
-    const values = attendanceValues({ config, date, entry, requestedOption });
-    const displayName = attendanceDisplayName(person.displayName, date);
-    const record = await tx.entityRecord.create({
-      data: {
-        displayName,
-        entityTypeId: targetEntityType.id,
-      },
-    });
-
-    await writeAttendanceValues(tx, record.id, values);
-    await syncEntityRelations(tx, record.id, [{
-      fieldId: config.personFieldId,
-      targetRecordIds: [person.id],
-    }]);
-    await createAuditEvent(tx, {
-      actorUserId: userId,
-      action: "RECORD_CREATED",
-      changes: buildValueChanges({
-        fields: targetEntityType.fields,
-        oldValues: [],
-        newValues: values,
-      }),
-      contractId,
-      entityRecordId: record.id,
-      entityTypeId: targetEntityType.id,
-      metadata: {
-        apiExternalAppId: appId,
-        displayName: record.displayName,
-        workflowKey: "attendance",
-      },
-      summary: `Creó asistencia ${record.displayName}`,
-    });
-
-    return record;
-  });
-}
-
-function attendanceDisplayName(personDisplayName: string, date: Date) {
-  return `${personDisplayName} · ${formatAttendanceDate(date)}`;
-}
-
-function formatAttendanceDate(date: Date) {
-  return dateOnlyInputValue(date).split("-").reverse().join("-");
-}
-
-async function updateAttendanceRecord({
-  appId,
-  config,
-  contractId,
-  entry,
-  existing,
-  requestedOption,
-  targetEntityType,
-  userId,
-}: {
-  appId: string;
-  config: AttendanceConfig;
-  contractId: string;
-  entry: AttendanceEntryInput;
-  existing: ExistingAttendance;
-  requestedOption: AttendanceStatusOption;
-  targetEntityType: AttendanceContext["targetEntityType"];
-  userId: string;
-}) {
-  return prisma.$transaction(async (tx) => {
-    const mutableFieldIds = [
-      config.statusFieldId,
-      ...(config.observationFieldId ? [config.observationFieldId] : []),
-    ];
-    const newValues = attendanceMutableValues({ config, entry, requestedOption });
-
-    await tx.entityValue.deleteMany({
-      where: {
-        entityFieldId: { in: mutableFieldIds },
-        entityRecordId: existing.record.id,
-      },
-    });
-    await writeAttendanceValues(tx, existing.record.id, newValues);
-    const record = await tx.entityRecord.update({
-      data: {
-        displayName: existing.record.displayName,
-      },
-      where: { id: existing.record.id },
-    });
-
-    await createAuditEvent(tx, {
-      actorUserId: userId,
-      action: "RECORD_UPDATED",
-      changes: buildValueChanges({
-        fields: targetEntityType.fields.filter((field) => mutableFieldIds.includes(field.id)),
-        oldValues: existing.record.values,
-        newValues,
-      }),
-      contractId,
-      entityRecordId: existing.record.id,
-      entityTypeId: targetEntityType.id,
-      metadata: {
-        apiExternalAppId: appId,
-        displayName: record.displayName,
-        workflowKey: "attendance",
-      },
-      summary: `Actualizó asistencia ${record.displayName}`,
-    });
-
-    return record;
-  });
 }
 
 type ExistingAttendance = {
@@ -983,7 +818,6 @@ async function getAttendanceWorkflowContext({
       },
       targetEntityType,
       statusOptions: configValidation.statusOptions,
-      statusOptionsById: configValidation.statusOptionsById,
       statusOptionsByValue: configValidation.statusOptionsByValue,
     },
   };
@@ -1050,12 +884,11 @@ function validateAttendanceRuntimeConfig({
     };
   }
 
-  return {
-    ok: true as const,
-    statusOptions: statusOptions.statusOptions,
-    statusOptionsById: statusOptions.statusOptionsById,
-    statusOptionsByValue: statusOptions.statusOptionsByValue,
-  };
+	  return {
+	    ok: true as const,
+	    statusOptions: statusOptions.statusOptions,
+	    statusOptionsByValue: statusOptions.statusOptionsByValue,
+	  };
 }
 
 function fieldRelationTargetsEntity(config: Prisma.JsonValue | null, entityTypeId: string) {
@@ -1226,40 +1059,6 @@ function isIdempotencyConflict(error: unknown) {
   );
 }
 
-function attendanceValues({
-  config,
-  date,
-  entry,
-  requestedOption,
-}: {
-  config: AttendanceConfig;
-  date: Date;
-  entry: AttendanceEntryInput;
-  requestedOption: AttendanceStatusOption;
-}): SerializedFieldValue[] {
-  return [
-    { dateValue: date, fieldId: config.dateFieldId },
-    ...attendanceMutableValues({ config, entry, requestedOption }),
-  ];
-}
-
-function attendanceMutableValues({
-  config,
-  entry,
-  requestedOption,
-}: {
-  config: AttendanceConfig;
-  entry: AttendanceEntryInput;
-  requestedOption: AttendanceStatusOption;
-}): SerializedFieldValue[] {
-  return [
-    { fieldId: config.statusFieldId, textValue: requestedOption.value },
-    ...(config.observationFieldId && entry.observation
-      ? [{ fieldId: config.observationFieldId, textValue: entry.observation }]
-      : []),
-  ];
-}
-
 function getAttendanceStatusOptions({
   defaultCheckInOptionId,
   statusField,
@@ -1270,7 +1069,6 @@ function getAttendanceStatusOptions({
   | {
       ok: true;
       statusOptions: AttendanceStatusOption[];
-      statusOptionsById: Map<string, AttendanceStatusOption>;
       statusOptionsByValue: Map<string, AttendanceStatusOption>;
     }
   | { ok: false; message: string } {
@@ -1297,57 +1095,12 @@ function getAttendanceStatusOptions({
     value: option.value,
   }));
 
-  return {
-    ok: true,
-    statusOptions,
-    statusOptionsById: new Map(statusOptions.map((option) => [option.id, option])),
-    statusOptionsByValue: new Map(statusOptions.map((option) => [option.value, option])),
-  };
-}
-
-async function writeAttendanceValues(
-  tx: Prisma.TransactionClient,
-  recordId: string,
-  values: SerializedFieldValue[],
-) {
-  if (values.length === 0) {
-    return;
-  }
-
-  await tx.entityValue.createMany({
-    data: values.map((value) => ({
-      booleanValue: value.booleanValue ?? null,
-      dateValue: value.dateValue ?? null,
-      decimalValue: value.decimalValue ?? null,
-      entityFieldId: value.fieldId,
-      entityRecordId: recordId,
-      integerValue: value.integerValue ?? null,
-      jsonValue: value.jsonValue ?? Prisma.JsonNull,
-      textValue: value.textValue ?? null,
-    })),
-  });
-}
-
-function conflictResult(
-  entry: AttendanceEntryInput,
-  existing: ExistingAttendance,
-  requestedOption: AttendanceStatusOption,
-): AttendanceEntryResult {
-  return {
-    existing: {
-      recordId: existing.record.id,
-      statusLabel: existing.statusOption?.label ?? null,
-      statusOptionId: existing.statusOption?.id ?? null,
-      updatedAt: existing.record.updatedAt.toISOString(),
-    },
-    personRecordId: entry.personRecordId,
-    requested: {
-      statusLabel: requestedOption.label,
-      statusOptionId: requestedOption.id,
-    },
-    result: "CONFLICT",
-  };
-}
+	  return {
+	    ok: true,
+	    statusOptions,
+	    statusOptionsByValue: new Map(statusOptions.map((option) => [option.value, option])),
+	  };
+	}
 
 const attendanceSearchableTextFieldTypes = new Set<EntityFieldType>([
   "TEXT",

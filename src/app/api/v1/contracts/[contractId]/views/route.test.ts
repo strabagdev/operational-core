@@ -168,6 +168,24 @@ describe("GET /api/v1/contracts/[contractId]/views", () => {
         type: "WORKFLOW",
       }),
       appView({
+        config: {
+          sourceEntityTypeId: "equipment",
+          targetEntityTypeId: "equipment_state",
+          workflowKey: "state-update",
+          subjectFieldId: "subject_field",
+          stateFields: [
+            { fieldId: "operational_field", required: true, defaultOptionId: "operational_ok" },
+            { fieldId: "availability_field", required: false },
+          ],
+          extraFieldIds: ["observation_field"],
+          dateFieldId: "date_field",
+          uniqueness: { mode: "subject-date" },
+          historyMode: "update-current",
+        },
+        id: "state-workflow",
+        type: "WORKFLOW",
+      }),
+      appView({
         config: { entityTypeId: "board_entity", groupByFieldKey: "estado" },
         id: "board",
         type: "BOARD",
@@ -198,6 +216,23 @@ describe("GET /api/v1/contracts/[contractId]/views", () => {
               dateFieldId: "date_field",
               statusFieldId: "status_field",
               defaultCheckInOptionId: "present_option",
+            },
+            type: "WORKFLOW",
+          },
+          {
+            config: {
+              sourceEntityTypeId: "equipment",
+              targetEntityTypeId: "equipment_state",
+              workflowKey: "state-update",
+              subjectFieldId: "subject_field",
+              stateFields: [
+                { fieldId: "operational_field", required: true, defaultOptionId: "operational_ok" },
+                { fieldId: "availability_field", required: false },
+              ],
+              extraFieldIds: ["observation_field"],
+              dateFieldId: "date_field",
+              uniqueness: { mode: "subject-date" },
+              historyMode: "update-current",
             },
             type: "WORKFLOW",
           },

@@ -475,7 +475,7 @@ Config shapes by `type`:
   "RECORDS": {
     "entityTypeId": "entity_type_id"
   },
-  "WORKFLOW": {
+  "WORKFLOW attendance": {
     "workflowKey": "attendance",
     "sourceEntityTypeId": "source_entity_type_id",
     "targetEntityTypeId": "target_entity_type_id",
@@ -484,6 +484,25 @@ Config shapes by `type`:
     "statusFieldId": "status_select_field_id",
     "defaultCheckInOptionId": "field_option_id_for_default_check_in",
     "observationFieldId": "optional_textarea_field_id"
+  },
+  "WORKFLOW state-update": {
+    "workflowKey": "state-update",
+    "sourceEntityTypeId": "source_entity_type_id",
+    "targetEntityTypeId": "target_entity_type_id",
+    "subjectFieldId": "subject_relation_field_id",
+    "stateFields": [
+      {
+        "fieldId": "state_select_field_id",
+        "required": true,
+        "defaultOptionId": "optional_field_option_id"
+      }
+    ],
+    "extraFieldIds": ["optional_extra_field_id"],
+    "dateFieldId": "optional_date_field_id",
+    "uniqueness": {
+      "mode": "subject-date"
+    },
+    "historyMode": "update-current"
   },
   "BOARD": {
     "entityTypeId": "entity_type_id",
@@ -501,9 +520,53 @@ If a stored AppView has invalid config, Opco omits that view from the response a
 
 Important: AppView access controls which experience appears to the user. It is not a full data-permission boundary. Entity and record endpoints continue to perform their own server-side authorization. In this stage, data access is still based on contract membership because granular entity permissions do not exist yet.
 
+### GET /api/v1/contracts/:contractId/views/:appViewId/workflow/state-update
+
+Returns the configured generic state-update workflow. The AppView must be active, assigned to the authenticated user, belong to the contract, and use `workflowKey = "state-update"`.
+
+Query:
+
+```http
+?date=YYYY-MM-DD&search=excavadora&subjectRecordId=optional_source_record_id
+```
+
+`search` returns a limited set of matching source records, currently 20. It searches `displayName` and searchable fields of the source EntityType. `subjectRecordId` returns one selected source record. Without `search` or `subjectRecordId`, `subjects` is empty so clients do not accidentally fetch a full roster/catalog.
+
+The response includes workflow metadata, source/target entity metadata, configured state fields, active options, extra field definitions, current state per returned subject when uniqueness applies, latest events, and summary counts.
+
+State field option ids are `FieldOption.id` values. Clients should cache definitions/options for offline use, but POST must still send option ids, not labels or persisted option values.
+
+### POST /api/v1/contracts/:contractId/views/:appViewId/workflow/state-update
+
+Creates a state-update event or updates the current matching target record according to the AppView config.
+
+Request:
+
+```json
+{
+  "clientRequestId": "device-request-id",
+  "subjectRecordId": "source_record_id",
+  "date": "2026-08-22",
+  "states": {
+    "state_field_id": "field_option_id"
+  },
+  "extraValues": {
+    "extra_field_id": "Optional note"
+  },
+  "overwrite": false,
+  "expectedUpdatedAt": "2026-08-22T12:00:00.000Z"
+}
+```
+
+Only field ids configured on the AppView are accepted. `stateFields` must be single `SELECT` fields and the submitted option id must belong to the same field and be active. `extraValues` may include supported normal target fields: `TEXT`, `TEXTAREA`, `INTEGER`, `DECIMAL`, `MONEY`, `BOOLEAN`, `DATE`, `TIME`, `DATETIME`, `SELECT`, and `RELATION`.
+
+Results use `CREATED`, `UNCHANGED`, `UPDATED`, `CONFLICT`, and `ERROR`. When `historyMode = "update-current"` finds an existing record and any requested state differs, the result is `CONFLICT` and includes the existing `recordId`, `updatedAt`, requested states, and per-field differences. Overwriting requires `overwrite: true` plus an `expectedUpdatedAt` that still matches the current record.
+
+`clientRequestId` is optional but recommended for offline/retryable clients. It is scoped to the external app, workflow operation, and AppView. Reusing the same id with a different payload returns `IDEMPOTENCY_CONFLICT`.
+
 ### GET /api/v1/contracts/:contractId/views/:appViewId/workflow/attendance
 
-Returns the configured attendance workflow state for one date. The AppView must be active, assigned to the authenticated user, belong to the contract, and use `workflowKey = "attendance"`. Attendance statuses are the active `FieldOption` rows of the configured Estado field.
+Returns the configured attendance workflow state for one date. The AppView must be active, assigned to the authenticated user, belong to the contract, and use `workflowKey = "attendance"`. Attendance statuses are the active `FieldOption` rows of the configured Estado field. Attendance remains a compatibility adapter over the generic state-update engine and keeps its existing request/response shape.
 
 Query:
 
