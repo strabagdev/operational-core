@@ -58,6 +58,11 @@ type StateOption = {
   value: string;
 };
 
+type StateUpdateIdempotencyKey = {
+  operation: string;
+  requestHash: string;
+};
+
 export type StateUpdateContext = {
   appView: { id: string; name: string; slug: string };
   config: StateUpdateWorkflowConfig;
@@ -80,14 +85,17 @@ export type StateUpdateInput = {
 };
 
 export type StateUpdateResult =
-  | { recordId: string; result: "CREATED" | "UNCHANGED" | "UPDATED"; subjectRecordId: string }
+  | { recordId: string; result: "CREATED" | "UNCHANGED" | "UPDATED"; subjectRecordId: string; updatedAt: string }
   | {
       differences: Array<{
         fieldId: string;
-        existingOptionId: string | null;
-        existingLabel: string | null;
-        requestedOptionId: string;
-        requestedLabel: string;
+        kind: "extra" | "state";
+        currentValue: unknown;
+        requestedValue: unknown;
+        existingOptionId?: string | null;
+        existingLabel?: string | null;
+        requestedOptionId?: string;
+        requestedLabel?: string;
       }>;
       existing: { recordId: string; updatedAt: string };
       requested: { states: Record<string, string> };
@@ -241,6 +249,7 @@ export async function saveStateUpdateWorkflow({
     body: parsed.body,
     contractId,
     targetEntityTypeId: context.context.targetEntityType.id,
+    userId,
   });
   timing?.mark("idempotency_lookup");
 
@@ -248,10 +257,15 @@ export async function saveStateUpdateWorkflow({
     return idempotency;
   }
 
+  if (idempotency.replay) {
+    return { ok: true as const, data: idempotency.data };
+  }
+
   const result = await saveStateUpdateEntry({
     appId,
     context: context.context,
     contractId,
+    idempotencyKey: idempotency.key,
     input: parsed.body,
     timing,
     userId,
@@ -264,10 +278,7 @@ export async function saveStateUpdateWorkflow({
 
   return {
     ok: true as const,
-    data: {
-      appView: context.context.appView,
-      result: result.result,
-    },
+    data: stateUpdateResponseData(context.context, result.result),
   };
 }
 
@@ -275,6 +286,7 @@ export async function saveStateUpdateEntry({
   appId,
   context,
   contractId,
+  idempotencyKey,
   input,
   timing,
   userId,
@@ -282,6 +294,7 @@ export async function saveStateUpdateEntry({
   appId: string;
   context: StateUpdateContext;
   contractId: string;
+  idempotencyKey: StateUpdateIdempotencyKey | null;
   input: StateUpdateInput;
   timing?: StateUpdateWorkflowTiming;
   userId: string;
@@ -297,17 +310,35 @@ export async function saveStateUpdateEntry({
   timing?.mark("subject_lookup");
 
   if (!subject) {
-    return { ok: true, result: {
+    const result: StateUpdateResult = {
       code: "INVALID_SUBJECT",
       message: "El sujeto no pertenece a la entidad fuente configurada.",
       result: "ERROR",
       subjectRecordId: input.subjectRecordId,
-    }};
+    };
+
+    await persistStateUpdateResultIfNeeded({
+      appId,
+      context,
+      idempotencyKey,
+      input,
+      result,
+    });
+
+    return { ok: true, result };
   }
 
   const requested = resolveRequestedStates({ context, input });
 
   if (!requested.ok) {
+    await persistStateUpdateResultIfNeeded({
+      appId,
+      context,
+      idempotencyKey,
+      input,
+      result: requested.result,
+    });
+
     return { ok: true, result: requested.result };
   }
 
@@ -325,36 +356,103 @@ export async function saveStateUpdateEntry({
       appId,
       context,
       contractId,
+      idempotencyKey,
       input,
       requestedStates: requested.states,
       subject,
       userId,
     });
 
-    return { ok: true, result: { recordId: record.id, result: "CREATED", subjectRecordId: input.subjectRecordId } };
+    const result: StateUpdateResult = {
+      recordId: record.id,
+      result: "CREATED",
+      subjectRecordId: input.subjectRecordId,
+      updatedAt: record.updatedAt.toISOString(),
+    };
+
+    return { ok: true, result };
   }
 
-  const differences = diffRequestedStates({ context, existing, requestedStates: requested.states });
+  const mutation = await buildStateUpdateMutation({
+    context,
+    contractId,
+    existing,
+    input,
+    requestedStates: requested.states,
+    subjectRecordId: input.subjectRecordId,
+  });
+  const differences = diffRequestedIntent({
+    context,
+    existing,
+    input,
+    mutation,
+    requestedStates: requested.states,
+  });
 
   if (differences.length === 0) {
-    return { ok: true, result: { recordId: existing.record.id, result: "UNCHANGED", subjectRecordId: input.subjectRecordId } };
+    const result: StateUpdateResult = {
+      recordId: existing.record.id,
+      result: "UNCHANGED",
+      subjectRecordId: input.subjectRecordId,
+      updatedAt: existing.record.updatedAt.toISOString(),
+    };
+
+    await persistStateUpdateResultIfNeeded({
+      appId,
+      context,
+      idempotencyKey,
+      input,
+      result,
+    });
+
+    return { ok: true, result };
   }
 
   if (!input.overwrite) {
-    return { ok: true, result: conflictResult({ differences, existing, input }) };
+    const result = conflictResult({ differences, existing, input });
+
+    await persistStateUpdateResultIfNeeded({
+      appId,
+      context,
+      idempotencyKey,
+      input,
+      result,
+    });
+
+    return { ok: true, result };
   }
 
   if (!input.expectedUpdatedAt) {
-    return { ok: true, result: {
+    const result: StateUpdateResult = {
       code: "OVERWRITE_EXPECTATION_REQUIRED",
       message: "overwrite requiere expectedUpdatedAt.",
       result: "ERROR",
       subjectRecordId: input.subjectRecordId,
-    }};
+    };
+
+    await persistStateUpdateResultIfNeeded({
+      appId,
+      context,
+      idempotencyKey,
+      input,
+      result,
+    });
+
+    return { ok: true, result };
   }
 
   if (existing.record.updatedAt.toISOString() !== input.expectedUpdatedAt) {
-    return { ok: true, result: conflictResult({ differences, existing, input }) };
+    const result = conflictResult({ differences, existing, input });
+
+    await persistStateUpdateResultIfNeeded({
+      appId,
+      context,
+      idempotencyKey,
+      input,
+      result,
+    });
+
+    return { ok: true, result };
   }
 
   const record = await updateStateUpdateRecord({
@@ -362,12 +460,21 @@ export async function saveStateUpdateEntry({
     context,
     contractId,
     existing,
+    idempotencyKey,
     input,
+    mutation,
     requestedStates: requested.states,
     userId,
   });
 
-  return { ok: true, result: { recordId: record.id, result: "UPDATED", subjectRecordId: input.subjectRecordId } };
+  const result: StateUpdateResult = {
+    recordId: record.id,
+    result: "UPDATED",
+    subjectRecordId: input.subjectRecordId,
+    updatedAt: record.updatedAt.toISOString(),
+  };
+
+  return { ok: true, result };
 }
 
 async function getStateUpdateWorkflowContext({
@@ -833,21 +940,30 @@ async function findExistingStateUpdates({
   return Array.from(firstBySubject.values());
 }
 
-function diffRequestedStates({
+type StateUpdateMutation = Awaited<ReturnType<typeof buildStateUpdateMutation>>;
+
+function diffRequestedIntent({
   context,
   existing,
+  input,
+  mutation,
   requestedStates,
 }: {
   context: StateUpdateContext;
   existing: ExistingStateUpdate;
+  input: StateUpdateInput;
+  mutation: StateUpdateMutation;
   requestedStates: Record<string, StateOption>;
 }) {
   const differences: Array<{
     fieldId: string;
-    existingOptionId: string | null;
-    existingLabel: string | null;
-    requestedOptionId: string;
-    requestedLabel: string;
+    kind: "extra" | "state";
+    currentValue: unknown;
+    requestedValue: unknown;
+    existingOptionId?: string | null;
+    existingLabel?: string | null;
+    requestedOptionId?: string;
+    requestedLabel?: string;
   }> = [];
 
   for (const [fieldId, requestedOption] of Object.entries(requestedStates)) {
@@ -859,10 +975,28 @@ function diffRequestedStates({
     if (existingOption?.id !== requestedOption.id) {
       differences.push({
         fieldId,
+        kind: "state",
+        currentValue: existingOption?.id ?? null,
+        requestedValue: requestedOption.id,
         existingOptionId: existingOption?.id ?? null,
         existingLabel: existingOption?.label ?? null,
         requestedOptionId: requestedOption.id,
         requestedLabel: requestedOption.label,
+      });
+    }
+  }
+
+  for (const fieldId of Object.keys(input.extraValues)) {
+    const field = requireField(context, fieldId);
+    const currentValue = normalizedExistingExtraValue({ existing, field });
+    const requestedValue = normalizedMutationExtraValue({ field, mutation });
+
+    if (!stableValueEqual(currentValue, requestedValue)) {
+      differences.push({
+        fieldId,
+        kind: "extra",
+        currentValue,
+        requestedValue,
       });
     }
   }
@@ -877,10 +1011,13 @@ function conflictResult({
 }: {
   differences: Array<{
     fieldId: string;
-    existingOptionId: string | null;
-    existingLabel: string | null;
-    requestedOptionId: string;
-    requestedLabel: string;
+    kind: "extra" | "state";
+    currentValue: unknown;
+    requestedValue: unknown;
+    existingOptionId?: string | null;
+    existingLabel?: string | null;
+    requestedOptionId?: string;
+    requestedLabel?: string;
   }>;
   existing: ExistingStateUpdate;
   input: StateUpdateInput;
@@ -897,10 +1034,77 @@ function conflictResult({
   };
 }
 
+function normalizedExistingExtraValue({
+  existing,
+  field,
+}: {
+  existing: ExistingStateUpdate;
+  field: StateUpdateField;
+}) {
+  if (field.type === "RELATION") {
+    return existing.record.outgoingRelations
+      .filter((relation) => relation.sourceFieldId === field.id)
+      .map((relation) => relation.targetRecordId)
+      .sort();
+  }
+
+  return normalizedSerializedValue(
+    existing.record.values.find((value) => value.entityFieldId === field.id),
+    field,
+  );
+}
+
+function normalizedMutationExtraValue({
+  field,
+  mutation,
+}: {
+  field: StateUpdateField;
+  mutation: StateUpdateMutation;
+}) {
+  if (field.type === "RELATION") {
+    return (mutation.relations.find((relation) => relation.fieldId === field.id)?.targetRecordIds ?? [])
+      .slice()
+      .sort();
+  }
+
+  return normalizedSerializedValue(
+    mutation.values.find((value) => value.fieldId === field.id),
+    field,
+  );
+}
+
+function normalizedSerializedValue(value: {
+  booleanValue?: boolean | null;
+  dateValue?: Date | null;
+  decimalValue?: Prisma.Decimal | null;
+  integerValue?: number | null;
+  jsonValue?: Prisma.JsonValue | Prisma.InputJsonValue | typeof Prisma.JsonNull | null;
+  textValue?: string | null;
+} | undefined, field?: StateUpdateField) {
+  if (!value) return null;
+  if (value.textValue !== undefined && value.textValue !== null) {
+    if (field?.type === "SELECT") {
+      return field.options.find((option) => option.value === value.textValue)?.id ?? value.textValue;
+    }
+    return value.textValue;
+  }
+  if (value.integerValue !== undefined && value.integerValue !== null) return value.integerValue;
+  if (value.decimalValue !== undefined && value.decimalValue !== null) return value.decimalValue.toString();
+  if (value.booleanValue !== undefined && value.booleanValue !== null) return value.booleanValue;
+  if (value.dateValue !== undefined && value.dateValue !== null) return value.dateValue.toISOString();
+  if (value.jsonValue !== undefined && value.jsonValue !== null && value.jsonValue !== Prisma.JsonNull) return value.jsonValue;
+  return null;
+}
+
+function stableValueEqual(left: unknown, right: unknown) {
+  return stableRecordRequestHash(left) === stableRecordRequestHash(right);
+}
+
 async function createStateUpdateRecord({
   appId,
   context,
   contractId,
+  idempotencyKey,
   input,
   requestedStates,
   subject,
@@ -909,6 +1113,7 @@ async function createStateUpdateRecord({
   appId: string;
   context: StateUpdateContext;
   contractId: string;
+  idempotencyKey: StateUpdateIdempotencyKey | null;
   input: StateUpdateInput;
   requestedStates: Record<string, StateOption>;
   subject: { displayName: string; id: string };
@@ -955,6 +1160,22 @@ async function createStateUpdateRecord({
       summary: `Creó ${context.targetEntityType.name} ${record.displayName}`,
     });
 
+    const result: StateUpdateResult = {
+      recordId: record.id,
+      result: "CREATED",
+      subjectRecordId: input.subjectRecordId,
+      updatedAt: record.updatedAt.toISOString(),
+    };
+
+    await persistStateUpdateResultInTransaction(tx, {
+      appId,
+      context,
+      entityRecordId: record.id,
+      idempotencyKey,
+      input,
+      result,
+    });
+
     return record;
   });
 }
@@ -964,7 +1185,9 @@ async function updateStateUpdateRecord({
   context,
   contractId,
   existing,
+  idempotencyKey,
   input,
+  mutation,
   requestedStates,
   userId,
 }: {
@@ -972,26 +1195,24 @@ async function updateStateUpdateRecord({
   context: StateUpdateContext;
   contractId: string;
   existing: ExistingStateUpdate;
+  idempotencyKey: StateUpdateIdempotencyKey | null;
   input: StateUpdateInput;
+  mutation: StateUpdateMutation;
   requestedStates: Record<string, StateOption>;
   userId: string;
 }) {
-  const mutation = await buildStateUpdateMutation({
-    context,
-    contractId,
-    existing,
-    input,
-    requestedStates,
-    subjectRecordId: input.subjectRecordId,
-  });
-  const mutableFieldIds = workflowMutableFieldIds(context.config);
+  void requestedStates;
+  const mutableFieldIds = requestedMutableFieldIds(input);
+  const mutableRelationFieldIds = context.targetEntityType.fields
+    .filter((field) => mutableFieldIds.includes(field.id) && field.type === "RELATION")
+    .map((field) => field.id);
 
   return prisma.$transaction(async (tx) => {
     const relationChanges = await buildRelationChanges({
       contractId,
-      fields: context.targetEntityType.fields.filter((field) => mutableFieldIds.includes(field.id) && field.type === "RELATION"),
+      fields: context.targetEntityType.fields.filter((field) => mutableRelationFieldIds.includes(field.id)),
       oldRelations: existing.record.outgoingRelations,
-      newRelations: mutation.relations,
+      newRelations: mutation.relations.filter((relation) => mutableRelationFieldIds.includes(relation.fieldId)),
     });
 
     await tx.entityValue.deleteMany({
@@ -1001,7 +1222,11 @@ async function updateStateUpdateRecord({
       },
     });
     await writeEntityValues(tx, existing.record.id, mutation.values.filter((value) => mutableFieldIds.includes(value.fieldId)));
-    await syncEntityRelations(tx, existing.record.id, mutation.relations);
+    await syncEntityRelations(
+      tx,
+      existing.record.id,
+      mutation.relations.filter((relation) => mutableRelationFieldIds.includes(relation.fieldId)),
+    );
     const record = await tx.entityRecord.update({
       data: { displayName: existing.record.displayName },
       where: { id: existing.record.id },
@@ -1052,8 +1277,31 @@ async function updateStateUpdateRecord({
       });
     }
 
+    const result: StateUpdateResult = {
+      recordId: record.id,
+      result: "UPDATED",
+      subjectRecordId: input.subjectRecordId,
+      updatedAt: record.updatedAt.toISOString(),
+    };
+
+    await persistStateUpdateResultInTransaction(tx, {
+      appId,
+      context,
+      entityRecordId: record.id,
+      idempotencyKey,
+      input,
+      result,
+    });
+
     return record;
   });
+}
+
+function requestedMutableFieldIds(input: StateUpdateInput) {
+  return [
+    ...Object.keys(input.states),
+    ...Object.keys(input.extraValues),
+  ];
 }
 
 async function buildStateUpdateMutation({
@@ -1368,13 +1616,6 @@ function workflowValueFieldIds(config: StateUpdateWorkflowConfig) {
   ];
 }
 
-function workflowMutableFieldIds(config: StateUpdateWorkflowConfig) {
-  return [
-    ...workflowValueFieldIds(config),
-    config.subjectFieldId,
-  ];
-}
-
 function stateUpdateValueValidationFields(context: StateUpdateContext) {
   const stateRequiredByFieldId = new Map(
     context.config.stateFields.map((field) => [field.fieldId, field.required]),
@@ -1431,26 +1672,31 @@ async function registerStateUpdateIdempotency({
   body,
   contractId,
   targetEntityTypeId,
+  userId,
 }: {
   appId: string;
   appViewId: string;
   body: StateUpdateInput;
   contractId: string;
   targetEntityTypeId: string;
+  userId: string;
 }) {
   if (!body.clientRequestId) {
-    return { ok: true as const };
+    return { key: null, ok: true as const, replay: false as const };
   }
 
-  const operation = `workflow:state-update:${contractId}:${appViewId}`;
-  const requestHash = stableRecordRequestHash({
-    date: body.dateValue ?? null,
-    expectedUpdatedAt: body.expectedUpdatedAt ?? null,
-    extraValues: body.extraValues,
-    overwrite: body.overwrite,
-    states: body.states,
-    subjectRecordId: body.subjectRecordId,
+  const operation = stateUpdateIdempotencyOperation({ appViewId, contractId });
+  const requestHash = canonicalStateUpdateRequestHash({
+    appViewId,
+    body,
+    contractId,
+    userId,
   });
+
+  const key = {
+    operation,
+    requestHash,
+  };
 
   try {
     await prisma.apiIdempotencyKey.create({
@@ -1464,32 +1710,317 @@ async function registerStateUpdateIdempotency({
       },
     });
 
-    return { ok: true as const };
+    return { key, ok: true as const, replay: false as const };
   } catch (error) {
     if (!isIdempotencyConflict(error)) {
       throw error;
     }
 
-    const existing = await prisma.apiIdempotencyKey.findUnique({
-      select: { requestHash: true },
-      where: {
-        externalAppId_operation_clientRequestId: {
-          clientRequestId: body.clientRequestId,
-          externalAppId: appId,
-          operation,
-        },
-      },
+    const replay = await resolveStateUpdateIdempotencyReplay({
+      appId,
+      clientRequestId: body.clientRequestId,
+      operation,
+      requestHash,
     });
 
-    if (existing?.requestHash === requestHash) {
-      return { ok: true as const };
+    if (!replay.ok) {
+      return replay;
     }
 
+    return { key, ok: true as const, replay: true as const, data: replay.data };
+  }
+}
+
+function stateUpdateIdempotencyOperation({
+  appViewId,
+  contractId,
+}: {
+  appViewId: string;
+  contractId: string;
+}) {
+  return `workflow:state-update:${contractId}:${appViewId}`;
+}
+
+function canonicalStateUpdateRequestHash({
+  appViewId,
+  body,
+  contractId,
+  userId,
+}: {
+  appViewId: string;
+  body: StateUpdateInput;
+  contractId: string;
+  userId: string;
+}) {
+  return stableRecordRequestHash({
+    appViewId,
+    contractId,
+    date: body.dateValue ?? null,
+    expectedUpdatedAt: body.expectedUpdatedAt ?? null,
+    extraValues: Object.fromEntries(Object.entries(body.extraValues).sort(([left], [right]) => left.localeCompare(right))),
+    overwrite: body.overwrite,
+    states: Object.fromEntries(Object.entries(body.states).sort(([left], [right]) => left.localeCompare(right))),
+    subjectRecordId: body.subjectRecordId,
+    userId,
+  });
+}
+
+async function resolveStateUpdateIdempotencyReplay({
+  appId,
+  clientRequestId,
+  operation,
+  requestHash,
+}: {
+  appId: string;
+  clientRequestId: string;
+  operation: string;
+  requestHash: string;
+}) {
+  const firstRead = await readStateUpdateIdempotency({
+    appId,
+    clientRequestId,
+    operation,
+  });
+
+  if (!firstRead) {
     return {
       ok: false as const,
-      response: conflict("clientRequestId ya fue usado con otro payload.", "IDEMPOTENCY_CONFLICT"),
+      response: internalError("No se pudo resolver la idempotencia.", "IDEMPOTENCY_RESOLUTION_FAILED"),
     };
   }
+
+  if (firstRead.requestHash !== requestHash) {
+    return {
+      ok: false as const,
+      response: conflict("clientRequestId ya fue usado con otro payload.", "IDEMPOTENCY_KEY_REUSED"),
+    };
+  }
+
+  const existing = firstRead.responseBody
+    ? firstRead
+    : await waitForStateUpdateIdempotencyResult({
+        appId,
+        clientRequestId,
+        operation,
+      });
+
+  if (!existing) {
+    return {
+      ok: false as const,
+      response: internalError("No se pudo resolver la idempotencia.", "IDEMPOTENCY_RESOLUTION_FAILED"),
+    };
+  }
+
+  if (!isStateUpdateReplayData(existing.responseBody)) {
+    return {
+      ok: false as const,
+      response: conflict(
+        "La llave idempotente existe pero no tiene resultado replayable.",
+        "IDEMPOTENCY_RESULT_UNAVAILABLE",
+      ),
+    };
+  }
+
+  return {
+    ok: true as const,
+    data: existing.responseBody as { appView: StateUpdateContext["appView"]; result: StateUpdateResult },
+  };
+}
+
+async function readStateUpdateIdempotency({
+  appId,
+  clientRequestId,
+  operation,
+}: {
+  appId: string;
+  clientRequestId: string;
+  operation: string;
+}) {
+  return prisma.apiIdempotencyKey.findUnique({
+    select: { requestHash: true, responseBody: true },
+    where: {
+      externalAppId_operation_clientRequestId: {
+        clientRequestId,
+        externalAppId: appId,
+        operation,
+      },
+    },
+  });
+}
+
+async function waitForStateUpdateIdempotencyResult({
+  appId,
+  clientRequestId,
+  operation,
+}: {
+  appId: string;
+  clientRequestId: string;
+  operation: string;
+}) {
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    const existing = await readStateUpdateIdempotency({ appId, clientRequestId, operation });
+
+    if (!existing || existing.responseBody || attempt === 11) {
+      return existing;
+    }
+
+    await sleep(50);
+  }
+
+  return null;
+}
+
+async function persistStateUpdateResultIfNeeded({
+  appId,
+  context,
+  idempotencyKey,
+  input,
+  result,
+}: {
+  appId: string;
+  context: StateUpdateContext;
+  idempotencyKey: StateUpdateIdempotencyKey | null;
+  input: StateUpdateInput;
+  result: StateUpdateResult;
+}) {
+  if (!input.clientRequestId || !idempotencyKey) return;
+
+  await prisma.apiIdempotencyKey.update({
+    data: stateUpdateIdempotencyResultData({
+      context,
+      entityRecordId: stateUpdateResultRecordId(result),
+      result,
+    }),
+    where: {
+      externalAppId_operation_clientRequestId: {
+        clientRequestId: input.clientRequestId,
+        externalAppId: appId,
+        operation: idempotencyKey.operation,
+      },
+    },
+  });
+}
+
+async function persistStateUpdateResultInTransaction(
+  tx: Prisma.TransactionClient,
+  {
+    appId,
+    context,
+    entityRecordId,
+    idempotencyKey,
+    input,
+    result,
+  }: {
+    appId: string;
+    context: StateUpdateContext;
+    entityRecordId: string | null;
+    idempotencyKey: StateUpdateIdempotencyKey | null;
+    input: StateUpdateInput;
+    result: StateUpdateResult;
+  },
+) {
+  if (!input.clientRequestId || !idempotencyKey) return;
+
+  await tx.apiIdempotencyKey.update({
+    data: stateUpdateIdempotencyResultData({ context, entityRecordId, result }),
+    where: {
+      externalAppId_operation_clientRequestId: {
+        clientRequestId: input.clientRequestId,
+        externalAppId: appId,
+        operation: idempotencyKey.operation,
+      },
+    },
+  });
+}
+
+function stateUpdateIdempotencyResultData({
+  context,
+  entityRecordId,
+  result,
+}: {
+  context: StateUpdateContext;
+  entityRecordId: string | null;
+  result: StateUpdateResult;
+}) {
+  return {
+    completedAt: new Date(),
+    entityRecordId,
+    responseBody: stateUpdateResponseData(context, result) as Prisma.InputJsonValue,
+  };
+}
+
+function stateUpdateResponseData(context: StateUpdateContext, result: StateUpdateResult) {
+  return {
+    appView: context.appView,
+    result,
+  };
+}
+
+function stateUpdateResultRecordId(result: StateUpdateResult) {
+  if (result.result === "CREATED" || result.result === "UPDATED" || result.result === "UNCHANGED") {
+    return result.recordId;
+  }
+
+  if (result.result === "CONFLICT") {
+    return result.existing.recordId;
+  }
+
+  return null;
+}
+
+function isStateUpdateReplayData(value: Prisma.JsonValue | null) {
+  if (!isJsonObject(value)) return false;
+  if (!isJsonObject(value.appView)) return false;
+  if (!isNonEmptyString(value.appView.id) || !isNonEmptyString(value.appView.name) || !isNonEmptyString(value.appView.slug)) {
+    return false;
+  }
+  if (!isJsonObject(value.result)) return false;
+
+  const result = value.result;
+
+  if (!isNonEmptyString(result.subjectRecordId) || !isNonEmptyString(result.result)) {
+    return false;
+  }
+
+  if (result.result === "CREATED" || result.result === "UPDATED" || result.result === "UNCHANGED") {
+    return isNonEmptyString(result.recordId) && isIsoDateTimeString(result.updatedAt);
+  }
+
+  if (result.result === "CONFLICT") {
+    return (
+      Array.isArray(result.differences) &&
+      isJsonObject(result.existing) &&
+      isNonEmptyString(result.existing.recordId) &&
+      isIsoDateTimeString(result.existing.updatedAt) &&
+      isJsonObject(result.requested) &&
+      isJsonObject(result.requested.states)
+    );
+  }
+
+  if (result.result === "ERROR") {
+    return isNonEmptyString(result.code) && isNonEmptyString(result.message);
+  }
+
+  return false;
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isJsonObject(value: unknown): value is Record<string, Prisma.JsonValue> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function isIsoDateTimeString(value: unknown): value is string {
+  if (!isNonEmptyString(value)) return false;
+  const timestamp = Date.parse(value);
+
+  return !Number.isNaN(timestamp) && new Date(timestamp).toISOString() === value;
 }
 
 function isIdempotencyConflict(error: unknown) {

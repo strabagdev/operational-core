@@ -3,7 +3,7 @@ import { Prisma, type EntityFieldType } from "@prisma/client";
 import { userCanAccessAppView } from "@/lib/app-view-access";
 import { parseAppViewConfig, type AppViewConfig } from "@/lib/app-views";
 import { stableRecordRequestHash } from "@/lib/api-record-writes";
-import { badRequest, conflict, forbidden, notFound } from "@/lib/api-response";
+import { badRequest, conflict, forbidden, internalError, notFound } from "@/lib/api-response";
 import { dateOnlyToUtcDate } from "@/lib/date-only";
 import { getRelationConfig } from "@/lib/field-validation";
 import { prisma } from "@/lib/prisma";
@@ -213,18 +213,21 @@ export async function saveAttendanceWorkflowDay({
     return parsed;
   }
 
-  if (parsed.body.clientRequestId) {
-    const idempotency = await registerAttendanceRequestIdempotency({
-      appId,
-      appViewId,
-      body: parsed.body,
-      contractId,
-      targetEntityTypeId: context.context.targetEntityType.id,
-    });
+  const idempotency = await registerAttendanceRequestIdempotency({
+    appId,
+    appViewId,
+    body: parsed.body,
+    contractId,
+    targetEntityTypeId: context.context.targetEntityType.id,
+    userId,
+  });
 
-    if (!idempotency.ok) {
-      return idempotency;
-    }
+  if (!idempotency.ok) {
+    return idempotency;
+  }
+
+  if (idempotency.replay) {
+    return { ok: true as const, data: idempotency.data };
   }
 
   const personIds = Array.from(new Set(parsed.body.entries.map((entry) => entry.personRecordId)));
@@ -269,6 +272,7 @@ export async function saveAttendanceWorkflowDay({
       appId,
       context: stateUpdateContext.context,
       contractId,
+      idempotencyKey: null,
       input: {
         date: parsed.body.date,
         dateValue: parsed.body.dateValue,
@@ -296,13 +300,25 @@ export async function saveAttendanceWorkflowDay({
     }));
   }
 
+  const data = {
+    appView: context.context.appView,
+    date: parsed.body.dateValue,
+    results,
+  };
+
+  if (idempotency.key) {
+    await persistAttendanceIdempotencyResult({
+      appId,
+      clientRequestId: parsed.body.clientRequestId,
+      data,
+      entityRecordId: firstAttendanceRecordId(results),
+      operation: idempotency.key.operation,
+    });
+  }
+
   return {
     ok: true as const,
-    data: {
-      appView: context.context.appView,
-      date: parsed.body.dateValue,
-      results,
-    },
+    data,
   };
 }
 
@@ -991,6 +1007,7 @@ async function registerAttendanceRequestIdempotency({
   body,
   contractId,
   targetEntityTypeId,
+  userId,
 }: {
   appId: string;
   appViewId: string;
@@ -1001,16 +1018,19 @@ async function registerAttendanceRequestIdempotency({
   };
   contractId: string;
   targetEntityTypeId: string;
+  userId: string;
 }) {
   if (!body.clientRequestId) {
-    return { ok: true as const };
+    return { key: null, ok: true as const, replay: false as const };
   }
 
   const operation = `workflow:attendance:${contractId}:${appViewId}`;
   const requestHash = stableRecordRequestHash({
     date: body.dateValue,
     entries: body.entries,
+    userId,
   });
+  const key = { operation, requestHash };
 
   try {
     await prisma.apiIdempotencyKey.create({
@@ -1024,32 +1044,124 @@ async function registerAttendanceRequestIdempotency({
       },
     });
 
-    return { ok: true as const };
+    return { key, ok: true as const, replay: false as const };
   } catch (error) {
     if (!isIdempotencyConflict(error)) {
       throw error;
     }
 
-    const existing = await prisma.apiIdempotencyKey.findUnique({
-      select: { requestHash: true },
-      where: {
-        externalAppId_operation_clientRequestId: {
-          clientRequestId: body.clientRequestId,
-          externalAppId: appId,
-          operation,
-        },
-      },
+    const replay = await resolveAttendanceIdempotencyReplay({
+      appId,
+      clientRequestId: body.clientRequestId,
+      operation,
+      requestHash,
     });
 
-    if (existing?.requestHash === requestHash) {
-      return { ok: true as const };
+    if (!replay.ok) {
+      return replay;
     }
 
+    return { key, ok: true as const, replay: true as const, data: replay.data };
+  }
+}
+
+async function resolveAttendanceIdempotencyReplay({
+  appId,
+  clientRequestId,
+  operation,
+  requestHash,
+}: {
+  appId: string;
+  clientRequestId: string;
+  operation: string;
+  requestHash: string;
+}) {
+  const existing = await prisma.apiIdempotencyKey.findUnique({
+    select: { requestHash: true, responseBody: true },
+    where: {
+      externalAppId_operation_clientRequestId: {
+        clientRequestId,
+        externalAppId: appId,
+        operation,
+      },
+    },
+  });
+
+  if (!existing) {
     return {
       ok: false as const,
-      response: conflict("clientRequestId ya fue usado con otro payload.", "IDEMPOTENCY_CONFLICT"),
+      response: internalError("No se pudo resolver la idempotencia.", "IDEMPOTENCY_RESOLUTION_FAILED"),
     };
   }
+
+  if (existing.requestHash !== requestHash) {
+    return {
+      ok: false as const,
+      response: conflict("clientRequestId ya fue usado con otro payload.", "IDEMPOTENCY_KEY_REUSED"),
+    };
+  }
+
+  if (!isAttendanceReplayData(existing.responseBody)) {
+    return {
+      ok: false as const,
+      response: conflict(
+        "La llave idempotente existe pero no tiene resultado replayable.",
+        "IDEMPOTENCY_RESULT_UNAVAILABLE",
+      ),
+    };
+  }
+
+  return { ok: true as const, data: existing.responseBody };
+}
+
+async function persistAttendanceIdempotencyResult({
+  appId,
+  clientRequestId,
+  data,
+  entityRecordId,
+  operation,
+}: {
+  appId: string;
+  clientRequestId?: string;
+  data: { appView: { id: string; name: string; slug: string }; date: string; results: AttendanceEntryResult[] };
+  entityRecordId: string | null;
+  operation: string;
+}) {
+  if (!clientRequestId) return;
+
+  await prisma.apiIdempotencyKey.update({
+    data: {
+      completedAt: new Date(),
+      entityRecordId,
+      responseBody: data as Prisma.InputJsonValue,
+    },
+    where: {
+      externalAppId_operation_clientRequestId: {
+        clientRequestId,
+        externalAppId: appId,
+        operation,
+      },
+    },
+  });
+}
+
+function firstAttendanceRecordId(results: AttendanceEntryResult[]) {
+  return results.find((result) => "recordId" in result)?.recordId ?? null;
+}
+
+function isAttendanceReplayData(value: Prisma.JsonValue | null): value is {
+  appView: { id: string; name: string; slug: string };
+  date: string;
+  results: AttendanceEntryResult[];
+} {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      !Array.isArray(value) &&
+      "appView" in value &&
+      "date" in value &&
+      "results" in value,
+  );
 }
 
 function isIdempotencyConflict(error: unknown) {

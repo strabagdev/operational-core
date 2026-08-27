@@ -16,6 +16,7 @@ vi.mock("@/lib/prisma", () => ({
     apiIdempotencyKey: {
       create: vi.fn(),
       findUnique: vi.fn(),
+      update: vi.fn(),
     },
     appView: {
       findFirst: vi.fn(),
@@ -33,6 +34,7 @@ vi.mock("@/lib/prisma", () => ({
 
 const userCanAccessAppViewMock = vi.mocked(userCanAccessAppView);
 const apiIdempotencyCreate = vi.mocked(prisma.apiIdempotencyKey.create);
+const apiIdempotencyUpdate = vi.mocked(prisma.apiIdempotencyKey.update);
 const appViewFindFirst = vi.mocked(prisma.appView.findFirst);
 const entityRecordCount = vi.mocked(prisma.entityRecord.count);
 const entityRecordFindMany = vi.mocked(prisma.entityRecord.findMany);
@@ -92,14 +94,17 @@ beforeEach(() => {
   tx.entityRecord.create.mockResolvedValue({
     displayName: "Ana · 22-08-2026",
     id: "attendance_new",
+    updatedAt: new Date("2026-08-22T12:10:00.000Z"),
   });
   tx.entityRecord.update.mockResolvedValue({
     displayName: "Ana · 22-08-2026",
     id: "attendance_existing",
+    updatedAt: new Date("2026-08-22T12:30:00.000Z"),
   });
   tx.entityRelation.findMany.mockResolvedValue([]);
   transaction.mockImplementation(async (callback) => callback(tx as never));
   apiIdempotencyCreate.mockResolvedValue({ id: "idempotency_1" } as never);
+  apiIdempotencyUpdate.mockResolvedValue({ id: "idempotency_1" } as never);
 });
 
 describe("attendance workflow dynamic status policy", () => {

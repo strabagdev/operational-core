@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { userCanAccessAppView } from "@/lib/app-view-access";
@@ -17,6 +18,7 @@ vi.mock("@/lib/prisma", () => ({
     apiIdempotencyKey: {
       create: vi.fn(),
       findUnique: vi.fn(),
+      update: vi.fn(),
     },
     appView: {
       findFirst: vi.fn(),
@@ -40,6 +42,7 @@ const entityTypeFindFirst = vi.mocked(prisma.entityType.findFirst);
 const transaction = vi.mocked(prisma.$transaction);
 
 const tx = {
+  apiIdempotencyKey: { update: vi.fn() },
   auditEvent: { create: vi.fn() },
   entityRecord: {
     create: vi.fn(),
@@ -67,11 +70,22 @@ beforeEach(() => {
   }) as never);
   entityRecordCount.mockResolvedValue(0 as never);
   entityRecordFindMany.mockImplementation(defaultRecordFindMany());
-  tx.entityRecord.create.mockResolvedValue({ displayName: "Excavadora · 22-08-2026", id: "state_new" });
-  tx.entityRecord.update.mockResolvedValue({ displayName: "Excavadora · 22-08-2026", id: "state_existing" });
+  tx.entityRecord.create.mockResolvedValue({
+    displayName: "Excavadora · 22-08-2026",
+    id: "state_new",
+    updatedAt: new Date("2026-08-22T12:10:00.000Z"),
+  });
+  tx.entityRecord.update.mockResolvedValue({
+    displayName: "Excavadora · 22-08-2026",
+    id: "state_existing",
+    updatedAt: new Date("2026-08-22T12:30:00.000Z"),
+  });
   tx.entityRelation.findMany.mockResolvedValue([]);
+  tx.apiIdempotencyKey.update.mockResolvedValue({ id: "idem_1" });
   transaction.mockImplementation(async (callback) => callback(tx as never));
   vi.mocked(prisma.apiIdempotencyKey.create).mockResolvedValue({ id: "idem_1" } as never);
+  vi.mocked(prisma.apiIdempotencyKey.findUnique).mockResolvedValue(null as never);
+  vi.mocked(prisma.apiIdempotencyKey.update).mockResolvedValue({ id: "idem_1" } as never);
 });
 
 describe("state-update workflow runtime", () => {
@@ -113,7 +127,13 @@ describe("state-update workflow runtime", () => {
 
     expect(result).toMatchObject({
       ok: true,
-      data: { result: { recordId: "state_new", result: "CREATED" } },
+      data: {
+        result: {
+          recordId: "state_new",
+          result: "CREATED",
+          updatedAt: "2026-08-22T12:10:00.000Z",
+        },
+      },
     });
     expect(tx.entityRecord.create).toHaveBeenCalled();
   });
@@ -160,11 +180,13 @@ describe("state-update workflow runtime", () => {
           differences: [
             {
               fieldId: "operational_field",
+              kind: "state",
               existingOptionId: "operational_ok",
               requestedOptionId: "operational_down",
             },
             {
               fieldId: "availability_field",
+              kind: "state",
               existingOptionId: "availability_yes",
               requestedOptionId: "availability_no",
             },
@@ -186,16 +208,446 @@ describe("state-update workflow runtime", () => {
 
     expect(result).toMatchObject({
       ok: true,
-      data: { result: { recordId: "state_existing", result: "UPDATED" } },
+      data: {
+        result: {
+          recordId: "state_existing",
+          result: "UPDATED",
+          updatedAt: "2026-08-22T12:30:00.000Z",
+        },
+      },
     });
     expect(tx.entityValue.deleteMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({
         entityFieldId: expect.objectContaining({
-          in: expect.arrayContaining(["operational_field", "availability_field", "observation_field", "date_field", "subject_field"]),
+          in: ["operational_field"],
         }),
       }),
     }));
     expect(tx.entityRecord.update).toHaveBeenCalled();
+  });
+
+  it("replays the stored state-update response for the same clientRequestId and payload", async () => {
+    const replayData = {
+      appView: { id: "view_state", name: "Estado equipos", slug: "estado-equipos" },
+      result: {
+        recordId: "state_new",
+        result: "CREATED",
+        subjectRecordId: "equipment_1",
+        updatedAt: "2026-08-22T12:10:00.000Z",
+      },
+    };
+
+    vi.mocked(prisma.apiIdempotencyKey.create).mockRejectedValueOnce(idempotencyUniqueError());
+    vi.mocked(prisma.apiIdempotencyKey.findUnique).mockResolvedValueOnce({
+      requestHash: "d57f9fef9f4edc4236bf07ecbe4a820a3ec0da57fce9a19afb558f14994686e3",
+      responseBody: replayData,
+    } as never);
+
+    const result = await saveStateUpdateWorkflow(saveBody({
+      clientRequestId: "request_1",
+      states: { operational_field: "operational_ok" },
+    }));
+
+    expect(result).toEqual({ ok: true, data: replayData });
+    expect(tx.entityRecord.create).not.toHaveBeenCalled();
+    expect(tx.auditEvent.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects reuse of a state-update idempotency key with another payload", async () => {
+    vi.mocked(prisma.apiIdempotencyKey.create).mockRejectedValueOnce(idempotencyUniqueError());
+    vi.mocked(prisma.apiIdempotencyKey.findUnique).mockResolvedValueOnce({
+      requestHash: "different",
+      responseBody: null,
+    } as never);
+
+    const result = await saveStateUpdateWorkflow(saveBody({
+      clientRequestId: "request_1",
+      states: { operational_field: "operational_ok" },
+    }));
+
+    expect(result).toMatchObject({ ok: false, response: expect.objectContaining({ status: 409 }) });
+    await expect(result.ok ? null : result.response.json()).resolves.toMatchObject({
+      error: { code: "IDEMPOTENCY_KEY_REUSED" },
+      ok: false,
+    });
+    expect(tx.entityRecord.create).not.toHaveBeenCalled();
+  });
+
+  it("allows conflict resolution with a new clientRequestId while rejecting changed payload for the original key", async () => {
+    mockExistingState([existingState()]);
+
+    const conflictResult = await saveStateUpdateWorkflow(saveBody({
+      clientRequestId: "conflict_key",
+      states: { operational_field: "operational_down" },
+    }));
+    const originalHash = vi.mocked(prisma.apiIdempotencyKey.create).mock.calls[0]?.[0]?.data?.requestHash;
+
+    expect(conflictResult).toMatchObject({
+      ok: true,
+      data: { result: { result: "CONFLICT" } },
+    });
+    expect(tx.entityRecord.update).not.toHaveBeenCalled();
+    expect(prisma.apiIdempotencyKey.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        responseBody: expect.objectContaining({ result: expect.objectContaining({ result: "CONFLICT" }) }),
+      }),
+    }));
+
+    const overwriteResult = await saveStateUpdateWorkflow(saveBody({
+      clientRequestId: "overwrite_key",
+      expectedUpdatedAt: "2026-08-22T12:00:00.000Z",
+      overwrite: true,
+      states: { operational_field: "operational_down" },
+    }));
+
+    expect(overwriteResult).toMatchObject({
+      ok: true,
+      data: { result: { result: "UPDATED", recordId: "state_existing" } },
+    });
+    expect(tx.entityRecord.update).toHaveBeenCalledTimes(1);
+
+    vi.mocked(prisma.apiIdempotencyKey.create).mockRejectedValueOnce(idempotencyUniqueError());
+    vi.mocked(prisma.apiIdempotencyKey.findUnique).mockResolvedValueOnce({
+      requestHash: originalHash,
+      responseBody: null,
+    } as never);
+
+    const reusedKeyResult = await saveStateUpdateWorkflow(saveBody({
+      clientRequestId: "conflict_key",
+      expectedUpdatedAt: "2026-08-22T12:00:00.000Z",
+      overwrite: true,
+      states: { operational_field: "operational_down" },
+    }));
+
+    expect(reusedKeyResult).toMatchObject({ ok: false, response: expect.objectContaining({ status: 409 }) });
+    await expect(reusedKeyResult.ok ? null : reusedKeyResult.response.json()).resolves.toMatchObject({
+      error: { code: "IDEMPOTENCY_KEY_REUSED" },
+      ok: false,
+    });
+  });
+
+  it("stores a durable state-update response after a new idempotent mutation", async () => {
+    const result = await saveStateUpdateWorkflow(saveBody({
+      clientRequestId: "request_1",
+      states: { operational_field: "operational_ok" },
+    }));
+
+    expect(result).toMatchObject({ ok: true });
+    expect(tx.apiIdempotencyKey.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        entityRecordId: "state_new",
+        responseBody: expect.objectContaining({
+          result: expect.objectContaining({
+            recordId: "state_new",
+            updatedAt: "2026-08-22T12:10:00.000Z",
+          }),
+        }),
+      }),
+    }));
+  });
+
+  it("persists replayable UNCHANGED, CONFLICT, and functional ERROR results", async () => {
+    mockExistingState([existingState()]);
+
+    await saveStateUpdateWorkflow(saveBody({
+      clientRequestId: "unchanged_key",
+      states: { operational_field: "operational_ok" },
+    }));
+    await saveStateUpdateWorkflow(saveBody({
+      clientRequestId: "conflict_key",
+      states: { operational_field: "operational_down" },
+    }));
+    await saveStateUpdateWorkflow(saveBody({
+      clientRequestId: "error_key",
+      states: { operational_field: "missing_option" },
+    }));
+
+    expect(prisma.apiIdempotencyKey.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        entityRecordId: "state_existing",
+        responseBody: expect.objectContaining({ result: expect.objectContaining({ result: "UNCHANGED" }) }),
+      }),
+    }));
+    expect(prisma.apiIdempotencyKey.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        entityRecordId: "state_existing",
+        responseBody: expect.objectContaining({ result: expect.objectContaining({ result: "CONFLICT" }) }),
+      }),
+    }));
+    expect(prisma.apiIdempotencyKey.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        entityRecordId: null,
+        responseBody: expect.objectContaining({ result: expect.objectContaining({ result: "ERROR" }) }),
+      }),
+    }));
+  });
+
+  it("does not replay or rewrite an incomplete legacy idempotency row", async () => {
+    vi.mocked(prisma.apiIdempotencyKey.create).mockRejectedValueOnce(idempotencyUniqueError());
+    vi.mocked(prisma.apiIdempotencyKey.findUnique).mockResolvedValue({
+      requestHash: "d57f9fef9f4edc4236bf07ecbe4a820a3ec0da57fce9a19afb558f14994686e3",
+      responseBody: null,
+    } as never);
+
+    const result = await saveStateUpdateWorkflow(saveBody({
+      clientRequestId: "request_1",
+      states: { operational_field: "operational_ok" },
+    }));
+
+    expect(result).toMatchObject({ ok: false, response: expect.objectContaining({ status: 409 }) });
+    await expect(result.ok ? null : result.response.json()).resolves.toMatchObject({
+      error: { code: "IDEMPOTENCY_RESULT_UNAVAILABLE" },
+      ok: false,
+    });
+    expect(tx.entityRecord.create).not.toHaveBeenCalled();
+    expect(tx.auditEvent.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects an invalid stored responseBody without rerunning writes", async () => {
+    vi.mocked(prisma.apiIdempotencyKey.create).mockRejectedValueOnce(idempotencyUniqueError());
+    vi.mocked(prisma.apiIdempotencyKey.findUnique).mockResolvedValueOnce({
+      requestHash: "d57f9fef9f4edc4236bf07ecbe4a820a3ec0da57fce9a19afb558f14994686e3",
+      responseBody: { result: { result: "CREATED" } },
+    } as never);
+
+    const result = await saveStateUpdateWorkflow(saveBody({
+      clientRequestId: "request_1",
+      states: { operational_field: "operational_ok" },
+    }));
+
+    expect(result).toMatchObject({ ok: false, response: expect.objectContaining({ status: 409 }) });
+    expect(tx.entityRecord.create).not.toHaveBeenCalled();
+  });
+
+  it("keeps one append record for concurrent identical idempotent requests", async () => {
+    appViewFindFirst.mockResolvedValue(appView({
+      config: {
+        ...stateConfig(),
+        historyMode: "append",
+        uniqueness: { mode: "none" },
+      },
+    }) as never);
+
+    let storedHash = "";
+    let storedResponse: unknown = null;
+    vi.mocked(prisma.apiIdempotencyKey.create).mockImplementation((async (args: { data?: { requestHash?: string } }) => {
+      if (!storedHash) {
+        storedHash = args.data?.requestHash ?? "";
+        return { id: "idem_1" } as never;
+      }
+      throw idempotencyUniqueError();
+    }) as never);
+    vi.mocked(prisma.apiIdempotencyKey.findUnique).mockImplementation((async () => ({
+      requestHash: storedHash,
+      responseBody: storedResponse,
+    })) as never);
+    tx.apiIdempotencyKey.update.mockImplementation(async (args: { data?: { responseBody?: unknown } }) => {
+      storedResponse = args.data?.responseBody;
+      return { id: "idem_1" } as never;
+    });
+
+    const [first, second] = await Promise.all([
+      saveStateUpdateWorkflow(saveBody({
+        clientRequestId: "append_key",
+        states: { operational_field: "operational_ok" },
+      })),
+      saveStateUpdateWorkflow(saveBody({
+        clientRequestId: "append_key",
+        states: { operational_field: "operational_ok" },
+      })),
+    ]);
+
+    expect(first).toMatchObject({ ok: true, data: { result: { recordId: "state_new", result: "CREATED" } } });
+    expect(second).toEqual(first);
+    expect(tx.entityRecord.create).toHaveBeenCalledTimes(1);
+    expect(tx.auditEvent.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects concurrent idempotency-key reuse with a different payload without a second mutation", async () => {
+    appViewFindFirst.mockResolvedValue(appView({
+      config: {
+        ...stateConfig(),
+        historyMode: "append",
+        uniqueness: { mode: "none" },
+      },
+    }) as never);
+
+    let storedHash = "";
+    vi.mocked(prisma.apiIdempotencyKey.create).mockImplementation((async (args: { data?: { requestHash?: string } }) => {
+      if (!storedHash) {
+        storedHash = args.data?.requestHash ?? "";
+        return { id: "idem_1" } as never;
+      }
+      throw idempotencyUniqueError();
+    }) as never);
+    vi.mocked(prisma.apiIdempotencyKey.findUnique).mockImplementation((async () => ({
+      requestHash: storedHash,
+      responseBody: null,
+    })) as never);
+
+    const [first, second] = await Promise.all([
+      saveStateUpdateWorkflow(saveBody({
+        clientRequestId: "append_key",
+        states: { operational_field: "operational_ok" },
+      })),
+      saveStateUpdateWorkflow(saveBody({
+        clientRequestId: "append_key",
+        states: { operational_field: "operational_down" },
+      })),
+    ]);
+
+    expect(first).toMatchObject({ ok: true, data: { result: { result: "CREATED" } } });
+    expect(second).toMatchObject({ ok: false, response: expect.objectContaining({ status: 409 }) });
+    await expect(second.ok ? null : second.response.json()).resolves.toMatchObject({
+      error: { code: "IDEMPOTENCY_KEY_REUSED" },
+      ok: false,
+    });
+    expect(tx.entityRecord.create).toHaveBeenCalledTimes(1);
+    expect(tx.auditEvent.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns UNCHANGED only when requested extra values also match", async () => {
+    mockExistingState([existingState({
+      values: [
+        ...existingState().values,
+        { booleanValue: null, dateValue: null, decimalValue: null, entityFieldId: "observation_field", integerValue: null, jsonValue: null, textValue: "Sin novedad" },
+      ],
+    })]);
+
+    const same = await saveStateUpdateWorkflow(saveBody({
+      extraValues: { observation_field: "Sin novedad" },
+      states: { operational_field: "operational_ok" },
+    }));
+    const different = await saveStateUpdateWorkflow(saveBody({
+      extraValues: { observation_field: "Revisar en terreno" },
+      states: { operational_field: "operational_ok" },
+    }));
+
+    expect(same).toMatchObject({
+      ok: true,
+      data: { result: { result: "UNCHANGED", updatedAt: "2026-08-22T12:00:00.000Z" } },
+    });
+    expect(different).toMatchObject({
+      ok: true,
+      data: {
+        result: {
+          result: "CONFLICT",
+          differences: [
+            {
+              fieldId: "observation_field",
+              kind: "extra",
+              currentValue: "Sin novedad",
+              requestedValue: "Revisar en terreno",
+            },
+          ],
+        },
+      },
+    });
+  });
+
+  it("clears explicit null extras with overwrite and preserves omitted extras", async () => {
+    mockExistingState([existingState({
+      values: [
+        ...existingState().values,
+        { booleanValue: null, dateValue: null, decimalValue: null, entityFieldId: "observation_field", integerValue: null, jsonValue: null, textValue: "Sin novedad" },
+      ],
+    })]);
+
+    const omitted = await saveStateUpdateWorkflow(saveBody({
+      expectedUpdatedAt: "2026-08-22T12:00:00.000Z",
+      overwrite: true,
+      states: { operational_field: "operational_down" },
+    }));
+    const cleared = await saveStateUpdateWorkflow(saveBody({
+      expectedUpdatedAt: "2026-08-22T12:00:00.000Z",
+      extraValues: { observation_field: null },
+      overwrite: true,
+      states: { operational_field: "operational_down" },
+    }));
+
+    expect(omitted).toMatchObject({ ok: true, data: { result: { result: "UPDATED" } } });
+    expect(tx.entityValue.deleteMany).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      where: expect.objectContaining({ entityFieldId: { in: ["operational_field"] } }),
+    }));
+    expect(cleared).toMatchObject({ ok: true, data: { result: { result: "UPDATED" } } });
+    expect(tx.entityValue.deleteMany).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      where: expect.objectContaining({ entityFieldId: { in: ["operational_field", "observation_field"] } }),
+    }));
+  });
+
+  it("compares SELECT extras by canonical option id", async () => {
+    appViewFindFirst.mockResolvedValue(appView({
+      config: {
+        ...stateConfig(),
+        extraFieldIds: ["condition_field"],
+      },
+    }) as never);
+    mockExistingState([existingState({
+      values: [
+        ...existingState().values,
+        { booleanValue: null, dateValue: null, decimalValue: null, entityFieldId: "condition_field", integerValue: null, jsonValue: null, textValue: "condition_ok" },
+      ],
+    })]);
+
+    const result = await saveStateUpdateWorkflow(saveBody({
+      extraValues: { condition_field: "condition_bad" },
+      states: { operational_field: "operational_ok" },
+    }));
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: {
+        result: {
+          result: "CONFLICT",
+          differences: [
+            {
+              fieldId: "condition_field",
+              kind: "extra",
+              currentValue: "condition_ok_option",
+              requestedValue: "condition_bad_option",
+            },
+          ],
+        },
+      },
+    });
+  });
+
+  it("compares RELATION extras by target record id", async () => {
+    appViewFindFirst.mockResolvedValue(appView({
+      config: {
+        ...stateConfig(),
+        extraFieldIds: ["location_field"],
+      },
+    }) as never);
+    entityRecordCount.mockResolvedValue(1 as never);
+    mockExistingState([existingState({
+      outgoingRelations: [
+        { sourceFieldId: "subject_field", targetRecordId: "equipment_1" },
+        { sourceFieldId: "location_field", targetRecordId: "location_a" },
+      ],
+    })]);
+
+    const result = await saveStateUpdateWorkflow(saveBody({
+      extraValues: { location_field: "location_b" },
+      states: { operational_field: "operational_ok" },
+    }));
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: {
+        result: {
+          result: "CONFLICT",
+          differences: [
+            {
+              fieldId: "location_field",
+              kind: "extra",
+              currentValue: ["location_a"],
+              requestedValue: ["location_b"],
+            },
+          ],
+        },
+      },
+    });
   });
 
   it("normalizes attendance AppViews to the state-update config shape", () => {
@@ -285,6 +737,7 @@ describe("state-update workflow runtime", () => {
           differences: [
             {
               fieldId: "status_field",
+              kind: "state",
               existingOptionId: "present_option",
               requestedOptionId: "absent_option",
             },
@@ -441,6 +894,17 @@ function targetEntityType() {
         ],
       }),
       field("observation_field", "observacion", "Observación", "TEXTAREA", { required: false }),
+      field("condition_field", "condicion", "Condición", "SELECT", {
+        required: false,
+        options: [
+          option("condition_ok_option", "OK", "condition_ok"),
+          option("condition_bad_option", "Mala", "condition_bad"),
+        ],
+      }),
+      field("location_field", "ubicacion", "Ubicación", "RELATION", {
+        config: { targetEntityTypeId: "equipment", relationKind: "ONE" },
+        required: false,
+      }),
     ],
     id: "equipment_state",
     name: "Estados equipo",
@@ -564,7 +1028,7 @@ function attendanceSaveBody(body: Record<string, unknown>) {
   };
 }
 
-function existingState() {
+function existingState(overrides: Record<string, unknown> = {}) {
   return {
     displayName: "Excavadora · 22-08-2026",
     id: "state_existing",
@@ -575,6 +1039,7 @@ function existingState() {
       { booleanValue: null, dateValue: null, decimalValue: null, entityFieldId: "operational_field", integerValue: null, jsonValue: null, textValue: "operativo" },
       { booleanValue: null, dateValue: null, decimalValue: null, entityFieldId: "availability_field", integerValue: null, jsonValue: null, textValue: "disponible" },
     ],
+    ...overrides,
   };
 }
 
@@ -590,4 +1055,12 @@ function existingAttendanceState() {
       { booleanValue: null, dateValue: null, decimalValue: null, entityFieldId: "observation_field", integerValue: null, jsonValue: null, textValue: null },
     ],
   };
+}
+
+function idempotencyUniqueError() {
+  return new Prisma.PrismaClientKnownRequestError("Unique constraint failed", {
+    clientVersion: "test",
+    code: "P2002",
+    meta: { target: ["externalAppId", "operation", "clientRequestId"] },
+  });
 }

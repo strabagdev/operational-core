@@ -560,9 +560,19 @@ Request:
 
 Only field ids configured on the AppView are accepted. `stateFields` must be single `SELECT` fields and the submitted option id must belong to the same field and be active. `extraValues` may include supported normal target fields: `TEXT`, `TEXTAREA`, `INTEGER`, `DECIMAL`, `MONEY`, `BOOLEAN`, `DATE`, `TIME`, `DATETIME`, `SELECT`, and `RELATION`.
 
-Results use `CREATED`, `UNCHANGED`, `UPDATED`, `CONFLICT`, and `ERROR`. When `historyMode = "update-current"` finds an existing record and any requested state differs, the result is `CONFLICT` and includes the existing `recordId`, `updatedAt`, requested states, and per-field differences. Overwriting requires `overwrite: true` plus an `expectedUpdatedAt` that still matches the current record.
+Results use `CREATED`, `UNCHANGED`, `UPDATED`, `CONFLICT`, and `ERROR`. `CREATED`, `UNCHANGED`, and `UPDATED` include `recordId` and the real persisted `updatedAt` from PostgreSQL/Prisma. `UNCHANGED` does not perform an artificial write; its `updatedAt` is the current version of the existing record.
 
-`clientRequestId` is optional but recommended for offline/retryable clients. It is scoped to the external app, workflow operation, and AppView. Reusing the same id with a different payload returns `IDEMPOTENCY_CONFLICT`.
+When `historyMode = "update-current"` finds an existing record, Operational Core compares the exact requested intention: `subjectRecordId`, applicable `date`, submitted `states`, and submitted `extraValues`. Without `overwrite`, any differing requested state or extra value returns `CONFLICT`; matching requested values return `UNCHANGED`. Conflict differences identify `kind: "state"` or `kind: "extra"` plus normalized `currentValue` and `requestedValue`. State differences also include option ids/labels for compatibility.
+
+`extraValues` preserve omit-vs-null semantics. An omitted extra field is preserved and is not part of the requested comparison. An explicit `null` clears the value when the field validation allows it. `RELATION` extras compare target record ids, `SELECT` extras compare the canonical persisted option value, and `DATE`/`TIME` compare canonical values.
+
+Overwriting requires `overwrite: true` plus an `expectedUpdatedAt` that still matches the current record. If the version is stale, the API returns a fresh `CONFLICT` and does not perform last-write-wins.
+
+`historyMode = "append"` creates a new event for each new idempotency key. Retrying the same `clientRequestId` with the same semantic payload replays the original event and never creates a second record. Reusing the same key with a different semantic payload returns `IDEMPOTENCY_KEY_REUSED`.
+
+`clientRequestId` is optional but recommended for offline/retryable clients. Its database unique boundary remains external app, workflow operation, contract, and AppView, so clients should generate ids unique per ExternalApp operation. The canonical fingerprint also includes the authenticated user so keys are not replayed across users. The fingerprint includes scope, `subjectRecordId`, normalized date, sorted `states`, sorted `extraValues`, `overwrite`, and `expectedUpdatedAt` when present. Matching payloads replay the stored response without re-running engine writes or audit. Existing historical idempotency rows that lack a durable result are not guessed; they return `IDEMPOTENCY_RESULT_UNAVAILABLE`.
+
+`CONFLICT` and overwrite confirmation are separate commands. Retry the original conflict probe with the same `clientRequestId`; send the confirmed overwrite with a new `clientRequestId`. Reusing the conflict key with `overwrite: true` is rejected as `IDEMPOTENCY_KEY_REUSED`.
 
 ### GET /api/v1/contracts/:contractId/views/:appViewId/workflow/attendance
 
@@ -1038,7 +1048,9 @@ Invalid hours, full dates, timestamps, and free text are rejected with the stand
 | 400 | `INVALID_SORT` | `sort` or `direction` is invalid. |
 | 401 | API auth codes | Missing, invalid, expired, or stale Bearer token. |
 | 403 | `CONTRACT_FORBIDDEN` / `TOKEN_APP_INACTIVE` | Authenticated caller cannot access the contract, or the app is inactive. |
-| 409 | `IDEMPOTENCY_CONFLICT` | POST reused `clientRequestId` with a different payload. |
+| 409 | `IDEMPOTENCY_CONFLICT` | Record POST reused `clientRequestId` with a different payload. |
+| 409 | `IDEMPOTENCY_KEY_REUSED` | Workflow POST reused `clientRequestId` with a different semantic payload. |
+| 409 | `IDEMPOTENCY_RESULT_UNAVAILABLE` | Workflow idempotency row exists but has no valid durable result to replay. |
 | 404 | `CONTRACT_NOT_FOUND` | Active contract does not exist. |
 | 404 | `ENTITY_NOT_FOUND` | Active entity type does not exist in the contract. |
 | 404 | `RECORD_NOT_FOUND` | Record does not exist inside the requested entity type. |
@@ -1091,7 +1103,7 @@ Current limitations:
 
 ## API Idempotency
 
-`POST /api/v1/contracts/:contractId/entities/:entityTypeId/records` persists idempotency keys in `ApiIdempotencyKey`.
+`POST /api/v1/contracts/:contractId/entities/:entityTypeId/records` and state-update workflow POSTs persist idempotency keys in `ApiIdempotencyKey`.
 
 The unique key is:
 
@@ -1103,7 +1115,9 @@ The operation currently includes the contract id and entity type id for record c
 
 This model makes retries safe after network failures and protects concurrent duplicate POSTs. Replays with the same payload return the original record. Replays with a different payload are rejected with `409 IDEMPOTENCY_CONFLICT`.
 
-`clientRequestId`, request hashes, and `entityRecordId` are not secrets, but logs should still avoid dumping full request bodies from external systems.
+For state-update workflows, the operation includes contract, AppView, and workflow adapter. The request fingerprint includes the authenticated user. The table stores a minimal replayable response body, the affected record id when one exists, and completion time. Replays return that stored response, including the original remote `updatedAt`, and do not create additional `EntityRecord` or `AuditEvent` rows. Changed-payload replays return `409 IDEMPOTENCY_KEY_REUSED`; incomplete or invalid legacy rows return `409 IDEMPOTENCY_RESULT_UNAVAILABLE`.
+
+`clientRequestId`, request hashes, response metadata, and `entityRecordId` are not secrets, but logs should still avoid dumping full request bodies from external systems.
 
 ## Health
 

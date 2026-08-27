@@ -215,6 +215,8 @@ model ApiIdempotencyKey {
   contractId      String
   entityTypeId    String
   entityRecordId  String?
+  responseBody    Json?
+  completedAt     DateTime?
   externalApp     ExternalApp @relation(fields: [externalAppId], references: [id], onDelete: Cascade)
   entityRecord    EntityRecord? @relation(fields: [entityRecordId], references: [id], onDelete: SetNull)
   createdAt       DateTime @default(now())
