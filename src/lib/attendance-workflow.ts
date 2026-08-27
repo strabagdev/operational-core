@@ -642,11 +642,6 @@ async function getLatestAttendanceRecords({
     take: limit,
     where: {
       entityTypeId: targetEntityTypeId,
-      outgoingRelations: {
-        some: {
-          sourceFieldId: config.personFieldId,
-        },
-      },
       values: {
         some: {
           dateValue: date,

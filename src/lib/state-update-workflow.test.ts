@@ -706,6 +706,36 @@ describe("state-update workflow runtime", () => {
       data: { result: { recordId: "state_new", result: "CREATED", subjectRecordId: "person_1" } },
     });
     expect(tx.entityRecord.create).toHaveBeenCalled();
+    expect(tx.entityRelation.createMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: [
+        {
+          sourceFieldId: "person_field",
+          sourceRecordId: "state_new",
+          targetRecordId: "person_1",
+        },
+      ],
+      skipDuplicates: true,
+    }));
+  });
+
+  it("does not create attendance when the subject person is not a remote source record", async () => {
+    useAttendanceRuntime();
+    entityRecordFindMany.mockImplementation((async (args: { where?: { entityTypeId?: string } }) => {
+      if (args.where?.entityTypeId === "people") return [] as never;
+      return [] as never;
+    }) as never);
+
+    const result = await saveStateUpdateWorkflow(attendanceSaveBody({
+      states: { status_field: "present_option" },
+      subjectRecordId: "local_only_person",
+    }));
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: { result: { code: "INVALID_SUBJECT", result: "ERROR", subjectRecordId: "local_only_person" } },
+    });
+    expect(tx.entityRecord.create).not.toHaveBeenCalled();
+    expect(tx.entityRelation.createMany).not.toHaveBeenCalled();
   });
 
   it("returns UNCHANGED for the same attendance state through the generic POST", async () => {
@@ -720,6 +750,8 @@ describe("state-update workflow runtime", () => {
       data: { result: { recordId: "attendance_existing", result: "UNCHANGED", subjectRecordId: "person_1" } },
     });
     expect(tx.entityRecord.update).not.toHaveBeenCalled();
+    expect(tx.entityRelation.deleteMany).not.toHaveBeenCalled();
+    expect(tx.entityRelation.createMany).not.toHaveBeenCalled();
   });
 
   it("returns CONFLICT for a different attendance state through the generic POST", async () => {
@@ -762,6 +794,42 @@ describe("state-update workflow runtime", () => {
       data: { result: { recordId: "state_existing", result: "UPDATED", subjectRecordId: "person_1" } },
     });
     expect(tx.entityRecord.update).toHaveBeenCalled();
+    expect(tx.entityRelation.deleteMany).not.toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ sourceFieldId: "person_field" }),
+    }));
+    expect(tx.entityRelation.createMany).not.toHaveBeenCalled();
+  });
+
+  it("replays idempotent attendance creation without duplicating the person relation", async () => {
+    useAttendanceRuntime();
+    const replayData = {
+      appView: { id: "view_attendance", name: "Tomar asistencia", slug: "asistencia" },
+      result: {
+        recordId: "state_new",
+        result: "CREATED",
+        subjectRecordId: "person_1",
+        updatedAt: "2026-08-22T12:10:00.000Z",
+      },
+    };
+
+    let requestHash = "";
+    vi.mocked(prisma.apiIdempotencyKey.create).mockImplementationOnce((async (args: { data?: { requestHash?: string } }) => {
+      requestHash = args.data?.requestHash ?? "";
+      throw idempotencyUniqueError();
+    }) as never);
+    vi.mocked(prisma.apiIdempotencyKey.findUnique).mockImplementationOnce((async () => ({
+      requestHash,
+      responseBody: replayData,
+    })) as never);
+
+    const result = await saveStateUpdateWorkflow(attendanceSaveBody({
+      clientRequestId: "attendance_replay",
+      states: { status_field: "present_option" },
+    }));
+
+    expect(result).toEqual({ ok: true, data: replayData });
+    expect(tx.entityRecord.create).not.toHaveBeenCalled();
+    expect(tx.entityRelation.createMany).not.toHaveBeenCalled();
   });
 
   it("keeps INVALID_WORKFLOW for workflows not compatible with state-update", async () => {

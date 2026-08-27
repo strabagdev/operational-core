@@ -52,6 +52,7 @@ type EntityRecordFindManyMockArgs = {
     id?: string | { in?: string[] };
     outgoingRelations?: {
       some?: {
+        sourceFieldId?: string;
         targetRecordId?: { in?: string[] };
       };
     };
@@ -125,6 +126,16 @@ describe("attendance workflow dynamic status policy", () => {
       data: expect.objectContaining({
         displayName: "Ana · 22-08-2026",
       }),
+    }));
+    expect(tx.entityRelation.createMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: [
+        {
+          sourceFieldId: "person_field",
+          sourceRecordId: "attendance_new",
+          targetRecordId: "person_1",
+        },
+      ],
+      skipDuplicates: true,
     }));
     expect(tx.entityValue.createMany).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -386,6 +397,107 @@ describe("attendance workflow day query", () => {
     }));
   });
 
+  it("returns a consistent latest list while exposing malformed records without a person", async () => {
+    const validRecords = Array.from({ length: 6 }, (_, index) =>
+      existingAttendance({
+        id: `attendance_${index + 1}`,
+        personRecordId: `person_${index + 1}`,
+        updatedAt: new Date(`2026-08-22T12:0${index}:00.000Z`),
+      }));
+    const malformedRecord = existingAttendance({
+      id: "attendance_malformed",
+      personRecordId: null,
+      updatedAt: new Date("2026-08-22T12:06:00.000Z"),
+    });
+    entityRecordCount.mockResolvedValue(7 as never);
+    mockLatestAttendances([...validRecords, malformedRecord]);
+
+    const result = await getAttendanceWorkflowDay(dayQuery());
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: {
+        items: [],
+        latest: expect.arrayContaining([
+          expect.objectContaining({ attendanceRecordId: "attendance_1", person: expect.objectContaining({ id: "person_1" }) }),
+          expect.objectContaining({ attendanceRecordId: "attendance_malformed", person: null }),
+        ]),
+        summary: { totalRegistered: 7 },
+      },
+    });
+    if (result.ok) {
+      expect(result.data.latest).toHaveLength(7);
+    }
+    expect(entityRecordFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      include: expect.objectContaining({ outgoingRelations: expect.any(Object) }),
+      take: 10,
+      where: {
+        entityTypeId: "attendance",
+        values: {
+          some: {
+            dateValue: new Date("2026-08-22T00:00:00.000Z"),
+            entityFieldId: "date_field",
+          },
+        },
+      },
+    }));
+  });
+
+  it("limits latest records to the attendance latest limit", async () => {
+    const records = Array.from({ length: 12 }, (_, index) =>
+      existingAttendance({
+        id: `attendance_${index + 1}`,
+        personRecordId: `person_${index + 1}`,
+        updatedAt: new Date(`2026-08-22T12:${String(index).padStart(2, "0")}:00.000Z`),
+      }));
+    entityRecordCount.mockResolvedValue(12 as never);
+    mockLatestAttendances(records);
+
+    const result = await getAttendanceWorkflowDay(dayQuery());
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: {
+        summary: { totalRegistered: 12 },
+      },
+    });
+    if (result.ok) {
+      expect(result.data.latest).toHaveLength(10);
+    }
+  });
+
+  it("keeps latest as a day-level list when personRecordId or search narrows items", async () => {
+    const records = Array.from({ length: 7 }, (_, index) =>
+      existingAttendance({
+        id: `attendance_${index + 1}`,
+        personRecordId: `person_${index + 1}`,
+      }));
+    entityRecordCount.mockResolvedValue(7 as never);
+    mockLatestAttendances(records);
+
+    const selectedResult = await getAttendanceWorkflowDay(dayQuery({ personRecordId: "person_2" }));
+    const searchResult = await getAttendanceWorkflowDay(dayQuery({ search: "Ana" }));
+
+    expect(selectedResult).toMatchObject({
+      ok: true,
+      data: {
+        items: [{ person: { id: "person_2" } }],
+      },
+    });
+    expect(searchResult).toMatchObject({
+      ok: true,
+      data: {
+        items: expect.any(Array),
+      },
+    });
+    if (selectedResult.ok) {
+      expect(selectedResult.data.latest).toHaveLength(7);
+    }
+    if (searchResult.ok) {
+      expect(searchResult.data.latest).toHaveLength(7);
+    }
+  });
+
   it("searches people with a limited result set and returns null for missing attendance", async () => {
     mockExistingAttendances([]);
 
@@ -609,15 +721,24 @@ function mockExistingAttendances(records: Array<ReturnType<typeof existingAttend
 function mockLatestAttendances(records: Array<ReturnType<typeof existingAttendance>>) {
   entityRecordFindMany.mockImplementation((async (args: EntityRecordFindManyMockArgs) => {
     if (args?.where?.entityTypeId === "people") {
-      return [] as never;
+      if (typeof args.where.id === "string") {
+        return people().filter((person) => person.id === args.where?.id) as never;
+      }
+
+      return people() as never;
     }
 
     if (args?.include?.outgoingRelations) {
-      return records.map((record) => ({
+      return records.slice(0, args.take).map((record) => ({
         ...record,
         outgoingRelations: record.outgoingRelations.map((relation) => ({
           ...relation,
-          targetRecord: people().find((person) => person.id === relation.targetRecordId) ?? null,
+          targetRecord: relation.targetRecordId
+            ? people().find((person) => person.id === relation.targetRecordId) ?? {
+                displayName: relation.targetRecordId,
+                id: relation.targetRecordId,
+              }
+            : null,
         })),
       })) as never;
     }
@@ -627,18 +748,20 @@ function mockLatestAttendances(records: Array<ReturnType<typeof existingAttendan
 }
 
 function existingAttendance({
+  id = "attendance_existing",
   personRecordId = "person_1",
   statusValue = "presente",
   updatedAt = new Date("2026-08-22T12:00:00.000Z"),
 }: {
-  personRecordId?: string;
+  id?: string;
+  personRecordId?: string | null;
   statusValue?: string;
   updatedAt?: Date;
 }) {
   return {
     displayName: `${people().find((person) => person.id === personRecordId)?.displayName ?? personRecordId} · 22-08-2026`,
-    id: "attendance_existing",
-    outgoingRelations: [{ targetRecordId: personRecordId }],
+    id,
+    outgoingRelations: personRecordId ? [{ targetRecordId: personRecordId }] : [],
     updatedAt,
     values: [
       {
