@@ -118,6 +118,30 @@ describe("state-update workflow runtime", () => {
     expect(tx.entityRecord.create).toHaveBeenCalled();
   });
 
+  it("records sanitized runtime timing phases without changing the save result", async () => {
+    const timing = { mark: vi.fn() };
+
+    const result = await saveStateUpdateWorkflow({
+      ...saveBody({
+        states: { operational_field: "operational_ok" },
+      }),
+      timing,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: { result: { recordId: "state_new", result: "CREATED" } },
+    });
+    expect(timing.mark.mock.calls.map((call) => call[0])).toEqual(expect.arrayContaining([
+      "workflow_config_load",
+      "body_validation",
+      "idempotency_lookup",
+      "subject_lookup",
+      "existing_target_lookup",
+      "transaction_write",
+    ]));
+  });
+
   it("returns differences for multiple state field conflicts", async () => {
     mockExistingState([existingState()]);
 

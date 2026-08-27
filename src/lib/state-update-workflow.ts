@@ -96,6 +96,10 @@ export type StateUpdateResult =
     }
   | { code: string; message: string; result: "ERROR"; subjectRecordId: string };
 
+export type StateUpdateWorkflowTiming = {
+  mark(phase: string): void;
+};
+
 const subjectSearchLimit = 20;
 const latestStateUpdateLimit = 10;
 
@@ -207,21 +211,25 @@ export async function saveStateUpdateWorkflow({
   appViewId,
   body,
   contractId,
+  timing,
   userId,
 }: {
   appId: string;
   appViewId: string;
   body: unknown;
   contractId: string;
+  timing?: StateUpdateWorkflowTiming;
   userId: string;
 }) {
   const context = await getStateUpdateWorkflowContext({ appViewId, contractId, userId });
+  timing?.mark("workflow_config_load");
 
   if (!context.ok) {
     return context;
   }
 
   const parsed = parseStateUpdateBody(body, context.context.config);
+  timing?.mark("body_validation");
 
   if (!parsed.ok) {
     return parsed;
@@ -234,6 +242,7 @@ export async function saveStateUpdateWorkflow({
     contractId,
     targetEntityTypeId: context.context.targetEntityType.id,
   });
+  timing?.mark("idempotency_lookup");
 
   if (!idempotency.ok) {
     return idempotency;
@@ -244,8 +253,10 @@ export async function saveStateUpdateWorkflow({
     context: context.context,
     contractId,
     input: parsed.body,
+    timing,
     userId,
   }).catch((error) => mapStateUpdateException(error));
+  timing?.mark("transaction_write");
 
   if (!result.ok) {
     return result;
@@ -265,12 +276,14 @@ export async function saveStateUpdateEntry({
   context,
   contractId,
   input,
+  timing,
   userId,
 }: {
   appId: string;
   context: StateUpdateContext;
   contractId: string;
   input: StateUpdateInput;
+  timing?: StateUpdateWorkflowTiming;
   userId: string;
 }): Promise<{ ok: true; result: StateUpdateResult }> {
   const subject = (await prisma.entityRecord.findMany({
@@ -281,6 +294,7 @@ export async function saveStateUpdateEntry({
       id: input.subjectRecordId,
     },
   }))[0];
+  timing?.mark("subject_lookup");
 
   if (!subject) {
     return { ok: true, result: {
@@ -304,6 +318,7 @@ export async function saveStateUpdateEntry({
         date: input.date,
         subjectRecordIds: [subject.id],
       }))[0] ?? null;
+  timing?.mark("existing_target_lookup");
 
   if (!existing || context.config.historyMode === "append") {
     const record = await createStateUpdateRecord({

@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { requireApiContractAccess } from "@/lib/api-auth";
 import { badRequest, success } from "@/lib/api-response";
 import {
@@ -39,32 +41,91 @@ export async function POST(
   request: Request,
   { params }: { params: Promise<{ appViewId: string; contractId: string }> },
 ) {
+  const timing = createStateUpdateRouteTiming();
   const { appViewId, contractId } = await params;
-  const access = await requireApiContractAccess(request, contractId);
 
-  if (!access.ok) {
-    return access.response;
+  timing.setScope({ appViewId, contractId });
+  timing.mark("params");
+
+  try {
+    const access = await requireApiContractAccess(request, contractId);
+
+    timing.mark("auth_context");
+
+    if (!access.ok) {
+      timing.finish("auth_error", access.response.status);
+      return access.response;
+    }
+
+    const body = await readJsonBody(request);
+
+    timing.mark("request_body_parse");
+
+    if (!body.ok) {
+      timing.finish("invalid_json", body.response.status);
+      return body.response;
+    }
+
+    const result = await saveStateUpdateWorkflow({
+      appId: access.context.app.id,
+      appViewId,
+      body: body.body,
+      contractId: access.context.contract.id,
+      timing,
+      userId: access.context.user.id,
+    });
+
+    timing.mark("engine_completed");
+
+    if (!result.ok) {
+      timing.finish("domain_error", result.response.status);
+      return result.response;
+    }
+
+    const response = success(result.data);
+
+    timing.mark("response_serialization");
+    timing.finish("ok", response.status);
+
+    return response;
+  } catch (error) {
+    timing.finish("thrown");
+    throw error;
   }
+}
 
-  const body = await readJsonBody(request);
+function createStateUpdateRouteTiming() {
+  const startedAt = Date.now();
+  const phases: Record<string, number> = {};
+  let scope: { appView: string; contract: string } = { appView: "unknown", contract: "unknown" };
 
-  if (!body.ok) {
-    return body.response;
-  }
+  return {
+    finish(result: string, status?: number) {
+      const totalDurationMs = Date.now() - startedAt;
 
-  const result = await saveStateUpdateWorkflow({
-    appId: access.context.app.id,
-    appViewId,
-    body: body.body,
-    contractId: access.context.contract.id,
-    userId: access.context.user.id,
-  });
+      console.info("state-update workflow POST timing", {
+        appView: scope.appView,
+        contract: scope.contract,
+        phases,
+        result,
+        status: status ?? null,
+        totalDurationMs,
+      });
+    },
+    mark(phase: string) {
+      phases[phase] = Date.now() - startedAt;
+    },
+    setScope(nextScope: { appViewId: string; contractId: string }) {
+      scope = {
+        appView: fingerprint(nextScope.appViewId),
+        contract: fingerprint(nextScope.contractId),
+      };
+    },
+  };
+}
 
-  if (!result.ok) {
-    return result.response;
-  }
-
-  return success(result.data);
+function fingerprint(value: string) {
+  return createHash("sha256").update(value).digest("hex").slice(0, 12);
 }
 
 async function readJsonBody(request: Request) {
