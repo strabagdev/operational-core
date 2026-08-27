@@ -13,6 +13,8 @@ Environment:
   OPCO_ENV          Optional. Used in the filename. Defaults to "unknown".
   BACKUP_DIR        Optional. Default output directory when --output-dir is omitted.
   CREATE_CHECKSUM   Optional. Set to "false" to skip SHA-256 checksum. Defaults to "true".
+  PG_DUMP_BIN       Optional. Defaults to PostgreSQL 18 pg_dump path.
+  PG_RESTORE_BIN    Optional. Defaults to PostgreSQL 18 pg_restore path.
 USAGE
 }
 
@@ -41,9 +43,30 @@ if [[ -z "${DATABASE_URL:-}" ]]; then
   exit 2
 fi
 
-if ! command -v pg_dump >/dev/null 2>&1; then
-  echo "pg_dump is required but was not found in PATH." >&2
+pg_dump_bin="${PG_DUMP_BIN:-/usr/lib/postgresql/18/bin/pg_dump}"
+pg_restore_bin="${PG_RESTORE_BIN:-/usr/lib/postgresql/18/bin/pg_restore}"
+
+if [[ ! -x "$pg_dump_bin" ]]; then
+  echo "pg_dump is required but was not found or executable at: $pg_dump_bin" >&2
   exit 127
+fi
+
+if [[ ! -x "$pg_restore_bin" ]]; then
+  echo "pg_restore is required but was not found or executable at: $pg_restore_bin" >&2
+  exit 127
+fi
+
+pg_dump_version="$("$pg_dump_bin" --version)"
+pg_restore_version="$("$pg_restore_bin" --version)"
+
+if [[ ! "$pg_dump_version" =~ \(PostgreSQL\)\ 18\. ]]; then
+  echo "PostgreSQL 18 pg_dump is required; found: $pg_dump_version" >&2
+  exit 2
+fi
+
+if [[ ! "$pg_restore_version" =~ \(PostgreSQL\)\ 18\. ]]; then
+  echo "PostgreSQL 18 pg_restore is required; found: $pg_restore_version" >&2
+  exit 2
 fi
 
 opco_env="${OPCO_ENV:-unknown}"
@@ -68,9 +91,17 @@ cleanup() {
 }
 trap cleanup EXIT
 
-PGDATABASE="$DATABASE_URL" pg_dump \
+"$pg_dump_bin" \
+  --dbname="$DATABASE_URL" \
   --format=custom \
   --file="$tmp_file"
+
+if [[ ! -s "$tmp_file" ]]; then
+  echo "Backup dump was not created or is empty." >&2
+  exit 1
+fi
+
+"$pg_restore_bin" --list "$tmp_file" >/dev/null
 
 mv "$tmp_file" "$backup_file"
 trap - EXIT
@@ -91,3 +122,5 @@ size_bytes="$(wc -c < "$backup_file" | tr -d '[:space:]')"
 
 echo "Backup: $backup_file"
 echo "Size: ${size_bytes} bytes"
+echo "pg_dump: $pg_dump_version"
+echo "pg_restore validation: OK"
