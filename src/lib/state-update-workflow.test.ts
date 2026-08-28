@@ -143,6 +143,7 @@ describe("state-update workflow runtime", () => {
 
     const result = await saveStateUpdateWorkflow({
       ...saveBody({
+        clientRequestId: "request_timing",
         states: { operational_field: "operational_ok" },
       }),
       timing,
@@ -155,9 +156,16 @@ describe("state-update workflow runtime", () => {
     expect(timing.mark.mock.calls.map((call) => call[0])).toEqual(expect.arrayContaining([
       "workflow_config_load",
       "body_validation",
+      "idempotency_reserve_start",
+      "idempotency_reserve",
       "idempotency_lookup",
       "subject_lookup",
       "existing_target_lookup",
+      "create_mutation_build_start",
+      "create_transaction_begin",
+      "create_audit_event",
+      "create_idempotency_finalize",
+      "create_transaction_end",
       "transaction_write",
     ]));
   });

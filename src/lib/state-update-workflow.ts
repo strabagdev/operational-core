@@ -249,6 +249,7 @@ export async function saveStateUpdateWorkflow({
     body: parsed.body,
     contractId,
     targetEntityTypeId: context.context.targetEntityType.id,
+    timing,
     userId,
   });
   timing?.mark("idempotency_lookup");
@@ -323,6 +324,7 @@ export async function saveStateUpdateEntry({
       idempotencyKey,
       input,
       result,
+      timing,
     });
 
     return { ok: true, result };
@@ -337,6 +339,7 @@ export async function saveStateUpdateEntry({
       idempotencyKey,
       input,
       result: requested.result,
+      timing,
     });
 
     return { ok: true, result: requested.result };
@@ -360,6 +363,7 @@ export async function saveStateUpdateEntry({
       input,
       requestedStates: requested.states,
       subject,
+      timing,
       userId,
     });
 
@@ -403,6 +407,7 @@ export async function saveStateUpdateEntry({
       idempotencyKey,
       input,
       result,
+      timing,
     });
 
     return { ok: true, result };
@@ -417,6 +422,7 @@ export async function saveStateUpdateEntry({
       idempotencyKey,
       input,
       result,
+      timing,
     });
 
     return { ok: true, result };
@@ -436,6 +442,7 @@ export async function saveStateUpdateEntry({
       idempotencyKey,
       input,
       result,
+      timing,
     });
 
     return { ok: true, result };
@@ -450,6 +457,7 @@ export async function saveStateUpdateEntry({
       idempotencyKey,
       input,
       result,
+      timing,
     });
 
     return { ok: true, result };
@@ -464,6 +472,7 @@ export async function saveStateUpdateEntry({
     input,
     mutation,
     requestedStates: requested.states,
+    timing,
     userId,
   });
 
@@ -1108,6 +1117,7 @@ async function createStateUpdateRecord({
   input,
   requestedStates,
   subject,
+  timing,
   userId,
 }: {
   appId: string;
@@ -1117,27 +1127,36 @@ async function createStateUpdateRecord({
   input: StateUpdateInput;
   requestedStates: Record<string, StateOption>;
   subject: { displayName: string; id: string };
+  timing?: StateUpdateWorkflowTiming;
   userId: string;
 }) {
+  timing?.mark("create_mutation_build_start");
   const mutation = await buildStateUpdateMutation({ context, contractId, input, requestedStates, subjectRecordId: subject.id });
+  timing?.mark("create_mutation_build");
 
+  timing?.mark("create_transaction_begin");
   return prisma.$transaction(async (tx) => {
     const genericDisplayName = getRecordDisplayName(context.targetEntityType.fields, mutation.values);
     const displayName = genericDisplayName === "Registro sin nombre"
       ? fallbackDisplayName(subject.displayName, input.date)
       : genericDisplayName;
+    timing?.mark("create_display_name");
     const relationChanges = await buildRelationChanges({
       contractId,
       fields: context.targetEntityType.fields.filter((field) => field.type === "RELATION"),
       oldRelations: [],
       newRelations: mutation.relations,
     });
+    timing?.mark("create_relation_changes");
     const record = await tx.entityRecord.create({
       data: { displayName, entityTypeId: context.targetEntityType.id },
     });
+    timing?.mark("create_entity_record");
 
     await writeEntityValues(tx, record.id, mutation.values);
+    timing?.mark("create_entity_values");
     await syncEntityRelations(tx, record.id, mutation.relations);
+    timing?.mark("create_entity_relations");
     await createAuditEvent(tx, {
       actorUserId: userId,
       action: "RECORD_CREATED",
@@ -1159,6 +1178,7 @@ async function createStateUpdateRecord({
       },
       summary: `Creó ${context.targetEntityType.name} ${record.displayName}`,
     });
+    timing?.mark("create_audit_event");
 
     const result: StateUpdateResult = {
       recordId: record.id,
@@ -1175,8 +1195,11 @@ async function createStateUpdateRecord({
       input,
       result,
     });
+    timing?.mark("create_idempotency_finalize");
 
     return record;
+  }).finally(() => {
+    timing?.mark("create_transaction_end");
   });
 }
 
@@ -1189,6 +1212,7 @@ async function updateStateUpdateRecord({
   input,
   mutation,
   requestedStates,
+  timing,
   userId,
 }: {
   appId: string;
@@ -1199,6 +1223,7 @@ async function updateStateUpdateRecord({
   input: StateUpdateInput;
   mutation: StateUpdateMutation;
   requestedStates: Record<string, StateOption>;
+  timing?: StateUpdateWorkflowTiming;
   userId: string;
 }) {
   void requestedStates;
@@ -1207,6 +1232,7 @@ async function updateStateUpdateRecord({
     .filter((field) => mutableFieldIds.includes(field.id) && field.type === "RELATION")
     .map((field) => field.id);
 
+  timing?.mark("update_transaction_begin");
   return prisma.$transaction(async (tx) => {
     const relationChanges = await buildRelationChanges({
       contractId,
@@ -1214,6 +1240,7 @@ async function updateStateUpdateRecord({
       oldRelations: existing.record.outgoingRelations,
       newRelations: mutation.relations.filter((relation) => mutableRelationFieldIds.includes(relation.fieldId)),
     });
+    timing?.mark("update_relation_changes");
 
     await tx.entityValue.deleteMany({
       where: {
@@ -1221,16 +1248,20 @@ async function updateStateUpdateRecord({
         entityRecordId: existing.record.id,
       },
     });
+    timing?.mark("update_delete_values");
     await writeEntityValues(tx, existing.record.id, mutation.values.filter((value) => mutableFieldIds.includes(value.fieldId)));
+    timing?.mark("update_write_values");
     await syncEntityRelations(
       tx,
       existing.record.id,
       mutation.relations.filter((relation) => mutableRelationFieldIds.includes(relation.fieldId)),
     );
+    timing?.mark("update_sync_relations");
     const record = await tx.entityRecord.update({
       data: { displayName: existing.record.displayName },
       where: { id: existing.record.id },
     });
+    timing?.mark("update_entity_record");
 
     await createAuditEvent(tx, {
       actorUserId: userId,
@@ -1250,6 +1281,7 @@ async function updateStateUpdateRecord({
       },
       summary: `Actualizó ${context.targetEntityType.name} ${record.displayName}`,
     });
+    timing?.mark("update_audit_event");
 
     if (relationChanges.added.length > 0) {
       await createAuditEvent(tx, {
@@ -1262,6 +1294,7 @@ async function updateStateUpdateRecord({
         metadata: { apiExternalAppId: appId, displayName: record.displayName, workflowKey: "state-update" },
         summary: `Agregó relaciones en ${context.targetEntityType.name} ${record.displayName}`,
       });
+      timing?.mark("update_relation_added_audit");
     }
 
     if (relationChanges.removed.length > 0) {
@@ -1275,6 +1308,7 @@ async function updateStateUpdateRecord({
         metadata: { apiExternalAppId: appId, displayName: record.displayName, workflowKey: "state-update" },
         summary: `Quitó relaciones en ${context.targetEntityType.name} ${record.displayName}`,
       });
+      timing?.mark("update_relation_removed_audit");
     }
 
     const result: StateUpdateResult = {
@@ -1292,8 +1326,11 @@ async function updateStateUpdateRecord({
       input,
       result,
     });
+    timing?.mark("update_idempotency_finalize");
 
     return record;
+  }).finally(() => {
+    timing?.mark("update_transaction_end");
   });
 }
 
@@ -1672,6 +1709,7 @@ async function registerStateUpdateIdempotency({
   body,
   contractId,
   targetEntityTypeId,
+  timing,
   userId,
 }: {
   appId: string;
@@ -1679,6 +1717,7 @@ async function registerStateUpdateIdempotency({
   body: StateUpdateInput;
   contractId: string;
   targetEntityTypeId: string;
+  timing?: StateUpdateWorkflowTiming;
   userId: string;
 }) {
   if (!body.clientRequestId) {
@@ -1699,6 +1738,7 @@ async function registerStateUpdateIdempotency({
   };
 
   try {
+    timing?.mark("idempotency_reserve_start");
     await prisma.apiIdempotencyKey.create({
       data: {
         clientRequestId: body.clientRequestId,
@@ -1709,6 +1749,7 @@ async function registerStateUpdateIdempotency({
         requestHash,
       },
     });
+    timing?.mark("idempotency_reserve");
 
     return { key, ok: true as const, replay: false as const };
   } catch (error) {
@@ -1721,6 +1762,7 @@ async function registerStateUpdateIdempotency({
       clientRequestId: body.clientRequestId,
       operation,
       requestHash,
+      timing,
     });
 
     if (!replay.ok) {
@@ -1770,17 +1812,21 @@ async function resolveStateUpdateIdempotencyReplay({
   clientRequestId,
   operation,
   requestHash,
+  timing,
 }: {
   appId: string;
   clientRequestId: string;
   operation: string;
   requestHash: string;
+  timing?: StateUpdateWorkflowTiming;
 }) {
+  timing?.mark("idempotency_replay_read_start");
   const firstRead = await readStateUpdateIdempotency({
     appId,
     clientRequestId,
     operation,
   });
+  timing?.mark("idempotency_replay_read");
 
   if (!firstRead) {
     return {
@@ -1802,6 +1848,7 @@ async function resolveStateUpdateIdempotencyReplay({
         appId,
         clientRequestId,
         operation,
+        timing,
       });
 
   if (!existing) {
@@ -1852,21 +1899,27 @@ async function waitForStateUpdateIdempotencyResult({
   appId,
   clientRequestId,
   operation,
+  timing,
 }: {
   appId: string;
   clientRequestId: string;
   operation: string;
+  timing?: StateUpdateWorkflowTiming;
 }) {
+  timing?.mark("idempotency_wait_start");
   for (let attempt = 0; attempt < 12; attempt += 1) {
     const existing = await readStateUpdateIdempotency({ appId, clientRequestId, operation });
 
     if (!existing || existing.responseBody || attempt === 11) {
+      timing?.mark(`idempotency_wait_attempt_${attempt + 1}`);
+      timing?.mark("idempotency_wait");
       return existing;
     }
 
     await sleep(50);
   }
 
+  timing?.mark("idempotency_wait");
   return null;
 }
 
@@ -1876,15 +1929,18 @@ async function persistStateUpdateResultIfNeeded({
   idempotencyKey,
   input,
   result,
+  timing,
 }: {
   appId: string;
   context: StateUpdateContext;
   idempotencyKey: StateUpdateIdempotencyKey | null;
   input: StateUpdateInput;
   result: StateUpdateResult;
+  timing?: StateUpdateWorkflowTiming;
 }) {
   if (!input.clientRequestId || !idempotencyKey) return;
 
+  timing?.mark("idempotency_finalize_start");
   await prisma.apiIdempotencyKey.update({
     data: stateUpdateIdempotencyResultData({
       context,
@@ -1899,6 +1955,7 @@ async function persistStateUpdateResultIfNeeded({
       },
     },
   });
+  timing?.mark("idempotency_finalize");
 }
 
 async function persistStateUpdateResultInTransaction(

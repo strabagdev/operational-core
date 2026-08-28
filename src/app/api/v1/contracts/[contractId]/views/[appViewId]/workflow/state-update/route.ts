@@ -102,12 +102,17 @@ function createStateUpdateRouteTiming() {
   return {
     finish(result: string, status?: number) {
       const totalDurationMs = Date.now() - startedAt;
+      const phaseDurations = phaseDurationMs(phases, totalDurationMs);
+      const slowestPhase = Object.entries(phaseDurations)
+        .sort((left, right) => right[1] - left[1])[0] ?? null;
 
       console.info("state-update workflow POST timing", {
         appView: scope.appView,
         contract: scope.contract,
+        phaseDurations,
         phases,
         result,
+        slowestPhase: slowestPhase ? { durationMs: slowestPhase[1], phase: slowestPhase[0] } : null,
         status: status ?? null,
         totalDurationMs,
       });
@@ -126,6 +131,25 @@ function createStateUpdateRouteTiming() {
 
 function fingerprint(value: string) {
   return createHash("sha256").update(value).digest("hex").slice(0, 12);
+}
+
+function phaseDurationMs(phases: Record<string, number>, totalDurationMs: number) {
+  const entries = Object.entries(phases)
+    .filter(([, offset]) => Number.isFinite(offset))
+    .sort((left, right) => left[1] - right[1]);
+  const durations: Record<string, number> = {};
+  let previousOffset = 0;
+  let previousPhase = "route_start";
+
+  for (const [phase, offset] of entries) {
+    durations[previousPhase] = Math.max(0, offset - previousOffset);
+    previousOffset = offset;
+    previousPhase = phase;
+  }
+
+  durations[previousPhase] = Math.max(0, totalDurationMs - previousOffset);
+
+  return durations;
 }
 
 async function readJsonBody(request: Request) {
