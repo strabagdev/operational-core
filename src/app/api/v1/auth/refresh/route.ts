@@ -11,6 +11,7 @@ import {
   requireApiRefreshCookieOrigin,
   rotateApiRefreshToken,
 } from "@/lib/api-auth";
+import { applyApiDiagnosticsHeaders, createApiServerTiming } from "@/lib/api-diagnostics";
 import { badRequest, internalError, success } from "@/lib/api-response";
 import { isDatabaseUnavailableError } from "@/lib/prisma-resilience";
 
@@ -21,7 +22,9 @@ const nativeRefreshSchema = z.object({
 export const runtime = "nodejs";
 
 export async function POST(request: Request) {
+  const timing = createApiServerTiming("api auth refresh timing");
   const transport = getApiRefreshTokenTransport(request);
+  timing.mark("request_parse");
   let refreshToken: string | null = null;
 
   if (transport === "native") {
@@ -30,35 +33,49 @@ export async function POST(request: Request) {
     try {
       body = await request.json();
     } catch {
-      return badRequest("Body JSON invalido", "INVALID_JSON");
+      const response = badRequest("Body JSON invalido", "INVALID_JSON");
+
+      return applyApiDiagnosticsHeaders(response, request, timing.finish("invalid_json", response.status));
     }
 
     const parsedBody = nativeRefreshSchema.safeParse(body);
+    timing.mark("token_lookup");
 
     if (!parsedBody.success) {
-      return badRequest("Refresh token invalido", "INVALID_REFRESH_BODY");
+      const response = badRequest("Refresh token invalido", "INVALID_REFRESH_BODY");
+
+      return applyApiDiagnosticsHeaders(response, request, timing.finish("invalid_body", response.status));
     }
 
     refreshToken = parsedBody.data.refreshToken;
   } else {
     const origin = requireApiRefreshCookieOrigin(request);
+    timing.mark("token_lookup");
 
     if (!origin.ok) {
-      return apiRefreshFailureResponse(origin.reason);
+      const response = apiRefreshFailureResponse(origin.reason);
+
+      return applyApiDiagnosticsHeaders(response, request, timing.finish("origin_error", response.status));
     }
 
     refreshToken = extractApiRefreshTokenCookie(request);
   }
 
   if (!refreshToken) {
-    return apiRefreshFailureResponse("missing-refresh-token");
+    const response = apiRefreshFailureResponse("missing-refresh-token");
+
+    return applyApiDiagnosticsHeaders(response, request, timing.finish("missing_token", response.status));
   }
 
   try {
+    timing.mark("token_validation");
     const result = await rotateApiRefreshToken(refreshToken);
+    timing.mark("token_rotation");
 
     if (!result.ok) {
-      return apiRefreshFailureResponse(result.reason);
+      const response = apiRefreshFailureResponse(result.reason);
+
+      return applyApiDiagnosticsHeaders(response, request, timing.finish("refresh_error", response.status));
     }
 
     const response = success({
@@ -77,19 +94,25 @@ export async function POST(request: Request) {
       );
     }
 
-    return response;
+    timing.mark("response_generation");
+    return applyApiDiagnosticsHeaders(response, request, timing.finish("ok", response.status));
   } catch (error) {
     if (error instanceof ApiAuthConfigurationError) {
-      return internalError(
+      const response = internalError(
         "Autenticacion API no configurada",
         "API_AUTH_SECRET_MISSING",
       );
+
+      return applyApiDiagnosticsHeaders(response, request, timing.finish("configuration_error", response.status));
     }
 
     if (isDatabaseUnavailableError(error)) {
-      return apiDatabaseUnavailableResponse();
+      const response = apiDatabaseUnavailableResponse();
+
+      return applyApiDiagnosticsHeaders(response, request, timing.finish("db_unavailable", response.status));
     }
 
+    timing.finish("thrown");
     throw error;
   }
 }

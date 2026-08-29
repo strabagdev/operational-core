@@ -60,15 +60,18 @@ function refreshRequest({
   cookieToken = refreshToken,
   native = false,
   origin = allowedOrigin,
+  requestId,
 }: {
   body?: unknown;
   cookieToken?: string | null;
   native?: boolean;
   origin?: string;
+  requestId?: string;
 } = {}) {
   const headers = new Headers();
 
   if (origin) headers.set("Origin", origin);
+  if (requestId) headers.set("X-Opco-Request-Id", requestId);
   if (native) headers.set("X-Opco-Client-Platform", "native");
   if (cookieToken) headers.set("Cookie", `${apiRefreshTokenCookieName}=${encodeURIComponent(cookieToken)}`);
   if (body !== undefined) headers.set("Content-Type", "application/json");
@@ -115,7 +118,7 @@ describe("POST /api/v1/auth/refresh", () => {
   it("rotates a valid web refresh token and returns only an access token in JSON", async () => {
     apiRefreshTokenFindUnique.mockResolvedValueOnce(storedRefreshToken() as never);
 
-    const response = await POST(refreshRequest());
+    const response = await POST(refreshRequest({ requestId: "opco_diag_refresh_1" }));
     const body = await response.json() as {
       data: {
         accessToken: string;
@@ -126,6 +129,15 @@ describe("POST /api/v1/auth/refresh", () => {
     };
 
     expect(response.status).toBe(200);
+    expect(response.headers.get("X-Opco-Request-Id")).toBe("opco_diag_refresh_1");
+    expect(response.headers.get("Server-Timing")).toContain("total;dur=");
+    expect(response.headers.get("Server-Timing")).toContain("request_parse;dur=");
+    expect(response.headers.get("Server-Timing")).toContain("token_lookup;dur=");
+    expect(response.headers.get("Server-Timing")).toContain("token_validation;dur=");
+    expect(response.headers.get("Server-Timing")).toContain("token_rotation;dur=");
+    expect(response.headers.get("Server-Timing")).toContain("response_generation;dur=");
+    expect(response.headers.get("Server-Timing")).not.toContain(refreshToken);
+    expect(response.headers.get("Server-Timing")).not.toContain("family_1");
     expect(body.data.accessToken).toEqual(expect.any(String));
     expect(body.data.expiresIn).toBe(3600);
     expect(body.data.tokenType).toBe("Bearer");
@@ -245,9 +257,11 @@ describe("POST /api/v1/auth/refresh", () => {
     );
     apiRefreshTokenFindUnique.mockRejectedValue(connectionError);
 
-    const response = await POST(refreshRequest());
+    const response = await POST(refreshRequest({ requestId: "opco_diag_refresh_db" }));
 
     expect(response.status).toBe(503);
+    expect(response.headers.get("X-Opco-Request-Id")).toBe("opco_diag_refresh_db");
+    expect(response.headers.get("Server-Timing")).toContain("result;desc=\"db_unavailable\"");
     expect(await response.json()).toEqual({
       ok: false,
       error: {
@@ -256,6 +270,22 @@ describe("POST /api/v1/auth/refresh", () => {
       },
     });
     expect(transaction).not.toHaveBeenCalled();
+  });
+
+  it("echoes a sanitized request id and reports token reuse diagnostics without sensitive values", async () => {
+    apiRefreshTokenFindUnique.mockResolvedValueOnce(storedRefreshToken({
+      replacedByTokenId: "refresh_2",
+      revokedAt: new Date(),
+    }) as never);
+
+    const response = await POST(refreshRequest({ requestId: "opco_diag_reused" }));
+    const serverTiming = response.headers.get("Server-Timing") ?? "";
+
+    expect(response.status).toBe(401);
+    expect(response.headers.get("X-Opco-Request-Id")).toBe("opco_diag_reused");
+    expect(serverTiming).toContain("result;desc=\"refresh_error\"");
+    expect(serverTiming).not.toContain(refreshToken);
+    expect(serverTiming).not.toContain("family_1");
   });
 
   it("rejects web cookie refresh from an unauthorized origin before using the token", async () => {

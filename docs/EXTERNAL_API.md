@@ -209,6 +209,8 @@ Every successful refresh:
 
 If an already-rotated refresh token is reused, Operational Core revokes every active token in that family and rejects the request with `REFRESH_TOKEN_REUSED`.
 
+If a client times out or loses the response after Operational Core has rotated the token, retrying the same refresh token is unsafe. The original token may already be revoked and linked to its replacement, so a second use can look exactly like token theft and produce `REFRESH_TOKEN_REUSED`. Clients should treat refresh timeouts, network errors, `503`, and `DB_UNAVAILABLE` as recoverable uncertainty: preserve local credentials and pending work, do not send business writes for that blocked run, and retry only from a later normal auth path.
+
 Expired refresh token rows can be deleted later by a maintenance task. No cron is required for runtime correctness.
 
 ## POST /api/v1/auth/refresh
@@ -249,6 +251,8 @@ Success response:
 ```
 
 Native responses include the rotated `refreshToken` in `data`; Web responses rotate the HttpOnly cookie and never expose the refresh token in JSON.
+
+Refresh responses include sanitized diagnostics headers when possible. A valid `X-Opco-Request-Id` request header is echoed, and `Server-Timing` reports high-level phases such as request parsing, token lookup, validation, rotation, response generation, and result. These headers must never include raw tokens, cookies, token family ids, names, or payload values.
 
 Errors:
 
