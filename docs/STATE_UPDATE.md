@@ -17,6 +17,10 @@ State-update AppViews use `type = WORKFLOW` and `workflowKey = state-update`. Th
 
 `attendance` remains a compatibility preset. Its AppView keeps `workflowKey = attendance`, while the backend maps Persona, Fecha, Estado, and Observacion into this engine with `subject-date` uniqueness and `update-current` history.
 
+## Operational Diagnostics
+
+Workflow endpoints echo sanitized `X-Opco-Request-Id` values and expose `Server-Timing` for browser diagnostics. `POST /workflow/state-update` reports route, auth/body/engine/serialization phases plus engine timing marks; `GET /workflow/state-update` and Attendance workflow GET/POST expose route-level timing. Timing logs fingerprint contract/appView scope and never include payloads, tokens, names, full IDs, or form values.
+
 ## Online/Offline Contract
 
 Clients POST this wire format:

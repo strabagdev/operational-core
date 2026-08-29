@@ -76,7 +76,8 @@ describe("API CORS helpers", () => {
     expect(headers.get("Access-Control-Allow-Credentials")).toBe("true");
     expect(headers.get("Vary")).toBe("Origin");
     expect(headers.get("Access-Control-Allow-Methods")).toBe("GET,POST,PATCH,OPTIONS");
-    expect(headers.get("Access-Control-Allow-Headers")).toBe("Authorization,Content-Type,X-Opco-Client-Platform");
+    expect(headers.get("Access-Control-Allow-Headers")).toBe("Authorization,Content-Type,X-Opco-Client-Platform,X-Opco-Request-Id");
+    expect(headers.get("Access-Control-Expose-Headers")).toBe("Server-Timing,X-Opco-Request-Id");
     expect(headers.get("Access-Control-Max-Age")).toBe("600");
 
     const deniedHeaders = getApiCorsHeaders(request({ origin: deniedOrigin }), {
@@ -128,7 +129,7 @@ describe("API CORS proxy integration", () => {
     expect(response.status).toBe(204);
     expect(response.headers.get("Access-Control-Allow-Origin")).toBe(secondAllowedOrigin);
     expect(response.headers.get("Access-Control-Allow-Credentials")).toBe("true");
-    expect(response.headers.get("Access-Control-Allow-Headers")).toBe("Authorization,Content-Type,X-Opco-Client-Platform");
+    expect(response.headers.get("Access-Control-Allow-Headers")).toBe("Authorization,Content-Type,X-Opco-Client-Platform,X-Opco-Request-Id");
     expect(response.headers.get("Vary")).toBe("Origin");
   });
 

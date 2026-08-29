@@ -75,7 +75,8 @@ Access-Control-Allow-Origin: <authorized-origin>
 Access-Control-Allow-Credentials: true
 Vary: Origin
 Access-Control-Allow-Methods: GET,POST,PATCH,OPTIONS
-Access-Control-Allow-Headers: Authorization,Content-Type,X-Opco-Client-Platform
+Access-Control-Allow-Headers: Authorization,Content-Type,X-Opco-Client-Platform,X-Opco-Request-Id
+Access-Control-Expose-Headers: Server-Timing,X-Opco-Request-Id
 Access-Control-Max-Age: 600
 ```
 
@@ -84,6 +85,8 @@ Unauthorized origins still receive the normal API response or preflight status, 
 Cookie-based refresh and logout additionally reject Web requests whose `Origin` is not present in `API_ALLOWED_ORIGINS`. This protects cross-origin cookie endpoints from CSRF instead of relying only on `SameSite=None`.
 
 Do not commit real secret values.
+
+Clients may send a sanitized `X-Opco-Request-Id` value to correlate browser diagnostics with API responses. Operational Core echoes a valid value or generates a server-side diagnostic id. Workflow diagnostics may also include `Server-Timing`; browsers can read both headers because they are explicitly exposed by CORS. These headers are operational metadata only and must not contain payloads, tokens, names, or raw record identifiers.
 
 ## POST /api/v1/auth/login
 

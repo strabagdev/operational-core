@@ -1,6 +1,5 @@
-import { createHash } from "node:crypto";
-
 import { requireApiContractAccess } from "@/lib/api-auth";
+import { applyApiDiagnosticsHeaders, createApiServerTiming } from "@/lib/api-diagnostics";
 import { badRequest, success } from "@/lib/api-response";
 import {
   getStateUpdateWorkflow,
@@ -13,11 +12,15 @@ export async function GET(
   request: Request,
   { params }: { params: Promise<{ appViewId: string; contractId: string }> },
 ) {
+  const timing = createApiServerTiming("state-update workflow GET timing");
   const { appViewId, contractId } = await params;
+  timing.setScope({ appViewId, contractId });
+  timing.mark("params");
   const access = await requireApiContractAccess(request, contractId);
+  timing.mark("auth_context");
 
   if (!access.ok) {
-    return access.response;
+    return applyApiDiagnosticsHeaders(access.response, request, timing.finish("auth_error", access.response.status));
   }
 
   const searchParams = new URL(request.url).searchParams;
@@ -29,19 +32,24 @@ export async function GET(
     subjectRecordId: searchParams.get("subjectRecordId"),
     userId: access.context.user.id,
   });
+  timing.mark("workflow_completed");
 
   if (!result.ok) {
-    return result.response;
+    return applyApiDiagnosticsHeaders(result.response, request, timing.finish("domain_error", result.response.status));
   }
 
-  return success(result.data);
+  const response = success(result.data);
+
+  timing.mark("response_serialization");
+
+  return applyApiDiagnosticsHeaders(response, request, timing.finish("ok", response.status));
 }
 
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ appViewId: string; contractId: string }> },
 ) {
-  const timing = createStateUpdateRouteTiming();
+  const timing = createApiServerTiming("state-update workflow POST timing");
   const { appViewId, contractId } = await params;
 
   timing.setScope({ appViewId, contractId });
@@ -53,8 +61,7 @@ export async function POST(
     timing.mark("auth_context");
 
     if (!access.ok) {
-      timing.finish("auth_error", access.response.status);
-      return access.response;
+      return applyApiDiagnosticsHeaders(access.response, request, timing.finish("auth_error", access.response.status));
     }
 
     const body = await readJsonBody(request);
@@ -62,8 +69,7 @@ export async function POST(
     timing.mark("request_body_parse");
 
     if (!body.ok) {
-      timing.finish("invalid_json", body.response.status);
-      return body.response;
+      return applyApiDiagnosticsHeaders(body.response, request, timing.finish("invalid_json", body.response.status));
     }
 
     const result = await saveStateUpdateWorkflow({
@@ -78,78 +84,17 @@ export async function POST(
     timing.mark("engine_completed");
 
     if (!result.ok) {
-      timing.finish("domain_error", result.response.status);
-      return result.response;
+      return applyApiDiagnosticsHeaders(result.response, request, timing.finish("domain_error", result.response.status));
     }
 
     const response = success(result.data);
 
     timing.mark("response_serialization");
-    timing.finish("ok", response.status);
-
-    return response;
+    return applyApiDiagnosticsHeaders(response, request, timing.finish("ok", response.status));
   } catch (error) {
     timing.finish("thrown");
     throw error;
   }
-}
-
-function createStateUpdateRouteTiming() {
-  const startedAt = Date.now();
-  const phases: Record<string, number> = {};
-  let scope: { appView: string; contract: string } = { appView: "unknown", contract: "unknown" };
-
-  return {
-    finish(result: string, status?: number) {
-      const totalDurationMs = Date.now() - startedAt;
-      const phaseDurations = phaseDurationMs(phases, totalDurationMs);
-      const slowestPhase = Object.entries(phaseDurations)
-        .sort((left, right) => right[1] - left[1])[0] ?? null;
-
-      console.info("state-update workflow POST timing", {
-        appView: scope.appView,
-        contract: scope.contract,
-        phaseDurations,
-        phases,
-        result,
-        slowestPhase: slowestPhase ? { durationMs: slowestPhase[1], phase: slowestPhase[0] } : null,
-        status: status ?? null,
-        totalDurationMs,
-      });
-    },
-    mark(phase: string) {
-      phases[phase] = Date.now() - startedAt;
-    },
-    setScope(nextScope: { appViewId: string; contractId: string }) {
-      scope = {
-        appView: fingerprint(nextScope.appViewId),
-        contract: fingerprint(nextScope.contractId),
-      };
-    },
-  };
-}
-
-function fingerprint(value: string) {
-  return createHash("sha256").update(value).digest("hex").slice(0, 12);
-}
-
-function phaseDurationMs(phases: Record<string, number>, totalDurationMs: number) {
-  const entries = Object.entries(phases)
-    .filter(([, offset]) => Number.isFinite(offset))
-    .sort((left, right) => left[1] - right[1]);
-  const durations: Record<string, number> = {};
-  let previousOffset = 0;
-  let previousPhase = "route_start";
-
-  for (const [phase, offset] of entries) {
-    durations[previousPhase] = Math.max(0, offset - previousOffset);
-    previousOffset = offset;
-    previousPhase = phase;
-  }
-
-  durations[previousPhase] = Math.max(0, totalDurationMs - previousOffset);
-
-  return durations;
 }
 
 async function readJsonBody(request: Request) {

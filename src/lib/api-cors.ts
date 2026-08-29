@@ -1,5 +1,6 @@
 const apiCorsAllowedMethods = "GET,POST,PATCH,OPTIONS";
-const apiCorsAllowedHeaders = "Authorization,Content-Type,X-Opco-Client-Platform";
+const apiCorsAllowedHeaders = "Authorization,Content-Type,X-Opco-Client-Platform,X-Opco-Request-Id";
+const apiCorsExposedHeaders = "Server-Timing,X-Opco-Request-Id";
 const apiCorsMaxAge = "600";
 
 type ApiCorsEnv = {
@@ -43,6 +44,7 @@ export function getApiCorsHeaders(request: Request, env?: ApiCorsEnv) {
   headers.set("Vary", "Origin");
   headers.set("Access-Control-Allow-Methods", apiCorsAllowedMethods);
   headers.set("Access-Control-Allow-Headers", apiCorsAllowedHeaders);
+  headers.set("Access-Control-Expose-Headers", apiCorsExposedHeaders);
   headers.set("Access-Control-Max-Age", apiCorsMaxAge);
 
   if (origin) {
