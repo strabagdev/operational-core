@@ -104,6 +104,11 @@ describe("getApiReport", () => {
       },
     }));
     expect(result.data.config.presentationMode).toBe("MATRIX");
+    expect(result.data.config.timeFilter).toEqual({
+      allowChange: true,
+      defaultPeriod: "CURRENT_MONTH",
+      mode: "RANGE",
+    });
     expect(result.data.fields.map((field) => field.name)).toEqual(["Fecha", "Persona", "Estado"]);
     expect(result.data.fields.find((field) => field.id === "status_field")?.options?.[0]).toMatchObject({
       label: "Presente",

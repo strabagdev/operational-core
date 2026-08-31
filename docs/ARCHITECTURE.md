@@ -219,7 +219,7 @@ Current `AppView.type` values:
 
 Although `AppView.config` is stored as JSON, it is not treated as arbitrary JSON. Server-side validators check the required shape for each type, verify every referenced `EntityType` belongs to the same contract, and for `BOARD` verify the grouping field exists and is active in that entity type. Workflow configs are also validated against active target fields, relation targets, and supported field types.
 
-`REPORT` is separate from `RECORDS`, `WORKFLOW`, `BOARD`, and `DASHBOARD`. It is a configurable query/presentation surface, not a traditional table-only view. The first presentation modes are:
+`REPORT` is separate from `RECORDS`, `WORKFLOW`, `BOARD`, and `DASHBOARD`. It is a configurable query/presentation surface, not a traditional table-only view. Its temporal scope is configured with `timeFilter`: `mode = RANGE | MONTH`, `defaultPeriod = CURRENT_MONTH`, and `allowChange`. Existing reports without `timeFilter` are read as editable current-month `RANGE` reports for compatibility. The first presentation modes are:
 
 - `TABLE`: each row is one record. `table.visibleFieldIds` controls visible columns, and optional `defaultSortFieldId` plus `defaultSortDirection` controls default ordering.
 - `MATRIX`: records are transformed into dynamic rows and columns. `matrix.rowFieldId` defines rows, `matrix.columnFieldId` defines generated columns, `matrix.valueFieldId` defines cell values, and optional `summaryFieldId` builds a lateral per-row count summary.

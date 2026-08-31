@@ -61,6 +61,7 @@ export type ReportAppViewConfig = {
   type: "REPORT";
   entityTypeId: string;
   dateFieldId: string;
+  timeFilter: ReportTimeFilterConfig;
 } & (
   | {
       presentationMode: "TABLE";
@@ -82,6 +83,18 @@ export type ReportAppViewConfig = {
       table?: never;
     }
 );
+
+export type ReportTimeFilterConfig = {
+  mode: "RANGE" | "MONTH";
+  defaultPeriod: "CURRENT_MONTH";
+  allowChange: boolean;
+};
+
+const defaultReportTimeFilter = {
+  allowChange: true,
+  defaultPeriod: "CURRENT_MONTH",
+  mode: "RANGE",
+} as const satisfies ReportTimeFilterConfig;
 
 export type AttendanceWorkflowConfig = {
       type: "WORKFLOW";
@@ -152,6 +165,9 @@ export function getAppViewInput(formData: FormData) {
       observationFieldId: formData.get("observationFieldId"),
       personFieldId: formData.get("personFieldId"),
       presentationMode: formData.get("presentationMode"),
+      reportTimeAllowChange: parseFormBoolean(formData, "reportTimeAllowChange"),
+      reportTimeDefaultPeriod: formData.get("reportTimeDefaultPeriod"),
+      reportTimeMode: formData.get("reportTimeMode"),
       requiredStateFieldIds: formData.getAll("requiredStateFieldIds"),
       reportColumnFieldId: formData.get("reportColumnFieldId"),
       reportRowFieldId: formData.get("reportRowFieldId"),
@@ -531,6 +547,7 @@ async function validateAppViewConfig({
         type,
         entityTypeId: config.entityTypeId,
         dateFieldId: config.dateFieldId,
+        timeFilter: config.timeFilter,
         presentationMode: "TABLE",
         table: {
           visibleFieldIds: config.table.visibleFieldIds,
@@ -544,6 +561,7 @@ async function validateAppViewConfig({
       type,
       entityTypeId: config.entityTypeId,
       dateFieldId: config.dateFieldId,
+      timeFilter: config.timeFilter,
       presentationMode: "MATRIX",
       matrix: {
         rowFieldId: config.matrix.rowFieldId,
@@ -587,6 +605,11 @@ const recordsConfigInputSchema = z.object({
 const reportBaseConfigInputSchema = z.object({
   entityTypeId: z.string().trim().min(1, "Selecciona una entidad."),
   dateFieldId: z.string().trim().min(1, "Selecciona el campo de fecha."),
+  timeFilter: z.object({
+    mode: z.enum(["RANGE", "MONTH"]),
+    defaultPeriod: z.literal("CURRENT_MONTH"),
+    allowChange: z.boolean(),
+  }).default(defaultReportTimeFilter),
 });
 
 const reportConfigInputSchema = z.discriminatedUnion("presentationMode", [
@@ -765,6 +788,7 @@ function parseReportConfigInput(rawConfig: unknown) {
     return reportConfigInputSchema.parse({
       entityTypeId: raw.entityTypeId,
       dateFieldId: raw.dateFieldId,
+      timeFilter: parseReportTimeFilter(raw),
       presentationMode,
       matrix: {
         rowFieldId: raw.reportRowFieldId ?? matrix.rowFieldId,
@@ -780,6 +804,7 @@ function parseReportConfigInput(rawConfig: unknown) {
   return reportConfigInputSchema.parse({
     entityTypeId: raw.entityTypeId,
     dateFieldId: raw.dateFieldId,
+    timeFilter: parseReportTimeFilter(raw),
     presentationMode,
     table: {
       visibleFieldIds: uniqueStrings(stringArray(raw.visibleFieldIds ?? table.visibleFieldIds)),
@@ -787,6 +812,19 @@ function parseReportConfigInput(rawConfig: unknown) {
       defaultSortDirection: raw.defaultSortDirection ?? table.defaultSortDirection ?? "desc",
     },
   });
+}
+
+function parseReportTimeFilter(raw: Record<string, unknown>) {
+  const stored = isRecord(raw.timeFilter) ? raw.timeFilter : {};
+  const mode = raw.reportTimeMode ?? stored.mode ?? defaultReportTimeFilter.mode;
+  const defaultPeriod = raw.reportTimeDefaultPeriod ?? stored.defaultPeriod ?? defaultReportTimeFilter.defaultPeriod;
+  const allowChange = typeof raw.reportTimeAllowChange === "boolean"
+    ? raw.reportTimeAllowChange
+    : typeof stored.allowChange === "boolean"
+      ? stored.allowChange
+      : defaultReportTimeFilter.allowChange;
+
+  return { allowChange, defaultPeriod, mode };
 }
 
 function validateReportAppViewFields({

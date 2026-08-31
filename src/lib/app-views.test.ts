@@ -752,6 +752,7 @@ describe("AppView config validation", () => {
         defaultSortFieldId: "date_field",
         entityTypeId: "attendance",
         presentationMode: "TABLE",
+        reportTimeAllowChange: true,
         type: "REPORT",
         visibleFieldIds: ["person_field", "date_field", "status_field", "person_field"],
       })),
@@ -762,6 +763,11 @@ describe("AppView config validation", () => {
         config: {
           entityTypeId: "attendance",
           dateFieldId: "date_field",
+          timeFilter: {
+            allowChange: true,
+            defaultPeriod: "CURRENT_MONTH",
+            mode: "RANGE",
+          },
           presentationMode: "TABLE",
           table: {
             visibleFieldIds: ["person_field", "date_field", "status_field"],
@@ -784,6 +790,9 @@ describe("AppView config validation", () => {
         dateFieldId: "date_field",
         entityTypeId: "attendance",
         presentationMode: "MATRIX",
+        reportTimeAllowChange: false,
+        reportTimeMode: "MONTH",
+        reportTimeDefaultPeriod: "CURRENT_MONTH",
         reportColumnFieldId: "date_field",
         reportRowFieldId: "person_field",
         reportSummaryFieldId: "status_field",
@@ -797,6 +806,11 @@ describe("AppView config validation", () => {
         config: {
           entityTypeId: "attendance",
           dateFieldId: "date_field",
+          timeFilter: {
+            allowChange: false,
+            defaultPeriod: "CURRENT_MONTH",
+            mode: "MONTH",
+          },
           presentationMode: "MATRIX",
           matrix: {
             rowFieldId: "person_field",
@@ -1065,6 +1079,11 @@ describe("AppView administration", () => {
       config: {
         entityTypeId: "attendance",
         dateFieldId: "date_field",
+        timeFilter: {
+          allowChange: true,
+          defaultPeriod: "CURRENT_MONTH",
+          mode: "MONTH",
+        },
         presentationMode: "MATRIX",
         matrix: {
           columnFieldId: "date_field",
@@ -1076,11 +1095,36 @@ describe("AppView administration", () => {
     } as never)).toEqual({
       entityTypeId: "attendance",
       dateFieldId: "date_field",
+      timeFilter: {
+        allowChange: true,
+        defaultPeriod: "CURRENT_MONTH",
+        mode: "MONTH",
+      },
       presentationMode: "MATRIX",
       matrix: {
         columnFieldId: "date_field",
         rowFieldId: "person_field",
         valueFieldId: "status_field",
+      },
+      type: "REPORT",
+    });
+
+    expect(parseAppViewConfig({
+      config: {
+        entityTypeId: "attendance",
+        dateFieldId: "date_field",
+        presentationMode: "TABLE",
+        table: {
+          visibleFieldIds: ["person_field"],
+          defaultSortDirection: "asc",
+        },
+      },
+      type: "REPORT",
+    } as never)).toMatchObject({
+      timeFilter: {
+        allowChange: true,
+        defaultPeriod: "CURRENT_MONTH",
+        mode: "RANGE",
       },
       type: "REPORT",
     });

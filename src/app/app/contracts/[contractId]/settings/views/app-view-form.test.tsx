@@ -94,6 +94,11 @@ describe("AppViewForm", () => {
             dateFieldId: "date_field",
             entityTypeId: "attendance",
             presentationMode: "TABLE",
+            timeFilter: {
+              allowChange: true,
+              defaultPeriod: "CURRENT_MONTH",
+              mode: "RANGE",
+            },
             table: {
               defaultSortDirection: "desc",
               defaultSortFieldId: "date_field",
@@ -112,8 +117,12 @@ describe("AppViewForm", () => {
     );
 
     expect(html).toContain("Configuración del reporte");
+    expect(html).toContain("Filtro temporal");
     expect(html).toContain("Campo de fecha");
     expect(html).toContain("Presentación");
+    expect(html).toContain("Rango");
+    expect(html).toContain("Mes actual");
+    expect(html).toContain("Permitir cambiar período");
     expect(html).toContain("Tabla");
     expect(html).toContain("Columnas visibles");
     expect(html).toContain('name="visibleFieldIds"');
@@ -138,6 +147,11 @@ describe("AppViewForm", () => {
               valueFieldId: "status_field",
             },
             presentationMode: "MATRIX",
+            timeFilter: {
+              allowChange: false,
+              defaultPeriod: "CURRENT_MONTH",
+              mode: "MONTH",
+            },
             type: "REPORT",
           },
           icon: "clipboard-check",
@@ -151,6 +165,7 @@ describe("AppViewForm", () => {
     );
 
     expect(html).toContain("Matriz");
+    expect(html).toContain('value="MONTH" selected=""');
     expect(html).toContain("Filas");
     expect(html).toContain("Columnas");
     expect(html).toContain("Valor");

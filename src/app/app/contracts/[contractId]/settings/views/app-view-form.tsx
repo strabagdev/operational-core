@@ -178,6 +178,19 @@ export function AppViewForm({
     valueFromState(state, "presentationMode") ||
     (initialValues?.config.type === "REPORT" ? initialValues.config.presentationMode : "TABLE"),
   );
+  const [reportTimeMode, setReportTimeMode] = useState(
+    valueFromState(state, "reportTimeMode") ||
+    (initialValues?.config.type === "REPORT" ? initialValues.config.timeFilter?.mode ?? "RANGE" : "RANGE"),
+  );
+  const [reportTimeDefaultPeriod, setReportTimeDefaultPeriod] = useState(
+    valueFromState(state, "reportTimeDefaultPeriod") ||
+    (initialValues?.config.type === "REPORT" ? initialValues.config.timeFilter?.defaultPeriod ?? "CURRENT_MONTH" : "CURRENT_MONTH"),
+  );
+  const [reportTimeAllowChange, setReportTimeAllowChange] = useState(
+    state.values ? valueFromState(state, "reportTimeAllowChange") === "on" : initialValues?.config.type === "REPORT"
+      ? initialValues.config.timeFilter?.allowChange ?? true
+      : true,
+  );
   const [visibleFieldIds, setVisibleFieldIds] = useState<string[]>(
     valuesFromState(state, "visibleFieldIds") ??
       (initialValues?.config.type === "REPORT" && initialValues.config.presentationMode === "TABLE"
@@ -333,6 +346,9 @@ export function AppViewForm({
         defaultCheckInOptionId={defaultCheckInOptionId}
         historyMode={historyMode}
         requiredStateFieldIds={requiredStateFieldIds}
+        reportTimeAllowChange={reportTimeAllowChange}
+        reportTimeDefaultPeriod={reportTimeDefaultPeriod}
+        reportTimeMode={reportTimeMode}
         reportColumnFieldId={reportColumnFieldId}
         reportRowFieldId={reportRowFieldId}
         reportSummaryFieldId={reportSummaryFieldId}
@@ -348,6 +364,9 @@ export function AppViewForm({
         setPersonFieldId={setPersonFieldId}
         setPresentationMode={setPresentationMode}
         setRequiredStateFieldIds={setRequiredStateFieldIds}
+        setReportTimeAllowChange={setReportTimeAllowChange}
+        setReportTimeDefaultPeriod={setReportTimeDefaultPeriod}
+        setReportTimeMode={setReportTimeMode}
         setReportColumnFieldId={setReportColumnFieldId}
         setReportRowFieldId={setReportRowFieldId}
         setReportSummaryFieldId={setReportSummaryFieldId}
@@ -419,6 +438,9 @@ function ConfigFields({
   personFieldId,
   presentationMode,
   requiredStateFieldIds,
+  reportTimeAllowChange,
+  reportTimeDefaultPeriod,
+  reportTimeMode,
   reportColumnFieldId,
   reportRowFieldId,
   reportSummaryFieldId,
@@ -436,6 +458,9 @@ function ConfigFields({
   setPersonFieldId,
   setPresentationMode,
   setRequiredStateFieldIds,
+  setReportTimeAllowChange,
+  setReportTimeDefaultPeriod,
+  setReportTimeMode,
   setReportColumnFieldId,
   setReportRowFieldId,
   setReportSummaryFieldId,
@@ -476,6 +501,9 @@ function ConfigFields({
   personFieldId: string;
   presentationMode: string;
   requiredStateFieldIds: Set<string>;
+  reportTimeAllowChange: boolean;
+  reportTimeDefaultPeriod: string;
+  reportTimeMode: string;
   reportColumnFieldId: string;
   reportRowFieldId: string;
   reportSummaryFieldId: string;
@@ -493,6 +521,9 @@ function ConfigFields({
   setPersonFieldId: (value: string) => void;
   setPresentationMode: (value: string) => void;
   setRequiredStateFieldIds: (value: Set<string>) => void;
+  setReportTimeAllowChange: (value: boolean) => void;
+  setReportTimeDefaultPeriod: (value: string) => void;
+  setReportTimeMode: (value: string) => void;
   setReportColumnFieldId: (value: string) => void;
   setReportRowFieldId: (value: string) => void;
   setReportSummaryFieldId: (value: string) => void;
@@ -769,6 +800,40 @@ function ConfigFields({
             value={presentationMode}
           />
         </div>
+        <fieldset className="grid gap-3 rounded-md border border-border p-3">
+          <legend className="px-1 text-sm font-medium">Filtro temporal</legend>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <SelectControl
+              label="Modo"
+              name="reportTimeMode"
+              onChange={setReportTimeMode}
+              options={[
+                { label: "Rango", value: "RANGE" },
+                { label: "Mes", value: "MONTH" },
+              ]}
+              value={reportTimeMode}
+            />
+            <SelectControl
+              label="Período inicial"
+              name="reportTimeDefaultPeriod"
+              onChange={setReportTimeDefaultPeriod}
+              options={[
+                { label: "Mes actual", value: "CURRENT_MONTH" },
+              ]}
+              value={reportTimeDefaultPeriod}
+            />
+          </div>
+          <label className="flex items-center gap-2 text-sm font-medium">
+            <input
+              checked={reportTimeAllowChange}
+              className="h-4 w-4"
+              name="reportTimeAllowChange"
+              onChange={(event) => setReportTimeAllowChange(event.target.checked)}
+              type="checkbox"
+            />
+            Permitir cambiar período
+          </label>
+        </fieldset>
         {presentationMode === "MATRIX" ? (
           <div className="grid gap-3 sm:grid-cols-2">
             <FieldSelect
