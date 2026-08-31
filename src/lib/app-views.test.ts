@@ -740,6 +740,114 @@ describe("AppView config validation", () => {
     ).rejects.toThrow("Selecciona un campo activo válido para Campo extra.");
   });
 
+  it("creates a valid REPORT TABLE view", async () => {
+    entityTypeFindFirst.mockResolvedValueOnce(attendanceEntityType() as never);
+
+    await createAppView(
+      "contract_1",
+      "user_1",
+      getAppViewInput(formData({
+        dateFieldId: "date_field",
+        defaultSortDirection: "desc",
+        defaultSortFieldId: "date_field",
+        entityTypeId: "attendance",
+        presentationMode: "TABLE",
+        type: "REPORT",
+        visibleFieldIds: ["person_field", "date_field", "status_field", "person_field"],
+      })),
+    );
+
+    expect(appViewCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        config: {
+          entityTypeId: "attendance",
+          dateFieldId: "date_field",
+          presentationMode: "TABLE",
+          table: {
+            visibleFieldIds: ["person_field", "date_field", "status_field"],
+            defaultSortFieldId: "date_field",
+            defaultSortDirection: "desc",
+          },
+        },
+        type: "REPORT",
+      }),
+    }));
+  });
+
+  it("creates a valid REPORT MATRIX view with optional summary", async () => {
+    entityTypeFindFirst.mockResolvedValueOnce(attendanceEntityType() as never);
+
+    await createAppView(
+      "contract_1",
+      "user_1",
+      getAppViewInput(formData({
+        dateFieldId: "date_field",
+        entityTypeId: "attendance",
+        presentationMode: "MATRIX",
+        reportColumnFieldId: "date_field",
+        reportRowFieldId: "person_field",
+        reportSummaryFieldId: "status_field",
+        reportValueFieldId: "status_field",
+        type: "REPORT",
+      })),
+    );
+
+    expect(appViewCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        config: {
+          entityTypeId: "attendance",
+          dateFieldId: "date_field",
+          presentationMode: "MATRIX",
+          matrix: {
+            rowFieldId: "person_field",
+            columnFieldId: "date_field",
+            valueFieldId: "status_field",
+            summaryFieldId: "status_field",
+          },
+        },
+        type: "REPORT",
+      }),
+    }));
+  });
+
+  it("rejects REPORT when date field is not date compatible", async () => {
+    entityTypeFindFirst.mockResolvedValueOnce(attendanceEntityType() as never);
+
+    await expect(
+      createAppView(
+        "contract_1",
+        "user_1",
+        getAppViewInput(formData({
+          dateFieldId: "status_field",
+          entityTypeId: "attendance",
+          presentationMode: "TABLE",
+          type: "REPORT",
+          visibleFieldIds: ["person_field"],
+        })),
+      ),
+    ).rejects.toThrow("El campo de fecha debe ser de tipo fecha.");
+  });
+
+  it("rejects REPORT MATRIX when a configured field is outside the entity", async () => {
+    entityTypeFindFirst.mockResolvedValueOnce(attendanceEntityType() as never);
+
+    await expect(
+      createAppView(
+        "contract_1",
+        "user_1",
+        getAppViewInput(formData({
+          dateFieldId: "date_field",
+          entityTypeId: "attendance",
+          presentationMode: "MATRIX",
+          reportColumnFieldId: "date_field",
+          reportRowFieldId: "foreign_field",
+          reportValueFieldId: "status_field",
+          type: "REPORT",
+        })),
+      ),
+    ).rejects.toThrow("Selecciona un campo activo válido para Filas.");
+  });
+
   it("creates a valid BOARD view", async () => {
     await createAppView(
       "contract_1",
@@ -952,5 +1060,29 @@ describe("AppView administration", () => {
       config: { entityTypeId: "entity_1" },
       type: "RECORDS",
     } as never)).toEqual({ entityTypeId: "entity_1", type: "RECORDS" });
+
+    expect(parseAppViewConfig({
+      config: {
+        entityTypeId: "attendance",
+        dateFieldId: "date_field",
+        presentationMode: "MATRIX",
+        matrix: {
+          columnFieldId: "date_field",
+          rowFieldId: "person_field",
+          valueFieldId: "status_field",
+        },
+      },
+      type: "REPORT",
+    } as never)).toEqual({
+      entityTypeId: "attendance",
+      dateFieldId: "date_field",
+      presentationMode: "MATRIX",
+      matrix: {
+        columnFieldId: "date_field",
+        rowFieldId: "person_field",
+        valueFieldId: "status_field",
+      },
+      type: "REPORT",
+    });
   });
 });

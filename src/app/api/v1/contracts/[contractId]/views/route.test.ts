@@ -186,6 +186,21 @@ describe("GET /api/v1/contracts/[contractId]/views", () => {
         type: "WORKFLOW",
       }),
       appView({
+        config: {
+          entityTypeId: "attendance",
+          dateFieldId: "date_field",
+          presentationMode: "MATRIX",
+          matrix: {
+            rowFieldId: "person_field",
+            columnFieldId: "date_field",
+            valueFieldId: "status_field",
+            summaryFieldId: "status_field",
+          },
+        },
+        id: "report",
+        type: "REPORT",
+      }),
+      appView({
         config: { entityTypeId: "board_entity", groupByFieldKey: "estado" },
         id: "board",
         type: "BOARD",
@@ -235,6 +250,20 @@ describe("GET /api/v1/contracts/[contractId]/views", () => {
               historyMode: "update-current",
             },
             type: "WORKFLOW",
+          },
+          {
+            config: {
+              entityTypeId: "attendance",
+              dateFieldId: "date_field",
+              presentationMode: "MATRIX",
+              matrix: {
+                rowFieldId: "person_field",
+                columnFieldId: "date_field",
+                valueFieldId: "status_field",
+                summaryFieldId: "status_field",
+              },
+            },
+            type: "REPORT",
           },
           { config: { entityTypeId: "board_entity", groupByFieldKey: "estado" }, type: "BOARD" },
           { config: { entityTypeIds: ["a", "b"] }, type: "DASHBOARD" },

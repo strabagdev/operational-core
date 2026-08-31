@@ -52,6 +52,7 @@ enum EntityNature {
 enum AppViewType {
   RECORDS
   WORKFLOW
+  REPORT
   BOARD
   DASHBOARD
 }

@@ -527,6 +527,15 @@ If a stored AppView has invalid config, Opco omits that view from the response a
 
 Important: AppView access controls which experience appears to the user. It is not a full data-permission boundary. Entity and record endpoints continue to perform their own server-side authorization. In this stage, data access is still based on contract membership because granular entity permissions do not exist yet.
 
+### GET `/api/v1/contracts/:contractId/reports/:appViewId`
+
+Returns data for a configured `REPORT` AppView assigned to the authenticated user. Query parameters:
+
+- `from`: optional `YYYY-MM-DD`.
+- `to`: optional `YYYY-MM-DD`.
+
+The date range filters records using the report's configured `dateFieldId`; display names such as "Fecha" are not used as identifiers. The response includes the REPORT config, entity metadata, selected field definitions including option labels, and serialized records with relation display names. First presentation modes are `TABLE` and `MATRIX`.
+
 ### GET /api/v1/contracts/:contractId/views/:appViewId/workflow/state-update
 
 Returns the configured generic state-update workflow. The AppView must be active, assigned to the authenticated user, belong to the contract, and use a workflow registered as compatible with the state-update engine. Current compatible keys are `state-update` and the `attendance` preset.

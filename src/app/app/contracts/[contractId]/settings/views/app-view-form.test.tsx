@@ -76,10 +76,87 @@ describe("AppViewForm", () => {
     expect(html).toContain("Tipo");
     expect(html).toContain("Registros");
     expect(html).toContain("Flujo");
+    expect(html).toContain("Reporte");
     expect(html).toContain("Tablero");
     expect(html).toContain("Dashboard");
     expect(html).toContain("Configuración de registros");
     expect(html).toContain("Crear experiencia");
+  });
+
+  it("renders REPORT table configuration", () => {
+    const html = renderToStaticMarkup(
+      <AppViewForm
+        action={noopAction}
+        entityTypes={entityTypes}
+        initialValues={{
+          active: true,
+          config: {
+            dateFieldId: "date_field",
+            entityTypeId: "attendance",
+            presentationMode: "TABLE",
+            table: {
+              defaultSortDirection: "desc",
+              defaultSortFieldId: "date_field",
+              visibleFieldIds: ["person_field", "date_field", "status_field"],
+            },
+            type: "REPORT",
+          },
+          icon: "clipboard-check",
+          name: "Asistencia mensual",
+          slug: "asistencia-mensual",
+          sortOrder: 2,
+          type: "REPORT",
+        }}
+        submitLabel="Guardar experiencia"
+      />,
+    );
+
+    expect(html).toContain("Configuración del reporte");
+    expect(html).toContain("Campo de fecha");
+    expect(html).toContain("Presentación");
+    expect(html).toContain("Tabla");
+    expect(html).toContain("Columnas visibles");
+    expect(html).toContain('name="visibleFieldIds"');
+    expect(html).toContain("Dirección");
+    expect(html).toContain("Descendente");
+  });
+
+  it("renders REPORT matrix configuration", () => {
+    const html = renderToStaticMarkup(
+      <AppViewForm
+        action={noopAction}
+        entityTypes={entityTypes}
+        initialValues={{
+          active: true,
+          config: {
+            dateFieldId: "date_field",
+            entityTypeId: "attendance",
+            matrix: {
+              columnFieldId: "date_field",
+              rowFieldId: "person_field",
+              summaryFieldId: "status_field",
+              valueFieldId: "status_field",
+            },
+            presentationMode: "MATRIX",
+            type: "REPORT",
+          },
+          icon: "clipboard-check",
+          name: "Matriz asistencia",
+          slug: "matriz-asistencia",
+          sortOrder: 3,
+          type: "REPORT",
+        }}
+        submitLabel="Guardar experiencia"
+      />,
+    );
+
+    expect(html).toContain("Matriz");
+    expect(html).toContain("Filas");
+    expect(html).toContain("Columnas");
+    expect(html).toContain("Valor");
+    expect(html).toContain("Resumen lateral");
+    expect(html).toContain('name="reportRowFieldId"');
+    expect(html).toContain('name="reportSummaryFieldId"');
   });
 
   it("renders the selected workflow configuration", () => {

@@ -73,10 +73,11 @@ export function AppViewForm({
   );
   const [entityTypeId, setEntityTypeId] = useState(
     valueFromState(state, "entityTypeId") ||
-    (initialValues?.config.type === "RECORDS" || initialValues?.config.type === "BOARD"
+    (initialValues?.config.type === "RECORDS" || initialValues?.config.type === "REPORT" || initialValues?.config.type === "BOARD"
       ? initialValues.config.entityTypeId
       : entityTypes[0]?.id ?? ""),
   );
+  const reportEntityType = entityTypes.find((entityType) => entityType.id === entityTypeId);
   const [sourceEntityTypeId, setSourceEntityTypeId] = useState(
     valueFromState(state, "sourceEntityTypeId") ||
     (initialValues?.config.type === "WORKFLOW"
@@ -108,9 +109,9 @@ export function AppViewForm({
   );
   const [dateFieldId, setDateFieldId] = useState(
     valueFromState(state, "dateFieldId") ||
-    (initialValues?.config.type === "WORKFLOW" && "dateFieldId" in initialValues.config
+    ((initialValues?.config.type === "WORKFLOW" || initialValues?.config.type === "REPORT") && "dateFieldId" in initialValues.config
       ? initialValues.config.dateFieldId ?? ""
-      : firstActiveFieldId(targetEntityType, "DATE")),
+      : firstActiveFieldId(targetEntityType, "DATE") || firstActiveFieldId(reportEntityType, "DATE")),
   );
   const [statusFieldId, setStatusFieldId] = useState(
     valueFromState(state, "statusFieldId") ||
@@ -172,6 +173,52 @@ export function AppViewForm({
       (initialValues?.config.type === "DASHBOARD"
       ? initialValues.config.entityTypeIds
       : entityTypes[0]?.id ? [entityTypes[0].id] : [])),
+  );
+  const [presentationMode, setPresentationMode] = useState(
+    valueFromState(state, "presentationMode") ||
+    (initialValues?.config.type === "REPORT" ? initialValues.config.presentationMode : "TABLE"),
+  );
+  const [visibleFieldIds, setVisibleFieldIds] = useState<string[]>(
+    valuesFromState(state, "visibleFieldIds") ??
+      (initialValues?.config.type === "REPORT" && initialValues.config.presentationMode === "TABLE"
+        ? initialValues.config.table.visibleFieldIds
+        : []),
+  );
+  const [defaultSortFieldId, setDefaultSortFieldId] = useState(
+    valueFromState(state, "defaultSortFieldId") ||
+    (initialValues?.config.type === "REPORT" && initialValues.config.presentationMode === "TABLE"
+      ? initialValues.config.table.defaultSortFieldId ?? ""
+      : ""),
+  );
+  const [defaultSortDirection, setDefaultSortDirection] = useState(
+    valueFromState(state, "defaultSortDirection") ||
+    (initialValues?.config.type === "REPORT" && initialValues.config.presentationMode === "TABLE"
+      ? initialValues.config.table.defaultSortDirection
+      : "desc"),
+  );
+  const [reportRowFieldId, setReportRowFieldId] = useState(
+    valueFromState(state, "reportRowFieldId") ||
+    (initialValues?.config.type === "REPORT" && initialValues.config.presentationMode === "MATRIX"
+      ? initialValues.config.matrix.rowFieldId
+      : firstActiveFieldId(reportEntityType, "RELATION") || firstActiveFieldId(reportEntityType, "TEXT")),
+  );
+  const [reportColumnFieldId, setReportColumnFieldId] = useState(
+    valueFromState(state, "reportColumnFieldId") ||
+    (initialValues?.config.type === "REPORT" && initialValues.config.presentationMode === "MATRIX"
+      ? initialValues.config.matrix.columnFieldId
+      : firstActiveFieldId(reportEntityType, "DATE")),
+  );
+  const [reportValueFieldId, setReportValueFieldId] = useState(
+    valueFromState(state, "reportValueFieldId") ||
+    (initialValues?.config.type === "REPORT" && initialValues.config.presentationMode === "MATRIX"
+      ? initialValues.config.matrix.valueFieldId
+      : firstActiveFieldId(reportEntityType, "SELECT")),
+  );
+  const [reportSummaryFieldId, setReportSummaryFieldId] = useState(
+    valueFromState(state, "reportSummaryFieldId") ||
+    (initialValues?.config.type === "REPORT" && initialValues.config.presentationMode === "MATRIX"
+      ? initialValues.config.matrix.summaryFieldId ?? ""
+      : ""),
   );
   const boardEntityType = entityTypes.find((entityType) => entityType.id === entityTypeId);
   const activeBoardFields = useMemo(
@@ -270,6 +317,8 @@ export function AppViewForm({
         activeBoardFields={activeBoardFields}
         contextFieldIds={contextFieldIds}
         dashboardEntityTypeIds={dashboardEntityTypeIds}
+        defaultSortDirection={defaultSortDirection}
+        defaultSortFieldId={defaultSortFieldId}
         entityTypeId={entityTypeId}
         entityTypes={entityTypes}
         fieldErrors={state.fieldErrors}
@@ -279,18 +328,30 @@ export function AppViewForm({
         setEntityTypeId={setEntityTypeId}
         observationFieldId={observationFieldId}
         personFieldId={personFieldId}
+        presentationMode={presentationMode}
         subjectFieldId={subjectFieldId}
         defaultCheckInOptionId={defaultCheckInOptionId}
         historyMode={historyMode}
         requiredStateFieldIds={requiredStateFieldIds}
+        reportColumnFieldId={reportColumnFieldId}
+        reportRowFieldId={reportRowFieldId}
+        reportSummaryFieldId={reportSummaryFieldId}
+        reportValueFieldId={reportValueFieldId}
         setDateFieldId={setDateFieldId}
         setContextFieldIds={setContextFieldIds}
+        setDefaultSortDirection={setDefaultSortDirection}
+        setDefaultSortFieldId={setDefaultSortFieldId}
         setExtraFieldIds={setExtraFieldIds}
         setGroupByFieldKey={setGroupByFieldKey}
         setHistoryMode={setHistoryMode}
         setObservationFieldId={setObservationFieldId}
         setPersonFieldId={setPersonFieldId}
+        setPresentationMode={setPresentationMode}
         setRequiredStateFieldIds={setRequiredStateFieldIds}
+        setReportColumnFieldId={setReportColumnFieldId}
+        setReportRowFieldId={setReportRowFieldId}
+        setReportSummaryFieldId={setReportSummaryFieldId}
+        setReportValueFieldId={setReportValueFieldId}
         setDefaultCheckInOptionId={setDefaultCheckInOptionId}
         setSourceEntityTypeId={setSourceEntityTypeId}
         setStateFieldIds={setStateFieldIds}
@@ -306,6 +367,8 @@ export function AppViewForm({
         toggleDashboardEntity={toggleDashboardEntity}
         type={type}
         uniquenessMode={uniquenessMode}
+        visibleFieldIds={visibleFieldIds}
+        setVisibleFieldIds={setVisibleFieldIds}
         workflowKey={workflowKey}
       />
 
@@ -343,6 +406,8 @@ function ConfigFields({
   contextFieldIds,
   dashboardEntityTypeIds,
   dateFieldId,
+  defaultSortDirection,
+  defaultSortFieldId,
   entityTypeId,
   entityTypes,
   extraFieldIds,
@@ -352,17 +417,29 @@ function ConfigFields({
   defaultCheckInOptionId,
   observationFieldId,
   personFieldId,
+  presentationMode,
   requiredStateFieldIds,
+  reportColumnFieldId,
+  reportRowFieldId,
+  reportSummaryFieldId,
+  reportValueFieldId,
   setContextFieldIds,
   setDateFieldId,
   setDefaultCheckInOptionId,
+  setDefaultSortDirection,
+  setDefaultSortFieldId,
   setEntityTypeId,
   setExtraFieldIds,
   setGroupByFieldKey,
   setHistoryMode,
   setObservationFieldId,
   setPersonFieldId,
+  setPresentationMode,
   setRequiredStateFieldIds,
+  setReportColumnFieldId,
+  setReportRowFieldId,
+  setReportSummaryFieldId,
+  setReportValueFieldId,
   setSourceEntityTypeId,
   setStateFieldIds,
   setStatusFieldId,
@@ -378,12 +455,16 @@ function ConfigFields({
   toggleDashboardEntity,
   type,
   uniquenessMode,
+  visibleFieldIds,
+  setVisibleFieldIds,
   workflowKey,
 }: {
   activeBoardFields: AppViewEntityTypeOption["fields"];
   contextFieldIds: string[];
   dashboardEntityTypeIds: Set<string>;
   dateFieldId: string;
+  defaultSortDirection: string;
+  defaultSortFieldId: string;
   entityTypeId: string;
   entityTypes: AppViewEntityTypeOption[];
   extraFieldIds: Set<string>;
@@ -393,17 +474,29 @@ function ConfigFields({
   defaultCheckInOptionId: string;
   observationFieldId: string;
   personFieldId: string;
+  presentationMode: string;
   requiredStateFieldIds: Set<string>;
+  reportColumnFieldId: string;
+  reportRowFieldId: string;
+  reportSummaryFieldId: string;
+  reportValueFieldId: string;
   setContextFieldIds: (value: string[]) => void;
   setDateFieldId: (value: string) => void;
   setDefaultCheckInOptionId: (value: string) => void;
+  setDefaultSortDirection: (value: string) => void;
+  setDefaultSortFieldId: (value: string) => void;
   setEntityTypeId: (value: string) => void;
   setExtraFieldIds: (value: Set<string>) => void;
   setGroupByFieldKey: (value: string) => void;
   setHistoryMode: (value: string) => void;
   setObservationFieldId: (value: string) => void;
   setPersonFieldId: (value: string) => void;
+  setPresentationMode: (value: string) => void;
   setRequiredStateFieldIds: (value: Set<string>) => void;
+  setReportColumnFieldId: (value: string) => void;
+  setReportRowFieldId: (value: string) => void;
+  setReportSummaryFieldId: (value: string) => void;
+  setReportValueFieldId: (value: string) => void;
   setSourceEntityTypeId: (value: string) => void;
   setStateFieldIds: (value: Set<string>) => void;
   setStatusFieldId: (value: string) => void;
@@ -419,6 +512,8 @@ function ConfigFields({
   toggleDashboardEntity: (entityTypeId: string, checked: boolean) => void;
   type: AppViewType;
   uniquenessMode: string;
+  visibleFieldIds: string[];
+  setVisibleFieldIds: (value: string[]) => void;
   workflowKey: string;
 }) {
   if (type === "WORKFLOW") {
@@ -619,6 +714,133 @@ function ConfigFields({
               setSelected={setContextFieldIds}
             />
             <FieldError errors={fieldErrors?.contextFieldIds} />
+          </div>
+        )}
+      </fieldset>
+    );
+  }
+
+  if (type === "REPORT") {
+    const reportEntityType = entityTypes.find((entityType) => entityType.id === entityTypeId);
+    const activeReportFields = reportEntityType?.fields.filter((field) => field.isActive) ?? [];
+    const sortableFields = activeReportFields.filter((field) => reportSortableFieldTypes.has(field.type));
+
+    return (
+      <fieldset className="grid gap-3 rounded-md border border-border p-3">
+        <legend className="px-1 text-sm font-medium">Configuración del reporte</legend>
+        <EntitySelect
+          label="Entidad"
+          name="entityTypeId"
+          onChange={(value) => {
+            const nextEntityType = entityTypes.find((entityType) => entityType.id === value);
+            const nextDateFieldId = firstActiveFieldId(nextEntityType, "DATE");
+
+            setEntityTypeId(value);
+            setDateFieldId(nextDateFieldId);
+            setVisibleFieldIds([]);
+            setDefaultSortFieldId(nextDateFieldId);
+            setReportRowFieldId(firstActiveFieldId(nextEntityType, "RELATION") || firstActiveFieldId(nextEntityType, "TEXT"));
+            setReportColumnFieldId(nextDateFieldId);
+            setReportValueFieldId(firstActiveFieldId(nextEntityType, "SELECT"));
+            setReportSummaryFieldId("");
+          }}
+          options={entityTypes}
+          value={entityTypeId}
+          errors={fieldErrors?.entityTypeId}
+        />
+        <div className="grid gap-3 sm:grid-cols-2">
+          <FieldSelect
+            fields={activeReportFields}
+            label="Campo de fecha"
+            name="dateFieldId"
+            onChange={setDateFieldId}
+            preferredType="DATE"
+            value={dateFieldId}
+            errors={fieldErrors?.dateFieldId}
+          />
+          <SelectControl
+            label="Presentación"
+            name="presentationMode"
+            onChange={setPresentationMode}
+            options={[
+              { label: "Tabla", value: "TABLE" },
+              { label: "Matriz", value: "MATRIX" },
+            ]}
+            value={presentationMode}
+          />
+        </div>
+        {presentationMode === "MATRIX" ? (
+          <div className="grid gap-3 sm:grid-cols-2">
+            <FieldSelect
+              fields={activeReportFields}
+              label="Filas"
+              name="reportRowFieldId"
+              onChange={setReportRowFieldId}
+              preferredType="RELATION"
+              value={reportRowFieldId}
+              errors={fieldErrors?.reportRowFieldId}
+            />
+            <FieldSelect
+              fields={activeReportFields}
+              label="Columnas"
+              name="reportColumnFieldId"
+              onChange={setReportColumnFieldId}
+              preferredType="DATE"
+              value={reportColumnFieldId}
+              errors={fieldErrors?.reportColumnFieldId}
+            />
+            <FieldSelect
+              fields={activeReportFields}
+              label="Valor"
+              name="reportValueFieldId"
+              onChange={setReportValueFieldId}
+              preferredType="SELECT"
+              value={reportValueFieldId}
+              errors={fieldErrors?.reportValueFieldId}
+            />
+            <FieldSelect
+              fields={activeReportFields}
+              includeEmpty
+              label="Resumen lateral"
+              name="reportSummaryFieldId"
+              onChange={setReportSummaryFieldId}
+              preferredType="SELECT"
+              value={reportSummaryFieldId}
+              errors={fieldErrors?.reportSummaryFieldId}
+            />
+          </div>
+        ) : (
+          <div className="grid gap-3">
+            <OrderedFieldChecklist
+              fields={activeReportFields}
+              label="Columnas visibles"
+              name="visibleFieldIds"
+              selected={visibleFieldIds}
+              setSelected={setVisibleFieldIds}
+            />
+            <FieldError errors={fieldErrors?.visibleFieldIds} />
+            <div className="grid gap-3 sm:grid-cols-2">
+              <FieldSelect
+                fields={sortableFields}
+                includeEmpty
+                label="Orden"
+                name="defaultSortFieldId"
+                onChange={setDefaultSortFieldId}
+                preferredType="DATE"
+                value={defaultSortFieldId}
+                errors={fieldErrors?.defaultSortFieldId}
+              />
+              <SelectControl
+                label="Dirección"
+                name="defaultSortDirection"
+                onChange={setDefaultSortDirection}
+                options={[
+                  { label: "Descendente", value: "desc" },
+                  { label: "Ascendente", value: "asc" },
+                ]}
+                value={defaultSortDirection}
+              />
+            </div>
           </div>
         )}
       </fieldset>
@@ -967,6 +1189,22 @@ const stateUpdateExtraFieldTypes = new Set([
   "DATETIME",
   "SELECT",
   "RELATION",
+]);
+
+const reportSortableFieldTypes = new Set([
+  "TEXT",
+  "TEXTAREA",
+  "EMAIL",
+  "PHONE",
+  "URL",
+  "INTEGER",
+  "DECIMAL",
+  "MONEY",
+  "DATE",
+  "DATETIME",
+  "TIME",
+  "BOOLEAN",
+  "SELECT",
 ]);
 
 function EntitySelect({

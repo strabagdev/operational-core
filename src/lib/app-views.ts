@@ -13,12 +13,13 @@ import {
 } from "./workflow-catalog";
 
 const slugRegex = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
-const appViewTypeValues = ["RECORDS", "WORKFLOW", "BOARD", "DASHBOARD"] as const;
+const appViewTypeValues = ["RECORDS", "WORKFLOW", "REPORT", "BOARD", "DASHBOARD"] as const;
 type PrismaClientLike = typeof prisma | Prisma.TransactionClient;
 
 export const appViewTypeOptions = [
   { label: "Registros", value: "RECORDS" },
   { label: "Flujo", value: "WORKFLOW" },
+  { label: "Reporte", value: "REPORT" },
   { label: "Tablero", value: "BOARD" },
   { label: "Dashboard", value: "DASHBOARD" },
 ] as const satisfies Array<{ label: string; value: AppViewType }>;
@@ -52,8 +53,35 @@ export type AppViewConfig =
   | { type: "RECORDS"; entityTypeId: string }
   | AttendanceWorkflowConfig
   | StateUpdateWorkflowConfig
+  | ReportAppViewConfig
   | { type: "BOARD"; entityTypeId: string; groupByFieldKey: string }
   | { type: "DASHBOARD"; entityTypeIds: string[] };
+
+export type ReportAppViewConfig = {
+  type: "REPORT";
+  entityTypeId: string;
+  dateFieldId: string;
+} & (
+  | {
+      presentationMode: "TABLE";
+      table: {
+        visibleFieldIds: string[];
+        defaultSortFieldId?: string;
+        defaultSortDirection: "asc" | "desc";
+      };
+      matrix?: never;
+    }
+  | {
+      presentationMode: "MATRIX";
+      matrix: {
+        rowFieldId: string;
+        columnFieldId: string;
+        valueFieldId: string;
+        summaryFieldId?: string;
+      };
+      table?: never;
+    }
+);
 
 export type AttendanceWorkflowConfig = {
       type: "WORKFLOW";
@@ -115,13 +143,20 @@ export function getAppViewInput(formData: FormData) {
       entityTypeIds: formData.getAll("entityTypeIds"),
       groupByFieldKey: formData.get("groupByFieldKey"),
       dateFieldId: formData.get("dateFieldId"),
+      defaultSortDirection: formData.get("defaultSortDirection"),
+      defaultSortFieldId: formData.get("defaultSortFieldId"),
       defaultCheckInOptionId: formData.get("defaultCheckInOptionId") ?? formData.get("presentOptionId"),
       contextFieldIds: formData.getAll("contextFieldIds"),
       extraFieldIds: formData.getAll("extraFieldIds"),
       historyMode: formData.get("historyMode"),
       observationFieldId: formData.get("observationFieldId"),
       personFieldId: formData.get("personFieldId"),
+      presentationMode: formData.get("presentationMode"),
       requiredStateFieldIds: formData.getAll("requiredStateFieldIds"),
+      reportColumnFieldId: formData.get("reportColumnFieldId"),
+      reportRowFieldId: formData.get("reportRowFieldId"),
+      reportSummaryFieldId: formData.get("reportSummaryFieldId"),
+      reportValueFieldId: formData.get("reportValueFieldId"),
       sourceEntityTypeId: formData.get("sourceEntityTypeId"),
       stateFieldIds: formData.getAll("stateFieldIds"),
       stateFieldDefaultOptions: Object.fromEntries(
@@ -133,6 +168,7 @@ export function getAppViewInput(formData: FormData) {
       subjectFieldId: formData.get("subjectFieldId"),
       targetEntityTypeId: formData.get("targetEntityTypeId"),
       uniquenessMode: formData.get("uniquenessMode"),
+      visibleFieldIds: formData.getAll("visibleFieldIds"),
       workflow: formData.get("workflow"),
       workflowKey: formData.get("workflowKey") ?? formData.get("workflow"),
     },
@@ -312,6 +348,10 @@ export function parseAppViewConfig(view: Pick<AppView, "config" | "type">): AppV
     return { type: "WORKFLOW", ...parseWorkflowConfigInput(raw) };
   }
 
+  if (view.type === "REPORT") {
+    return { type: "REPORT", ...parseReportConfigInput(raw) };
+  }
+
   if (view.type === "BOARD") {
     return { type: "BOARD", ...boardConfigInputSchema.parse(raw) };
   }
@@ -339,6 +379,10 @@ export function summarizeAppViewConfig({
 
   if (config.type === "WORKFLOW") {
     return `${entityName(config.sourceEntityTypeId)} -> ${entityName(config.targetEntityTypeId)} · ${getAppViewWorkflowLabel(config.workflowKey)}`;
+  }
+
+  if (config.type === "REPORT") {
+    return `${entityName(config.entityTypeId)} · ${config.presentationMode === "TABLE" ? "Tabla" : "Matriz"}`;
   }
 
   if (config.type === "BOARD") {
@@ -473,6 +517,43 @@ async function validateAppViewConfig({
     };
   }
 
+  if (type === "REPORT") {
+    const config = parseReportConfigInput(rawConfig);
+    const entityType = await requireEntityType(client, contractId, config.entityTypeId);
+
+    validateReportAppViewFields({
+      config,
+      fields: entityType.fields,
+    });
+
+    if (config.presentationMode === "TABLE") {
+      return {
+        type,
+        entityTypeId: config.entityTypeId,
+        dateFieldId: config.dateFieldId,
+        presentationMode: "TABLE",
+        table: {
+          visibleFieldIds: config.table.visibleFieldIds,
+          ...(config.table.defaultSortFieldId ? { defaultSortFieldId: config.table.defaultSortFieldId } : {}),
+          defaultSortDirection: config.table.defaultSortDirection,
+        },
+      };
+    }
+
+    return {
+      type,
+      entityTypeId: config.entityTypeId,
+      dateFieldId: config.dateFieldId,
+      presentationMode: "MATRIX",
+      matrix: {
+        rowFieldId: config.matrix.rowFieldId,
+        columnFieldId: config.matrix.columnFieldId,
+        valueFieldId: config.matrix.valueFieldId,
+        ...(config.matrix.summaryFieldId ? { summaryFieldId: config.matrix.summaryFieldId } : {}),
+      },
+    };
+  }
+
   if (type === "BOARD") {
     const config = boardConfigInputSchema.parse(rawConfig);
     const entityType = await requireEntityType(client, contractId, config.entityTypeId);
@@ -502,6 +583,31 @@ async function validateAppViewConfig({
 const recordsConfigInputSchema = z.object({
   entityTypeId: z.string().trim().min(1, "Selecciona una entidad."),
 });
+
+const reportBaseConfigInputSchema = z.object({
+  entityTypeId: z.string().trim().min(1, "Selecciona una entidad."),
+  dateFieldId: z.string().trim().min(1, "Selecciona el campo de fecha."),
+});
+
+const reportConfigInputSchema = z.discriminatedUnion("presentationMode", [
+  reportBaseConfigInputSchema.extend({
+    presentationMode: z.literal("TABLE"),
+    table: z.object({
+      visibleFieldIds: z.array(z.string().trim().min(1)).default([]),
+      defaultSortFieldId: z.string().trim().optional().transform((value) => value || undefined),
+      defaultSortDirection: z.enum(["asc", "desc"]).default("desc"),
+    }),
+  }),
+  reportBaseConfigInputSchema.extend({
+    presentationMode: z.literal("MATRIX"),
+    matrix: z.object({
+      rowFieldId: z.string().trim().min(1, "Selecciona el campo de filas."),
+      columnFieldId: z.string().trim().min(1, "Selecciona el campo de columnas."),
+      valueFieldId: z.string().trim().min(1, "Selecciona el campo de valor."),
+      summaryFieldId: z.string().trim().optional().transform((value) => value || undefined),
+    }),
+  }),
+]);
 
 const workflowBaseConfigInputSchema = z.object({
   workflowKey: z.enum(workflowKeys),
@@ -643,6 +749,91 @@ function parseWorkflowConfigInput(rawConfig: unknown) {
     defaultCheckInOptionId: raw.defaultCheckInOptionId ?? raw.presentOptionId,
     workflowKey,
   });
+}
+
+function parseReportConfigInput(rawConfig: unknown) {
+  if (!rawConfig || typeof rawConfig !== "object" || Array.isArray(rawConfig)) {
+    return reportConfigInputSchema.parse(rawConfig);
+  }
+
+  const raw = rawConfig as Record<string, unknown>;
+  const presentationMode = raw.presentationMode === "MATRIX" ? "MATRIX" : "TABLE";
+
+  if (presentationMode === "MATRIX") {
+    const matrix = isRecord(raw.matrix) ? raw.matrix : {};
+
+    return reportConfigInputSchema.parse({
+      entityTypeId: raw.entityTypeId,
+      dateFieldId: raw.dateFieldId,
+      presentationMode,
+      matrix: {
+        rowFieldId: raw.reportRowFieldId ?? matrix.rowFieldId,
+        columnFieldId: raw.reportColumnFieldId ?? matrix.columnFieldId,
+        valueFieldId: raw.reportValueFieldId ?? matrix.valueFieldId,
+        summaryFieldId: raw.reportSummaryFieldId ?? matrix.summaryFieldId,
+      },
+    });
+  }
+
+  const table = isRecord(raw.table) ? raw.table : {};
+
+  return reportConfigInputSchema.parse({
+    entityTypeId: raw.entityTypeId,
+    dateFieldId: raw.dateFieldId,
+    presentationMode,
+    table: {
+      visibleFieldIds: uniqueStrings(stringArray(raw.visibleFieldIds ?? table.visibleFieldIds)),
+      defaultSortFieldId: raw.defaultSortFieldId ?? table.defaultSortFieldId,
+      defaultSortDirection: raw.defaultSortDirection ?? table.defaultSortDirection ?? "desc",
+    },
+  });
+}
+
+function validateReportAppViewFields({
+  config,
+  fields,
+}: {
+  config: z.infer<typeof reportConfigInputSchema>;
+  fields: Array<{
+    id: string;
+    isActive: boolean;
+    name: string;
+    type: string;
+  }>;
+}) {
+  const dateField = requireActiveTargetField(fields, config.dateFieldId, "Fecha");
+
+  if (!reportDateFieldTypes.has(dateField.type)) {
+    throw new AppViewConfigError("El campo de fecha debe ser de tipo fecha.", "dateFieldId");
+  }
+
+  if (config.presentationMode === "TABLE") {
+    if (config.table.visibleFieldIds.length === 0) {
+      throw new AppViewConfigError("Selecciona al menos una columna visible.", "visibleFieldIds");
+    }
+
+    for (const fieldId of config.table.visibleFieldIds) {
+      requireActiveTargetField(fields, fieldId, "Columnas visibles");
+    }
+
+    if (config.table.defaultSortFieldId) {
+      const sortField = requireActiveTargetField(fields, config.table.defaultSortFieldId, "Orden");
+
+      if (!reportSortableFieldTypes.has(sortField.type)) {
+        throw new AppViewConfigError("El campo de orden no es compatible.", "defaultSortFieldId");
+      }
+    }
+
+    return;
+  }
+
+  requireActiveTargetField(fields, config.matrix.rowFieldId, "Filas");
+  requireActiveTargetField(fields, config.matrix.columnFieldId, "Columnas");
+  requireActiveTargetField(fields, config.matrix.valueFieldId, "Valor");
+
+  if (config.matrix.summaryFieldId) {
+    requireActiveTargetField(fields, config.matrix.summaryFieldId, "Resumen lateral");
+  }
 }
 
 function validateAttendanceAppViewFields({
@@ -833,6 +1024,24 @@ const stateUpdateExtraFieldTypes = new Set([
   "DATETIME",
   "SELECT",
   "RELATION",
+]);
+
+const reportDateFieldTypes = new Set(["DATE", "DATETIME"]);
+
+const reportSortableFieldTypes = new Set([
+  "TEXT",
+  "TEXTAREA",
+  "EMAIL",
+  "PHONE",
+  "URL",
+  "INTEGER",
+  "DECIMAL",
+  "MONEY",
+  "DATE",
+  "DATETIME",
+  "TIME",
+  "BOOLEAN",
+  "SELECT",
 ]);
 
 function requireActiveStatusOption(

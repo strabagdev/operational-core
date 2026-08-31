@@ -213,10 +213,18 @@ Current `AppView.type` values:
 
 - `RECORDS`: generic listing/detail/edit experience for one `EntityType`; config stores `entityTypeId`.
 - `WORKFLOW`: renderer family for operational actions that read one entity and write or update another. `workflowKey` selects the concrete behavior. Current keys are `state-update` and the compatibility preset `attendance`.
+- `REPORT`: configurable data consultation experience for one `EntityType`; config stores `entityTypeId`, `dateFieldId`, and `presentationMode`.
 - `BOARD`: grouped board for one `EntityType`; config stores `entityTypeId` and `groupByFieldKey`.
 - `DASHBOARD`: summary view over multiple entity types; config stores `entityTypeIds`.
 
 Although `AppView.config` is stored as JSON, it is not treated as arbitrary JSON. Server-side validators check the required shape for each type, verify every referenced `EntityType` belongs to the same contract, and for `BOARD` verify the grouping field exists and is active in that entity type. Workflow configs are also validated against active target fields, relation targets, and supported field types.
+
+`REPORT` is separate from `RECORDS`, `WORKFLOW`, `BOARD`, and `DASHBOARD`. It is a configurable query/presentation surface, not a traditional table-only view. The first presentation modes are:
+
+- `TABLE`: each row is one record. `table.visibleFieldIds` controls visible columns, and optional `defaultSortFieldId` plus `defaultSortDirection` controls default ordering.
+- `MATRIX`: records are transformed into dynamic rows and columns. `matrix.rowFieldId` defines rows, `matrix.columnFieldId` defines generated columns, `matrix.valueFieldId` defines cell values, and optional `summaryFieldId` builds a lateral per-row count summary.
+
+REPORT queries use `/api/v1/contracts/:contractId/reports/:appViewId?from=YYYY-MM-DD&to=YYYY-MM-DD`. The date range is applied to the configured `dateFieldId`; field names such as "Fecha" are never hardcoded. A monthly Attendance report can be configured generically with `rowFieldId = Persona`, `columnFieldId = Fecha`, `valueFieldId = Estado`, and `summaryFieldId = Estado`.
 
 `state-update` is the generic workflow primitive for operational experiences where one subject record has one or more state fields changed, optional extra fields captured, optional date semantics, configurable uniqueness, and optional current-record update behavior. Its config stores:
 
