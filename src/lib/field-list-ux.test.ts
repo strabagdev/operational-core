@@ -55,12 +55,12 @@ describe("field list UX helpers", () => {
     ]);
   });
 
-  it("builds use badges for list, search, select options, and relation kind", () => {
+  it("builds use badges for list, client, search, select options, and relation kind", () => {
     expect(getFieldUseBadges(field({
       searchable: true,
-      config: { display: { showInList: true } },
+      config: { display: { showInClient: true, showInList: true } },
       options: [],
-    }))).toEqual(["En listado", "En búsquedas"]);
+    }))).toEqual(["En listado", "En Cliente", "En búsquedas"]);
 
     expect(getFieldUseBadges(field({
       type: "SELECT",

@@ -91,6 +91,7 @@ export const entityFieldSchema = z
     defaultValue: z.unknown().optional(),
     display: z.object({
       primary: z.boolean().optional(),
+      showInClient: z.boolean().optional(),
       showInList: z.boolean().optional(),
       listOrder: z.number().int().min(0).optional(),
     }),
@@ -319,6 +320,7 @@ function getFieldDisplayInput(formData: FormData): FieldDisplayConfig {
     showInList:
       parseFormBoolean(formData, "displayPrimary") ||
       parseFormBoolean(formData, "displayShowInList"),
+    showInClient: parseFormBoolean(formData, "displayShowInClient"),
     listOrder: optionalInteger(formData.get("displayListOrder")),
   };
 }

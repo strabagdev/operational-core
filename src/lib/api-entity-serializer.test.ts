@@ -73,7 +73,7 @@ describe("API entity serializers", () => {
         fields: [
           field({ id: "inactive", isActive: false, key: "inactivo", name: "Inactivo" }),
           field({
-            config: { money: { currency: "UF" }, validation: { minimum: 0 } },
+            config: { display: { showInClient: true }, money: { currency: "UF" }, validation: { minimum: 0 } },
             id: "price",
             key: "precio",
             name: "Precio",
@@ -105,6 +105,7 @@ describe("API entity serializers", () => {
       fields: [
         {
           config: {
+            display: { showInClient: true },
             money: { currency: "UF" },
             validation: { minimum: 0 },
           },

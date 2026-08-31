@@ -60,6 +60,7 @@ Record presentation is stored inside `EntityField.config.display`:
 
 - `primary`: marks the field used to calculate the persisted `EntityRecord.displayName`;
 - `showInList`: marks a dynamic field as a visible record-list column;
+- `showInClient`: marks a dynamic field for compact record summaries in Opco Client;
 - `listOrder`: legacy compatibility data only; official field order is `EntityField.sortOrder`.
 
 `EntityField.sortOrder` is the single official order for field configuration, record forms, record-list dynamic columns, Excel templates, and Excel imports. `display.listOrder` must not create a different order.

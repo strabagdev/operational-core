@@ -85,13 +85,15 @@ describe("entity field editor input", () => {
     formData.append("searchable", "true");
     formData.append("displayShowInList", "false");
     formData.append("displayShowInList", "true");
+    formData.append("displayShowInClient", "false");
+    formData.append("displayShowInClient", "true");
 
     expect(getEntityFieldEditorInput(formData).field).toMatchObject({
       required: true,
       isUnique: true,
       searchable: true,
       validation: { required: true },
-      display: { showInList: true },
+      display: { showInClient: true, showInList: true },
     });
   });
 

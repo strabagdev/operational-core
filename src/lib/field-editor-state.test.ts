@@ -128,6 +128,7 @@ describe("field editor state helpers", () => {
       }),
     ).toMatchObject({
       displayPrimary: true,
+      displayShowInClient: false,
       displayShowInList: true,
       searchable: true,
     });

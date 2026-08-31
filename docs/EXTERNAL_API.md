@@ -801,6 +801,8 @@ The field DTO uses `EntityField.key` as the stable external key. Record DTOs use
 
 Only active `EntityField` rows are included. Historical values for inactive fields remain stored in Opco but are not returned by this normal external API view.
 
+Field `config.display` may include presentation metadata such as `primary`, `showInList`, `showInClient`, and legacy `listOrder`. `showInList` controls Opco Web record-list columns. `showInClient` controls compact record summaries in generic clients and must not hide fields from full record detail views.
+
 For `SELECT` and `MULTISELECT`, fields include options:
 
 ```json

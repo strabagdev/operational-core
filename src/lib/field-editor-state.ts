@@ -225,6 +225,7 @@ export function getCreateFieldDefaults({
     multiple: type === "MULTISELECT" || type === "RELATION",
     displayPrimary: primary,
     displayShowInList: primary,
+    displayShowInClient: false,
   };
 }
 

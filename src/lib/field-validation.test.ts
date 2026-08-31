@@ -294,8 +294,8 @@ describe("field validation", () => {
 describe("field display configuration", () => {
   it("parses display configuration", () => {
     expect(parseFieldDisplayConfig({
-      display: { primary: true, showInList: true, listOrder: 2 },
-    })).toEqual({ primary: true, showInList: true, listOrder: 2 });
+      display: { primary: true, showInClient: true, showInList: true, listOrder: 2 },
+    })).toEqual({ primary: true, showInClient: true, showInList: true, listOrder: 2 });
   });
 
   it("accepts compatible primary fields and rejects incompatible primary fields", () => {
@@ -317,13 +317,24 @@ describe("field display configuration", () => {
       existingConfig: { validation: { required: true }, custom: { keep: true } },
       type: "TEXT",
       validation: { required: true },
-      display: { showInList: true },
+      display: { showInClient: true, showInList: true },
     });
 
     expect(config).toMatchObject({
       validation: { required: true },
-      display: { showInList: true },
+      display: { showInClient: true, showInList: true },
       custom: { keep: true },
+    });
+  });
+
+  it("keeps showInClient separate from showInList", () => {
+    expect(buildMergedFieldConfig({
+      type: "TEXT",
+      validation: {},
+      display: { showInClient: true },
+    })).toMatchObject({
+      validation: {},
+      display: { showInClient: true },
     });
   });
 
@@ -524,6 +535,25 @@ describe("field display configuration", () => {
         config: { display: { showInList: true, listOrder: 10 } },
       }),
     ]).map((item) => item.name)).toEqual(["Later", "First"]);
+  });
+
+  it("does not use showInClient for web record list columns", () => {
+    const fields = [
+      recordField({
+        id: "client_only",
+        name: "Client only",
+        sortOrder: 1,
+        config: { display: { showInClient: true } },
+      }),
+      recordField({
+        id: "web_list",
+        name: "Web list",
+        sortOrder: 2,
+        config: { display: { showInList: true } },
+      }),
+    ];
+
+    expect(getRecordListFields(fields).map((item) => item.name)).toEqual(["Web list"]);
   });
 });
 

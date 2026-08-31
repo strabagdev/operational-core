@@ -73,6 +73,7 @@ type FieldEditorFormValues = {
   defaultValue?: unknown;
   display?: {
     primary?: boolean;
+    showInClient?: boolean;
     showInList?: boolean;
     listOrder?: number;
   };
@@ -329,6 +330,9 @@ export function FieldEditorControls({
   const [displayShowInList, setDisplayShowInList] = useState(
     defaultValues?.display?.showInList ?? createDefaults.displayShowInList,
   );
+  const [displayShowInClient, setDisplayShowInClient] = useState(
+    defaultValues?.display?.showInClient ?? createDefaults.displayShowInClient,
+  );
   const [targetEntityTypeId, setTargetEntityTypeId] = useState(
     defaultValues?.targetEntityTypeId ?? "",
   );
@@ -356,6 +360,7 @@ export function FieldEditorControls({
       setMultiple(defaults.multiple);
       setDisplayPrimary(defaults.displayPrimary);
       setDisplayShowInList(defaults.displayShowInList);
+      setDisplayShowInClient(defaults.displayShowInClient);
       setSearchable(defaults.searchable);
     }
 
@@ -572,6 +577,12 @@ export function FieldEditorControls({
             label="Mostrar en listado"
             name="displayShowInList"
             onChange={setDisplayShowInList}
+          />
+          <CheckboxControl
+            checked={displayShowInClient}
+            label="Mostrar en Cliente"
+            name="displayShowInClient"
+            onChange={setDisplayShowInClient}
           />
           {displayPrimary ? <input name="displayShowInList" type="hidden" value="on" /> : null}
           {defaultValues?.display?.listOrder !== undefined ? (

@@ -70,6 +70,7 @@ export type FieldValidationRules = {
 
 export type FieldDisplayConfig = {
   primary?: boolean;
+  showInClient?: boolean;
   showInList?: boolean;
   listOrder?: number;
 };
@@ -166,6 +167,7 @@ const fieldConfigSchema = z.object({
   display: z
     .object({
       primary: z.boolean().optional(),
+      showInClient: z.boolean().optional(),
       showInList: z.boolean().optional(),
       listOrder: z.number().int().min(0).optional(),
     })
@@ -414,6 +416,10 @@ export function validateFieldDisplayConfiguration({
     clean.showInList = true;
   } else if (display.showInList) {
     clean.showInList = true;
+  }
+
+  if (display.showInClient) {
+    clean.showInClient = true;
   }
 
   if (display.listOrder !== undefined) {

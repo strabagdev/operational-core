@@ -147,6 +147,22 @@ describe("field editor controls", () => {
     expect(html).not.toContain("Obligatorio en validación");
   });
 
+  it("renders and reopens the Mostrar en Cliente presentation control", () => {
+    const html = renderControls({
+      mode: "edit",
+      defaultValues: {
+        name: "RUT",
+        key: "rut",
+        type: "TEXT",
+        display: { showInClient: true },
+      },
+    });
+
+    expect(html).toContain("Mostrar en Cliente");
+    expect(html).toContain('name="displayShowInClient"');
+    expect(html).toContain('type="checkbox" name="displayShowInClient" checked="" value="true"');
+  });
+
   it("allows 100 option rows in client validation", () => {
     expect(validateClientForm(optionPayload(100))).toEqual({});
   });

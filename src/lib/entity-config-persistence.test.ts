@@ -115,6 +115,57 @@ beforeEach(() => {
 });
 
 describe("entity field required persistence", () => {
+  it("persists showInClient display settings when creating", async () => {
+    const currentTx = tx();
+    transaction.mockImplementation(async (callback) => callback(currentTx as never));
+
+    await createEntityFieldWithOptions(
+      "contract_1",
+      "entity_1",
+      "user_1",
+      input(false, {
+        display: { showInClient: true, showInList: true },
+      }),
+      [],
+    );
+
+    expect(currentTx.entityField.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          config: expect.objectContaining({
+            display: { showInClient: true, showInList: true },
+          }),
+        }),
+      }),
+    );
+  });
+
+  it("persists showInClient display settings without changing showInList", async () => {
+    const currentTx = tx();
+    transaction.mockImplementation(async (callback) => callback(currentTx as never));
+
+    await updateEntityFieldWithOptions(
+      "contract_1",
+      "entity_1",
+      "field_1",
+      "user_1",
+      input(false, {
+        display: { showInClient: true, showInList: false },
+      }),
+      [],
+    );
+
+    expect(currentTx.entityField.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          config: expect.objectContaining({
+            display: { showInClient: true },
+          }),
+        }),
+      }),
+    );
+  });
+
   it("persists required false to true when editing", async () => {
     const currentTx = tx();
     transaction.mockImplementation(async (callback) => callback(currentTx as never));

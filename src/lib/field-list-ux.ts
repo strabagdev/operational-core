@@ -71,6 +71,7 @@ export function getFieldUseBadges(
   const badges: string[] = [];
 
   if (config.display.showInList) badges.push("En listado");
+  if (config.display.showInClient) badges.push("En Cliente");
   if (field.searchable) badges.push("En búsquedas");
 
   if (field.type === "RELATION") {
