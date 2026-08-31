@@ -7,6 +7,7 @@ export type ApiErrorResponse = {
   ok: false;
   error: {
     code: string;
+    details?: unknown;
     message: string;
   };
 };
@@ -20,6 +21,7 @@ type ApiResponseInit = {
 
 type ApiErrorOptions = ApiResponseInit & {
   code: string;
+  details?: unknown;
   message: string;
 };
 
@@ -38,16 +40,21 @@ export function success<TData>(data: TData, init?: ApiResponseInit) {
 }
 
 export function apiError(
-  { code, message, headers, status = 500 }: ApiErrorOptions,
+  { code, details, message, headers, status = 500 }: ApiErrorOptions,
 ) {
-  return json({ ok: false, error: { code, message } }, { headers, status });
+  const error = details === undefined
+    ? { code, message }
+    : { code, details, message };
+
+  return json({ ok: false, error }, { headers, status });
 }
 
 export function badRequest(
   message = "La solicitud no es valida",
   code = "BAD_REQUEST",
+  details?: unknown,
 ) {
-  return apiError({ code, message, status: 400 });
+  return apiError({ code, details, message, status: 400 });
 }
 
 export function unauthorized(

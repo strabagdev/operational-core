@@ -683,6 +683,46 @@ describe("state-update workflow runtime", () => {
     });
   });
 
+  it("returns structured diagnostics for invalid SELECT extra values", async () => {
+    appViewFindFirst.mockResolvedValue(appView({
+      config: {
+        ...stateConfig(),
+        extraFieldIds: ["condition_field"],
+      },
+    }) as never);
+
+    const result = await saveStateUpdateWorkflow(saveBody({
+      extraValues: { condition_field: "condition_option_id" },
+      states: { operational_field: "operational_ok" },
+    }));
+
+    expect(result).toMatchObject({
+      ok: false,
+      response: expect.objectContaining({ status: 400 }),
+    });
+    await expect(result.ok ? null : result.response.json()).resolves.toMatchObject({
+      ok: false,
+      error: {
+        code: "INVALID_FIELD_VALUE",
+        details: {
+          entityTypeId: "equipment_state",
+          fields: [
+            {
+              expectedType: "FIELD_OPTION_VALUE",
+              expectedValues: ["condition_ok", "condition_bad"],
+              fieldId: "condition_field",
+              fieldLabel: "Condición",
+              fieldType: "SELECT",
+              messages: ["La opción seleccionada no es válida."],
+              rejectedValue: "condition_option_id",
+              source: "extra",
+            },
+          ],
+        },
+      },
+    });
+  });
+
   it("normalizes attendance AppViews to the state-update config shape", () => {
     expect(normalizeStateUpdateCompatibleConfig(attendanceConfig())).toEqual({
       type: "WORKFLOW",

@@ -276,7 +276,10 @@ export async function saveStateUpdateWorkflow({
     input: parsed.body,
     timing,
     userId,
-  }).catch((error) => mapStateUpdateException(error));
+  }).catch((error) => mapStateUpdateException(error, {
+    context: context.context,
+    input: parsed.body,
+  }));
   timing?.mark("transaction_write");
 
   if (!result.ok) {
@@ -2096,8 +2099,8 @@ function isIdempotencyConflict(error: unknown) {
   );
 }
 
-function writeError(code: string, message: string) {
-  return { ok: false as const, response: badRequest(message, code) };
+function writeError(code: string, message: string, details?: unknown) {
+  return { ok: false as const, response: badRequest(message, code, details) };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -2132,13 +2135,23 @@ const stateUpdateExtraFieldTypes = new Set<EntityFieldType>([
   "RELATION",
 ]);
 
-export function mapStateUpdateException(error: unknown) {
+export function mapStateUpdateException(
+  error: unknown,
+  diagnostics?: {
+    context: StateUpdateContext;
+    input: StateUpdateInput;
+  },
+) {
   if (error instanceof StateUpdateInputError) {
     return writeError(error.code, error.message);
   }
 
   if (error instanceof FieldValidationError) {
-    return writeError("INVALID_FIELD_VALUE", "Uno o más campos tienen valores inválidos.");
+    return writeError(
+      "INVALID_FIELD_VALUE",
+      "Uno o más campos tienen valores inválidos.",
+      diagnostics ? buildStateUpdateFieldErrorDetails(error, diagnostics) : undefined,
+    );
   }
 
   if (error instanceof Error && error.name === "UserFacingError") {
@@ -2150,4 +2163,105 @@ export function mapStateUpdateException(error: unknown) {
   }
 
   return { ok: false as const, response: internalError("No fue posible guardar el workflow.", "STATE_UPDATE_FAILED") };
+}
+
+function buildStateUpdateFieldErrorDetails(
+  error: FieldValidationError,
+  {
+    context,
+    input,
+  }: {
+    context: StateUpdateContext;
+    input: StateUpdateInput;
+  },
+) {
+  const fieldsById = new Map(context.targetEntityType.fields.map((field) => [field.id, field]));
+
+  return {
+    entityTypeId: context.targetEntityType.id,
+    fields: Object.entries(error.fieldErrors).map(([fieldId, messages]) => {
+      const field = fieldsById.get(fieldId);
+
+      return {
+        expectedType: expectedStateUpdateValueType(field),
+        expectedValues: expectedStateUpdateFieldValues(field),
+        fieldId,
+        fieldLabel: field?.name ?? null,
+        fieldType: field?.type ?? null,
+        messages,
+        rejectedValue: rejectedStateUpdateFieldValue(fieldId, input),
+        source: stateUpdateFieldValueSource(fieldId, context),
+      };
+    }),
+  };
+}
+
+function expectedStateUpdateValueType(field: StateUpdateField | undefined) {
+  if (!field) {
+    return "UNKNOWN";
+  }
+
+  if (field.type === "SELECT") {
+    return "FIELD_OPTION_VALUE";
+  }
+
+  if (field.type === "MULTISELECT") {
+    return "FIELD_OPTION_VALUES";
+  }
+
+  return field.type;
+}
+
+function expectedStateUpdateFieldValues(field: StateUpdateField | undefined) {
+  if (!field || (field.type !== "SELECT" && field.type !== "MULTISELECT")) {
+    return undefined;
+  }
+
+  return field.options
+    .filter((option) => option.isActive !== false)
+    .map((option) => option.value);
+}
+
+function rejectedStateUpdateFieldValue(fieldId: string, input: StateUpdateInput) {
+  if (Object.prototype.hasOwnProperty.call(input.extraValues, fieldId)) {
+    return sanitizeStateUpdateDiagnosticValue(input.extraValues[fieldId]);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(input.states, fieldId)) {
+    return sanitizeStateUpdateDiagnosticValue(input.states[fieldId]);
+  }
+
+  return undefined;
+}
+
+function stateUpdateFieldValueSource(fieldId: string, context: StateUpdateContext) {
+  if (fieldId === context.config.subjectFieldId) {
+    return "subject";
+  }
+
+  if (fieldId === context.config.dateFieldId) {
+    return "date";
+  }
+
+  if (context.config.stateFields.some((field) => field.fieldId === fieldId)) {
+    return "state";
+  }
+
+  if (context.config.extraFieldIds.includes(fieldId)) {
+    return "extra";
+  }
+
+  return "unknown";
+}
+
+function sanitizeStateUpdateDiagnosticValue(value: unknown): unknown {
+  if (value === null || value === undefined || typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizeStateUpdateDiagnosticValue(item));
+  }
+
+  return "[object]";
 }
