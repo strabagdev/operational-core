@@ -43,6 +43,9 @@ beforeEach(() => {
         summaryFieldId: "status_field",
         valueFieldId: "status_field",
       },
+      valueDisplay: {
+        status_field: "INTERNAL_VALUE",
+      },
     },
     contractId: "contract_1",
     icon: null,
@@ -109,11 +112,16 @@ describe("getApiReport", () => {
       defaultPeriod: "CURRENT_MONTH",
       mode: "RANGE",
     });
+    expect(result.data.config.valueDisplay).toEqual({
+      status_field: "INTERNAL_VALUE",
+    });
     expect(result.data.fields.map((field) => field.name)).toEqual(["Fecha", "Persona", "Estado"]);
     expect(result.data.fields.find((field) => field.id === "status_field")?.options?.[0]).toMatchObject({
+      id: "option_present",
       label: "Presente",
       value: "presente",
     });
+    expect(result.data.records[0].values.estado).toBe("presente");
     expect(result.data.records[0].values.persona).toEqual({
       displayName: "Juan Perez",
       entityTypeId: "people",

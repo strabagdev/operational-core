@@ -753,6 +753,7 @@ describe("AppView config validation", () => {
         entityTypeId: "attendance",
         presentationMode: "TABLE",
         reportTimeAllowChange: true,
+        "reportValueDisplay:status_field": "INTERNAL_VALUE",
         type: "REPORT",
         visibleFieldIds: ["person_field", "date_field", "status_field", "person_field"],
       })),
@@ -767,6 +768,9 @@ describe("AppView config validation", () => {
             allowChange: true,
             defaultPeriod: "CURRENT_MONTH",
             mode: "RANGE",
+          },
+          valueDisplay: {
+            status_field: "INTERNAL_VALUE",
           },
           presentationMode: "TABLE",
           table: {
@@ -797,6 +801,7 @@ describe("AppView config validation", () => {
         reportRowFieldId: "person_field",
         reportSummaryFieldId: "status_field",
         reportValueFieldId: "status_field",
+        "reportValueDisplay:status_field": "LABEL",
         type: "REPORT",
       })),
     );
@@ -810,6 +815,9 @@ describe("AppView config validation", () => {
             allowChange: false,
             defaultPeriod: "CURRENT_MONTH",
             mode: "MONTH",
+          },
+          valueDisplay: {
+            status_field: "LABEL",
           },
           presentationMode: "MATRIX",
           matrix: {
@@ -860,6 +868,25 @@ describe("AppView config validation", () => {
         })),
       ),
     ).rejects.toThrow("Selecciona un campo activo válido para Filas.");
+  });
+
+  it("rejects REPORT value display for non-select fields", async () => {
+    entityTypeFindFirst.mockResolvedValueOnce(attendanceEntityType() as never);
+
+    await expect(
+      createAppView(
+        "contract_1",
+        "user_1",
+        getAppViewInput(formData({
+          dateFieldId: "date_field",
+          entityTypeId: "attendance",
+          presentationMode: "TABLE",
+          "reportValueDisplay:date_field": "INTERNAL_VALUE",
+          type: "REPORT",
+          visibleFieldIds: ["person_field", "date_field"],
+        })),
+      ),
+    ).rejects.toThrow("La presentación de valores solo aplica a campos de selección.");
   });
 
   it("creates a valid BOARD view", async () => {
@@ -1100,6 +1127,7 @@ describe("AppView administration", () => {
         defaultPeriod: "CURRENT_MONTH",
         mode: "MONTH",
       },
+      valueDisplay: {},
       presentationMode: "MATRIX",
       matrix: {
         columnFieldId: "date_field",
@@ -1126,6 +1154,7 @@ describe("AppView administration", () => {
         defaultPeriod: "CURRENT_MONTH",
         mode: "RANGE",
       },
+      valueDisplay: {},
       type: "REPORT",
     });
   });

@@ -233,6 +233,9 @@ export function AppViewForm({
       ? initialValues.config.matrix.summaryFieldId ?? ""
       : ""),
   );
+  const reportValueDisplay = initialValues?.config.type === "REPORT"
+    ? initialValues.config.valueDisplay
+    : {};
   const boardEntityType = entityTypes.find((entityType) => entityType.id === entityTypeId);
   const activeBoardFields = useMemo(
     () => boardEntityType?.fields.filter((field) => field.isActive) ?? [],
@@ -353,6 +356,7 @@ export function AppViewForm({
         reportRowFieldId={reportRowFieldId}
         reportSummaryFieldId={reportSummaryFieldId}
         reportValueFieldId={reportValueFieldId}
+        reportValueDisplay={reportValueDisplay}
         setDateFieldId={setDateFieldId}
         setContextFieldIds={setContextFieldIds}
         setDefaultSortDirection={setDefaultSortDirection}
@@ -445,6 +449,7 @@ function ConfigFields({
   reportRowFieldId,
   reportSummaryFieldId,
   reportValueFieldId,
+  reportValueDisplay,
   setContextFieldIds,
   setDateFieldId,
   setDefaultCheckInOptionId,
@@ -508,6 +513,7 @@ function ConfigFields({
   reportRowFieldId: string;
   reportSummaryFieldId: string;
   reportValueFieldId: string;
+  reportValueDisplay: Record<string, "LABEL" | "INTERNAL_VALUE">;
   setContextFieldIds: (value: string[]) => void;
   setDateFieldId: (value: string) => void;
   setDefaultCheckInOptionId: (value: string) => void;
@@ -835,43 +841,49 @@ function ConfigFields({
           </label>
         </fieldset>
         {presentationMode === "MATRIX" ? (
-          <div className="grid gap-3 sm:grid-cols-2">
-            <FieldSelect
-              fields={activeReportFields}
-              label="Filas"
-              name="reportRowFieldId"
-              onChange={setReportRowFieldId}
-              preferredType="RELATION"
-              value={reportRowFieldId}
-              errors={fieldErrors?.reportRowFieldId}
-            />
-            <FieldSelect
-              fields={activeReportFields}
-              label="Columnas"
-              name="reportColumnFieldId"
-              onChange={setReportColumnFieldId}
-              preferredType="DATE"
-              value={reportColumnFieldId}
-              errors={fieldErrors?.reportColumnFieldId}
-            />
-            <FieldSelect
-              fields={activeReportFields}
-              label="Valor"
-              name="reportValueFieldId"
-              onChange={setReportValueFieldId}
-              preferredType="SELECT"
-              value={reportValueFieldId}
-              errors={fieldErrors?.reportValueFieldId}
-            />
-            <FieldSelect
-              fields={activeReportFields}
-              includeEmpty
-              label="Resumen lateral"
-              name="reportSummaryFieldId"
-              onChange={setReportSummaryFieldId}
-              preferredType="SELECT"
-              value={reportSummaryFieldId}
-              errors={fieldErrors?.reportSummaryFieldId}
+          <div className="grid gap-3">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <FieldSelect
+                fields={activeReportFields}
+                label="Filas"
+                name="reportRowFieldId"
+                onChange={setReportRowFieldId}
+                preferredType="RELATION"
+                value={reportRowFieldId}
+                errors={fieldErrors?.reportRowFieldId}
+              />
+              <FieldSelect
+                fields={activeReportFields}
+                label="Columnas"
+                name="reportColumnFieldId"
+                onChange={setReportColumnFieldId}
+                preferredType="DATE"
+                value={reportColumnFieldId}
+                errors={fieldErrors?.reportColumnFieldId}
+              />
+              <FieldSelect
+                fields={activeReportFields}
+                label="Valor"
+                name="reportValueFieldId"
+                onChange={setReportValueFieldId}
+                preferredType="SELECT"
+                value={reportValueFieldId}
+                errors={fieldErrors?.reportValueFieldId}
+              />
+              <FieldSelect
+                fields={activeReportFields}
+                includeEmpty
+                label="Resumen lateral"
+                name="reportSummaryFieldId"
+                onChange={setReportSummaryFieldId}
+                preferredType="SELECT"
+                value={reportSummaryFieldId}
+                errors={fieldErrors?.reportSummaryFieldId}
+              />
+            </div>
+            <ReportValueDisplayFields
+              fields={reportSelectDisplayFields(activeReportFields, [reportValueFieldId, reportSummaryFieldId])}
+              valueDisplay={reportValueDisplay}
             />
           </div>
         ) : (
@@ -884,6 +896,10 @@ function ConfigFields({
               setSelected={setVisibleFieldIds}
             />
             <FieldError errors={fieldErrors?.visibleFieldIds} />
+            <ReportValueDisplayFields
+              fields={reportSelectDisplayFields(activeReportFields, visibleFieldIds)}
+              valueDisplay={reportValueDisplay}
+            />
             <div className="grid gap-3 sm:grid-cols-2">
               <FieldSelect
                 fields={sortableFields}
@@ -1228,6 +1244,51 @@ function OrderedFieldChecklist({
         </div>
       )}
     </fieldset>
+  );
+}
+
+function ReportValueDisplayFields({
+  fields,
+  valueDisplay,
+}: {
+  fields: AppViewEntityTypeOption["fields"];
+  valueDisplay: Record<string, "LABEL" | "INTERNAL_VALUE">;
+}) {
+  if (fields.length === 0) {
+    return null;
+  }
+
+  return (
+    <fieldset className="grid gap-2 rounded-md border border-border p-3">
+      <legend className="px-1 text-sm font-medium">Presentación de valores SELECT</legend>
+      <div className="grid gap-3 sm:grid-cols-2">
+        {fields.map((field) => (
+          <label className="grid gap-2 text-sm font-medium" key={field.id}>
+            {field.name} · Mostrar valores como
+            <select
+              className="h-10 rounded-md border border-input bg-background px-3 text-sm font-normal outline-none ring-ring focus-visible:ring-2"
+              defaultValue={valueDisplay[field.id] ?? "LABEL"}
+              name={`reportValueDisplay:${field.id}`}
+            >
+              <option value="LABEL">Etiqueta visible</option>
+              <option value="INTERNAL_VALUE">Valor interno</option>
+            </select>
+          </label>
+        ))}
+      </div>
+    </fieldset>
+  );
+}
+
+function reportSelectDisplayFields(
+  fields: AppViewEntityTypeOption["fields"],
+  fieldIds: string[],
+) {
+  const selected = new Set(fieldIds.filter(Boolean));
+
+  return fields.filter((field) =>
+    selected.has(field.id) &&
+    (field.type === "SELECT" || field.type === "MULTISELECT"),
   );
 }
 

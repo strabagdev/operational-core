@@ -219,12 +219,14 @@ Current `AppView.type` values:
 
 Although `AppView.config` is stored as JSON, it is not treated as arbitrary JSON. Server-side validators check the required shape for each type, verify every referenced `EntityType` belongs to the same contract, and for `BOARD` verify the grouping field exists and is active in that entity type. Workflow configs are also validated against active target fields, relation targets, and supported field types.
 
-`REPORT` is separate from `RECORDS`, `WORKFLOW`, `BOARD`, and `DASHBOARD`. It is a configurable query/presentation surface, not a traditional table-only view. Its temporal scope is configured with `timeFilter`: `mode = RANGE | MONTH`, `defaultPeriod = CURRENT_MONTH`, and `allowChange`. Existing reports without `timeFilter` are read as editable current-month `RANGE` reports for compatibility. The first presentation modes are:
+`REPORT` is separate from `RECORDS`, `WORKFLOW`, `BOARD`, and `DASHBOARD`. It is a configurable query/presentation surface, not a traditional table-only view. Its temporal scope is configured with `timeFilter`: `mode = RANGE | MONTH`, `defaultPeriod = CURRENT_MONTH`, and `allowChange`. SELECT and MULTISELECT presentation is configured with `valueDisplay[fieldId] = LABEL | INTERNAL_VALUE`; missing entries default to `LABEL`. Existing reports without `timeFilter` are read as editable current-month `RANGE` reports for compatibility. The first presentation modes are:
 
 - `TABLE`: each row is one record. `table.visibleFieldIds` controls visible columns, and optional `defaultSortFieldId` plus `defaultSortDirection` controls default ordering.
 - `MATRIX`: records are transformed into dynamic rows and columns. `matrix.rowFieldId` defines rows, `matrix.columnFieldId` defines generated columns, `matrix.valueFieldId` defines cell values, and optional `summaryFieldId` builds a lateral per-row count summary.
 
 REPORT queries use `/api/v1/contracts/:contractId/reports/:appViewId?from=YYYY-MM-DD&to=YYYY-MM-DD`. The date range is applied to the configured `dateFieldId`; field names such as "Fecha" are never hardcoded. A monthly Attendance report can be configured generically with `rowFieldId = Persona`, `columnFieldId = Fecha`, `valueFieldId = Estado`, and `summaryFieldId = Estado`.
+
+REPORT value presentation never changes stored option values. API field metadata exposes each option's stable `id`, visible `label`, and internal `value`; serialized records keep the stored value so clients can choose the configured presentation at render time.
 
 `state-update` is the generic workflow primitive for operational experiences where one subject record has one or more state fields changed, optional extra fields captured, optional date semantics, configurable uniqueness, and optional current-record update behavior. Its config stores:
 

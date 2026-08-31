@@ -62,6 +62,7 @@ export type ReportAppViewConfig = {
   entityTypeId: string;
   dateFieldId: string;
   timeFilter: ReportTimeFilterConfig;
+  valueDisplay: Record<string, ReportSelectValueDisplay>;
 } & (
   | {
       presentationMode: "TABLE";
@@ -89,6 +90,8 @@ export type ReportTimeFilterConfig = {
   defaultPeriod: "CURRENT_MONTH";
   allowChange: boolean;
 };
+
+export type ReportSelectValueDisplay = "LABEL" | "INTERNAL_VALUE";
 
 const defaultReportTimeFilter = {
   allowChange: true,
@@ -168,6 +171,11 @@ export function getAppViewInput(formData: FormData) {
       reportTimeAllowChange: parseFormBoolean(formData, "reportTimeAllowChange"),
       reportTimeDefaultPeriod: formData.get("reportTimeDefaultPeriod"),
       reportTimeMode: formData.get("reportTimeMode"),
+      reportValueDisplay: Object.fromEntries(
+        Array.from(formData.entries())
+          .filter(([key]) => key.startsWith("reportValueDisplay:"))
+          .map(([key, value]) => [key.slice("reportValueDisplay:".length), value]),
+      ),
       requiredStateFieldIds: formData.getAll("requiredStateFieldIds"),
       reportColumnFieldId: formData.get("reportColumnFieldId"),
       reportRowFieldId: formData.get("reportRowFieldId"),
@@ -548,6 +556,7 @@ async function validateAppViewConfig({
         entityTypeId: config.entityTypeId,
         dateFieldId: config.dateFieldId,
         timeFilter: config.timeFilter,
+        valueDisplay: config.valueDisplay,
         presentationMode: "TABLE",
         table: {
           visibleFieldIds: config.table.visibleFieldIds,
@@ -562,6 +571,7 @@ async function validateAppViewConfig({
       entityTypeId: config.entityTypeId,
       dateFieldId: config.dateFieldId,
       timeFilter: config.timeFilter,
+      valueDisplay: config.valueDisplay,
       presentationMode: "MATRIX",
       matrix: {
         rowFieldId: config.matrix.rowFieldId,
@@ -610,6 +620,7 @@ const reportBaseConfigInputSchema = z.object({
     defaultPeriod: z.literal("CURRENT_MONTH"),
     allowChange: z.boolean(),
   }).default(defaultReportTimeFilter),
+  valueDisplay: z.record(z.string(), z.enum(["LABEL", "INTERNAL_VALUE"])).default({}),
 });
 
 const reportConfigInputSchema = z.discriminatedUnion("presentationMode", [
@@ -789,6 +800,7 @@ function parseReportConfigInput(rawConfig: unknown) {
       entityTypeId: raw.entityTypeId,
       dateFieldId: raw.dateFieldId,
       timeFilter: parseReportTimeFilter(raw),
+      valueDisplay: parseReportValueDisplay(raw),
       presentationMode,
       matrix: {
         rowFieldId: raw.reportRowFieldId ?? matrix.rowFieldId,
@@ -805,6 +817,7 @@ function parseReportConfigInput(rawConfig: unknown) {
     entityTypeId: raw.entityTypeId,
     dateFieldId: raw.dateFieldId,
     timeFilter: parseReportTimeFilter(raw),
+    valueDisplay: parseReportValueDisplay(raw),
     presentationMode,
     table: {
       visibleFieldIds: uniqueStrings(stringArray(raw.visibleFieldIds ?? table.visibleFieldIds)),
@@ -825,6 +838,18 @@ function parseReportTimeFilter(raw: Record<string, unknown>) {
       : defaultReportTimeFilter.allowChange;
 
   return { allowChange, defaultPeriod, mode };
+}
+
+function parseReportValueDisplay(raw: Record<string, unknown>) {
+  const stored = isRecord(raw.valueDisplay) ? raw.valueDisplay : {};
+  const submitted = isRecord(raw.reportValueDisplay) ? raw.reportValueDisplay : {};
+  const source = Object.keys(submitted).length > 0 ? submitted : stored;
+  const entries = Object.entries(source).filter((entry): entry is [string, ReportSelectValueDisplay] =>
+    typeof entry[0] === "string" &&
+    (entry[1] === "LABEL" || entry[1] === "INTERNAL_VALUE"),
+  );
+
+  return Object.fromEntries(entries);
 }
 
 function validateReportAppViewFields({
@@ -862,6 +887,8 @@ function validateReportAppViewFields({
       }
     }
 
+    validateReportValueDisplayFields(config.valueDisplay, fields);
+
     return;
   }
 
@@ -871,6 +898,26 @@ function validateReportAppViewFields({
 
   if (config.matrix.summaryFieldId) {
     requireActiveTargetField(fields, config.matrix.summaryFieldId, "Resumen lateral");
+  }
+
+  validateReportValueDisplayFields(config.valueDisplay, fields);
+}
+
+function validateReportValueDisplayFields(
+  valueDisplay: Record<string, ReportSelectValueDisplay>,
+  fields: Array<{
+    id: string;
+    isActive: boolean;
+    name: string;
+    type: string;
+  }>,
+) {
+  for (const fieldId of Object.keys(valueDisplay)) {
+    const field = requireActiveTargetField(fields, fieldId, "Mostrar valores como");
+
+    if (field.type !== "SELECT" && field.type !== "MULTISELECT") {
+      throw new AppViewConfigError("La presentación de valores solo aplica a campos de selección.", "reportValueDisplay");
+    }
   }
 }
 

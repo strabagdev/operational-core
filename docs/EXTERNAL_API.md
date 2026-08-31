@@ -534,7 +534,7 @@ Returns data for a configured `REPORT` AppView assigned to the authenticated use
 - `from`: optional `YYYY-MM-DD`.
 - `to`: optional `YYYY-MM-DD`.
 
-The date range filters records using the report's configured `dateFieldId`; display names such as "Fecha" are not used as identifiers. The response includes the REPORT config, including `timeFilter`, entity metadata, selected field definitions including option labels, and serialized records with relation display names. First presentation modes are `TABLE` and `MATRIX`. Reports stored before `timeFilter` are serialized with `mode = RANGE`, `defaultPeriod = CURRENT_MONTH`, and `allowChange = true`.
+The date range filters records using the report's configured `dateFieldId`; display names such as "Fecha" are not used as identifiers. The response includes the REPORT config, including `timeFilter` and `valueDisplay`, entity metadata, selected field definitions including option `id`, visible `label`, and internal `value`, and serialized records with relation display names. Record values keep the stored value; clients apply `valueDisplay[fieldId] = LABEL | INTERNAL_VALUE` only when rendering REPORT output. First presentation modes are `TABLE` and `MATRIX`. Reports stored before `timeFilter` are serialized with `mode = RANGE`, `defaultPeriod = CURRENT_MONTH`, and `allowChange = true`.
 
 ### GET /api/v1/contracts/:contractId/views/:appViewId/workflow/state-update
 

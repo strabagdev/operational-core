@@ -105,6 +105,9 @@ describe("AppViewForm", () => {
               visibleFieldIds: ["person_field", "date_field", "status_field"],
             },
             type: "REPORT",
+            valueDisplay: {
+              status_field: "INTERNAL_VALUE",
+            },
           },
           icon: "clipboard-check",
           name: "Asistencia mensual",
@@ -126,6 +129,12 @@ describe("AppViewForm", () => {
     expect(html).toContain("Tabla");
     expect(html).toContain("Columnas visibles");
     expect(html).toContain('name="visibleFieldIds"');
+    expect(html).toContain("Presentación de valores SELECT");
+    expect(html).toContain("Estado · Mostrar valores como");
+    expect(html).toContain("Etiqueta visible");
+    expect(html).toContain("Valor interno");
+    expect(html).toContain('name="reportValueDisplay:status_field"');
+    expect(html).toContain('value="INTERNAL_VALUE" selected=""');
     expect(html).toContain("Dirección");
     expect(html).toContain("Descendente");
   });
@@ -153,6 +162,9 @@ describe("AppViewForm", () => {
               mode: "MONTH",
             },
             type: "REPORT",
+            valueDisplay: {
+              status_field: "INTERNAL_VALUE",
+            },
           },
           icon: "clipboard-check",
           name: "Matriz asistencia",
@@ -172,6 +184,8 @@ describe("AppViewForm", () => {
     expect(html).toContain("Resumen lateral");
     expect(html).toContain('name="reportRowFieldId"');
     expect(html).toContain('name="reportSummaryFieldId"');
+    expect(html).toContain("Presentación de valores SELECT");
+    expect(html).toContain('name="reportValueDisplay:status_field"');
   });
 
   it("renders the selected workflow configuration", () => {
