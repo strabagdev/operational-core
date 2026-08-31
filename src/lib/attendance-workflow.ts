@@ -16,6 +16,7 @@ import {
 } from "@/lib/state-update-workflow";
 
 export type AttendanceEntryInput = {
+  contextValues?: Record<string, string | null>;
   expectedUpdatedAt?: string;
   observation?: string | null;
   overwrite?: boolean;
@@ -85,6 +86,7 @@ type AttendanceContext = {
     id: string;
     name: string;
   };
+  contextFields: AttendanceField[];
   statusOptions: AttendanceStatusOption[];
   statusOptionsByValue: Map<string, AttendanceStatusOption>;
 };
@@ -127,6 +129,7 @@ export async function getAttendanceWorkflowDay({
     ? []
     : await findExistingAttendances({
         config: context.context.config,
+        contextFields: context.context.contextFields,
         date: parsedDate.date,
         personRecordIds: people.map((person) => person.id),
         statusOptionsByValue: context.context.statusOptionsByValue,
@@ -140,6 +143,7 @@ export async function getAttendanceWorkflowDay({
     ok: true as const,
     data: {
       appView: context.context.appView,
+      contextFields: serializeAttendanceContextFields(context.context.contextFields),
       date: parsedDate.value,
       items: people.map((person) => {
         const attendance = attendanceByPersonId.get(person.id);
@@ -149,6 +153,7 @@ export async function getAttendanceWorkflowDay({
           attendance: attendance
             ? {
                 observation: attendance.observation,
+                contextValues: attendance.contextValues,
                 recordId: attendance.record.id,
                 statusLabel: attendance.statusOption?.label ?? null,
                 statusOptionId: attendance.statusOption?.id ?? null,
@@ -159,6 +164,7 @@ export async function getAttendanceWorkflowDay({
       }),
       latest: await getLatestAttendanceRecords({
         config: context.context.config,
+        contextFields: context.context.contextFields,
         date: parsedDate.date,
         limit: latestAttendanceLimit,
         statusOptionsByValue: context.context.statusOptionsByValue,
@@ -173,6 +179,7 @@ export async function getAttendanceWorkflowDay({
         label: option.label,
         optionId: option.id,
       })),
+      statusFieldId: context.context.config.statusFieldId,
       summary: {
         totalRegistered: await countRegisteredAttendances({
           config: context.context.config,
@@ -277,9 +284,11 @@ export async function saveAttendanceWorkflowDay({
         date: parsed.body.date,
         dateValue: parsed.body.dateValue,
         expectedUpdatedAt: entry.expectedUpdatedAt,
-        extraValues: context.context.config.observationFieldId
-          ? { [context.context.config.observationFieldId]: entry.observation ?? null }
-          : {},
+        extraValues: attendanceEntryExtraValues({
+          config: context.context.config,
+          contextFields: context.context.contextFields,
+          entry,
+        }),
         overwrite: entry.overwrite === true,
         states: { [context.context.config.statusFieldId]: entry.statusOptionId },
         subjectRecordId: entry.personRecordId,
@@ -368,7 +377,74 @@ function mapStateUpdateResultToAttendance({
   };
 }
 
+function serializeAttendanceContextFields(fields: AttendanceField[]) {
+  return fields.map((field) => ({
+    id: field.id,
+    key: field.key,
+    name: field.name,
+    options: field.options
+      .filter((option) => option.isActive)
+      .map((option) => ({
+        label: option.label,
+        optionId: option.id,
+        order: option.sortOrder,
+        value: option.value,
+      })),
+    required: field.required,
+    type: field.type,
+  }));
+}
+
+function attendanceEntryExtraValues({
+  config,
+  contextFields,
+  entry,
+}: {
+  config: AttendanceConfig;
+  contextFields: AttendanceField[];
+  entry: AttendanceEntryInput;
+}) {
+  const extraValues: Record<string, string | null> = {};
+
+  for (const field of contextFields) {
+    if (!entry.contextValues || !(field.id in entry.contextValues)) {
+      continue;
+    }
+
+    const optionId = entry.contextValues[field.id];
+
+    if (!optionId) {
+      extraValues[field.id] = null;
+      continue;
+    }
+
+    const option = field.options.find((item) => item.id === optionId && item.isActive);
+    extraValues[field.id] = option?.value ?? optionId;
+  }
+
+  if (config.observationFieldId) {
+    extraValues[config.observationFieldId] = entry.observation ?? null;
+  }
+
+  return extraValues;
+}
+
+function attendanceContextValuesFromRecord(
+  values: Array<{ entityFieldId: string; textValue: string | null }>,
+  contextFields: AttendanceField[],
+) {
+  return Object.fromEntries(contextFields.map((field) => {
+    const value = values.find((item) => item.entityFieldId === field.id)?.textValue ?? null;
+    const option = value
+      ? field.options.find((item) => item.value === value && item.isActive)
+      : null;
+
+    return [field.id, option ? { label: option.label, optionId: option.id } : null];
+  }));
+}
+
 type ExistingAttendance = {
+  contextValues: Record<string, { label: string; optionId: string } | null>;
   observation: string | null;
   personRecordId: string;
   record: {
@@ -386,12 +462,14 @@ type ExistingAttendance = {
 
 async function findExistingAttendances({
   config,
+  contextFields,
   date,
   personRecordIds,
   statusOptionsByValue,
   targetEntityTypeId,
 }: {
   config: AttendanceConfig;
+  contextFields: AttendanceField[];
   date: Date;
   personRecordIds: string[];
   statusOptionsByValue: Map<string, AttendanceStatusOption>;
@@ -423,6 +501,7 @@ async function findExistingAttendances({
             in: [
               config.dateFieldId,
               config.statusFieldId,
+              ...contextFields.map((field) => field.id),
               ...(config.observationFieldId ? [config.observationFieldId] : []),
             ],
           },
@@ -461,6 +540,7 @@ async function findExistingAttendances({
       observation: config.observationFieldId
         ? record.values.find((value) => value.entityFieldId === config.observationFieldId)?.textValue ?? null
         : null,
+      contextValues: attendanceContextValuesFromRecord(record.values, contextFields),
       personRecordId,
       record,
       statusOption: statusValue ? statusOptionsByValue.get(statusValue) ?? null : null,
@@ -601,12 +681,14 @@ async function countRegisteredAttendances({
 
 async function getLatestAttendanceRecords({
   config,
+  contextFields,
   date,
   limit,
   statusOptionsByValue,
   targetEntityTypeId,
 }: {
   config: AttendanceConfig;
+  contextFields: AttendanceField[];
   date: Date;
   limit: number;
   statusOptionsByValue: Map<string, AttendanceStatusOption>;
@@ -634,7 +716,12 @@ async function getLatestAttendanceRecords({
           textValue: true,
         },
         where: {
-          entityFieldId: config.statusFieldId,
+          entityFieldId: {
+            in: [
+              config.statusFieldId,
+              ...contextFields.map((field) => field.id),
+            ],
+          },
         },
       },
     },
@@ -666,6 +753,7 @@ async function getLatestAttendanceRecords({
         : null,
       statusLabel: statusOption?.label ?? null,
       statusOptionId: statusOption?.id ?? null,
+      contextValues: attendanceContextValuesFromRecord(record.values, contextFields),
       updatedAt: record.updatedAt.toISOString(),
     };
   });
@@ -828,6 +916,7 @@ async function getAttendanceWorkflowContext({
         name: sourceEntityType.name,
       },
       targetEntityType,
+      contextFields: configValidation.contextFields,
       statusOptions: configValidation.statusOptions,
       statusOptionsByValue: configValidation.statusOptionsByValue,
     },
@@ -849,6 +938,12 @@ function validateAttendanceRuntimeConfig({
   const observationField = config.observationFieldId
     ? targetFields.find((field) => field.id === config.observationFieldId)
     : undefined;
+  const semanticFieldIds = new Set([
+    config.personFieldId,
+    config.dateFieldId,
+    config.statusFieldId,
+    config.observationFieldId,
+  ].filter(Boolean));
 
   if (
     !personField ||
@@ -895,8 +990,28 @@ function validateAttendanceRuntimeConfig({
     };
   }
 
+  const contextFields: AttendanceField[] = [];
+  for (const contextFieldId of config.contextFieldIds ?? []) {
+    const contextField = targetFields.find((field) => field.id === contextFieldId);
+
+    if (
+      semanticFieldIds.has(contextFieldId) ||
+      !contextField ||
+      contextField.type !== "SELECT" ||
+      contextField.multiple
+    ) {
+      return {
+        ok: false as const,
+        response: badRequest("La configuración de asistencia tiene campos de contexto inválidos.", "INVALID_WORKFLOW_CONFIG"),
+      };
+    }
+
+    contextFields.push(contextField);
+  }
+
 	  return {
 	    ok: true as const,
+	    contextFields,
 	    statusOptions: statusOptions.statusOptions,
 	    statusOptionsByValue: statusOptions.statusOptionsByValue,
 	  };
@@ -975,6 +1090,7 @@ function parseAttendanceSaveBody(body: unknown) {
     }
 
     entries.push({
+      contextValues: parseAttendanceContextValues(entry.contextValues),
       expectedUpdatedAt: typeof entry.expectedUpdatedAt === "string" ? entry.expectedUpdatedAt : undefined,
       observation: typeof entry.observation === "string"
         ? entry.observation.trim() || null
@@ -994,6 +1110,19 @@ function parseAttendanceSaveBody(body: unknown) {
       entries,
     },
   };
+}
+
+function parseAttendanceContextValues(value: unknown): Record<string, string | null> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+    .filter(([fieldId]) => fieldId.trim().length > 0)
+    .map(([fieldId, optionId]) => [
+      fieldId.trim(),
+      typeof optionId === "string" ? optionId.trim() || null : optionId === null ? null : null,
+    ]));
 }
 
 async function registerAttendanceRequestIdempotency({

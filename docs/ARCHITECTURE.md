@@ -65,6 +65,8 @@ Record presentation is stored inside `EntityField.config.display`:
 
 `EntityField.sortOrder` is the single official order for field configuration, record forms, record-list dynamic columns, Excel templates, and Excel imports. `display.listOrder` must not create a different order.
 
+Attendance AppViews use stable semantic field ids in `AppView.config`: `personFieldId`, `dateFieldId`, `statusFieldId`, optional `observationFieldId`, and optional ordered `contextFieldIds`. `observationFieldId` is not inferred or auto-created; without it, clients do not render or persist observations. `contextFieldIds` points to additional simple `SELECT` fields on the attendance target entity, and their values travel as normal STATE_UPDATE extra values.
+
 Dynamic fields support two different lifecycle operations:
 
 - deactivation keeps the `EntityField` row and preserves all historical data while removing the field from new operational use;

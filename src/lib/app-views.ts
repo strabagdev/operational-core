@@ -64,6 +64,7 @@ export type AttendanceWorkflowConfig = {
       dateFieldId: string;
       statusFieldId: string;
       defaultCheckInOptionId: string;
+      contextFieldIds?: string[];
       observationFieldId?: string;
     };
 
@@ -115,6 +116,7 @@ export function getAppViewInput(formData: FormData) {
       groupByFieldKey: formData.get("groupByFieldKey"),
       dateFieldId: formData.get("dateFieldId"),
       defaultCheckInOptionId: formData.get("defaultCheckInOptionId") ?? formData.get("presentOptionId"),
+      contextFieldIds: formData.getAll("contextFieldIds"),
       extraFieldIds: formData.getAll("extraFieldIds"),
       historyMode: formData.get("historyMode"),
       observationFieldId: formData.get("observationFieldId"),
@@ -158,6 +160,7 @@ export async function getAppViewAdminData(contractId: string, userId: string) {
             id: true,
             isActive: true,
             key: true,
+            multiple: true,
             name: true,
             config: true,
             options: {
@@ -442,6 +445,7 @@ async function validateAppViewConfig({
         dateFieldId: config.dateFieldId,
         statusFieldId: config.statusFieldId,
         defaultCheckInOptionId: config.defaultCheckInOptionId,
+        ...(config.contextFieldIds.length > 0 ? { contextFieldIds: config.contextFieldIds } : {}),
         ...(config.observationFieldId ? { observationFieldId: config.observationFieldId } : {}),
       };
     }
@@ -517,6 +521,7 @@ const attendanceWorkflowConfigInputSchema = workflowBaseConfigInputSchema.extend
       .trim()
       .min(1, "Selecciona el estado por defecto de checking."),
   ),
+  contextFieldIds: z.array(z.string().trim().min(1)).default([]),
   observationFieldId: z.preprocess(
     (value) => value === null ? undefined : value,
     z
@@ -634,6 +639,7 @@ function parseWorkflowConfigInput(rawConfig: unknown) {
 
   return attendanceWorkflowConfigInputSchema.parse({
     ...raw,
+    contextFieldIds: uniqueStrings(stringArray(raw.contextFieldIds)),
     defaultCheckInOptionId: raw.defaultCheckInOptionId ?? raw.presentOptionId,
     workflowKey,
   });
@@ -664,6 +670,12 @@ function validateAttendanceAppViewFields({
   const observationField = config.observationFieldId
     ? requireActiveTargetField(targetFields, config.observationFieldId, "Observación")
     : null;
+  const semanticFieldIds = new Set([
+    config.personFieldId,
+    config.dateFieldId,
+    config.statusFieldId,
+    config.observationFieldId,
+  ].filter(Boolean));
 
   if (personField.type !== "RELATION") {
     throw new AppViewConfigError("El campo Persona debe ser de tipo relación.", "personFieldId");
@@ -707,6 +719,24 @@ function validateAttendanceAppViewFields({
 
   if (observationField && observationField.type !== "TEXTAREA") {
     throw new AppViewConfigError("El campo Observación debe ser de tipo texto largo.", "observationFieldId");
+  }
+
+  for (const contextFieldId of config.contextFieldIds) {
+    if (semanticFieldIds.has(contextFieldId)) {
+      throw new AppViewConfigError(
+        "Los campos de contexto no deben repetir Persona, Fecha, Estado ni Observación.",
+        "contextFieldIds",
+      );
+    }
+
+    const contextField = requireActiveTargetField(targetFields, contextFieldId, "Contexto");
+
+    if (contextField.type !== "SELECT" || contextField.multiple) {
+      throw new AppViewConfigError(
+        "Los campos de contexto deben ser selección simple.",
+        "contextFieldIds",
+      );
+    }
   }
 }
 
@@ -865,6 +895,10 @@ function stringArray(value: unknown) {
   }
 
   return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+}
+
+function uniqueStrings(values: string[]) {
+  return Array.from(new Set(values));
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

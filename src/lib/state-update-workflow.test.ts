@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { userCanAccessAppView } from "@/lib/app-view-access";
 import { prisma } from "@/lib/prisma";
 import {
+  attendanceStateUpdateConfig,
   getStateUpdateWorkflow,
   normalizeStateUpdateCompatibleConfig,
   saveStateUpdateWorkflow,
@@ -58,6 +59,30 @@ const tx = {
     deleteMany: vi.fn(),
   },
 };
+
+describe("attendance state-update adapter", () => {
+  it("maps context fields and optional observation to generic extra fields", () => {
+    expect(attendanceStateUpdateConfig({
+      contextFieldIds: ["shift_field", "sector_field"],
+      dateFieldId: "date_field",
+      defaultCheckInOptionId: "present_option",
+      observationFieldId: "observation_field",
+      personFieldId: "person_field",
+      sourceEntityTypeId: "people",
+      statusFieldId: "status_field",
+      targetEntityTypeId: "attendance",
+    }).extraFieldIds).toEqual(["shift_field", "sector_field", "observation_field"]);
+
+    expect(attendanceStateUpdateConfig({
+      dateFieldId: "date_field",
+      defaultCheckInOptionId: "present_option",
+      personFieldId: "person_field",
+      sourceEntityTypeId: "people",
+      statusFieldId: "status_field",
+      targetEntityTypeId: "attendance",
+    }).extraFieldIds).toEqual([]);
+  });
+});
 
 beforeEach(() => {
   vi.clearAllMocks();

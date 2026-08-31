@@ -118,8 +118,14 @@ export function attendanceStateUpdateConfig(config: {
   dateFieldId: string;
   statusFieldId: string;
   defaultCheckInOptionId: string;
+  contextFieldIds?: string[];
   observationFieldId?: string;
 }): StateUpdateWorkflowConfig {
+  const extraFieldIds = [
+    ...(config.contextFieldIds ?? []),
+    ...(config.observationFieldId ? [config.observationFieldId] : []),
+  ];
+
   return {
     type: "WORKFLOW",
     workflowKey: "state-update",
@@ -131,7 +137,7 @@ export function attendanceStateUpdateConfig(config: {
       required: true,
       defaultOptionId: config.defaultCheckInOptionId,
     }],
-    extraFieldIds: config.observationFieldId ? [config.observationFieldId] : [],
+    extraFieldIds: Array.from(new Set(extraFieldIds)),
     dateFieldId: config.dateFieldId,
     uniqueness: { mode: "subject-date" },
     historyMode: "update-current",

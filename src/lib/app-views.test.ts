@@ -166,6 +166,7 @@ describe("AppView config validation", () => {
         dateFieldId: "date_field",
         statusFieldId: "status_field",
         defaultCheckInOptionId: "present_option",
+        contextFieldIds: ["shift_field", "sector_field", "shift_field"],
         observationFieldId: "observation_field",
         type: "WORKFLOW",
         workflowKey: "attendance",
@@ -182,6 +183,7 @@ describe("AppView config validation", () => {
           dateFieldId: "date_field",
           statusFieldId: "status_field",
           defaultCheckInOptionId: "present_option",
+          contextFieldIds: ["shift_field", "sector_field"],
           observationFieldId: "observation_field",
         },
         type: "WORKFLOW",
@@ -210,6 +212,30 @@ describe("AppView config validation", () => {
         })),
       ),
     ).rejects.toThrow("La vista referencia una entidad que no pertenece a este contrato.");
+  });
+
+  it("rejects attendance context fields that repeat semantic fields", async () => {
+    entityTypeFindFirst
+      .mockResolvedValueOnce(entityType({ id: "people" }) as never)
+      .mockResolvedValueOnce(attendanceEntityType() as never);
+
+    await expect(
+      createAppView(
+        "contract_1",
+        "user_1",
+        getAppViewInput(formData({
+          sourceEntityTypeId: "people",
+          targetEntityTypeId: "attendance",
+          personFieldId: "person_field",
+          dateFieldId: "date_field",
+          statusFieldId: "status_field",
+          defaultCheckInOptionId: "present_option",
+          contextFieldIds: ["status_field"],
+          type: "WORKFLOW",
+          workflowKey: "attendance",
+        })),
+      ),
+    ).rejects.toThrow("Los campos de contexto no deben repetir Persona, Fecha, Estado ni Observación.");
   });
 
   it("rejects an unsupported workflowKey", async () => {
@@ -788,6 +814,8 @@ function attendanceEntityType(overrides: Record<string, unknown> = {}) {
       attendanceField("person_field", "RELATION"),
       attendanceField("date_field", "DATE"),
       attendanceField("status_field", "SELECT", { options: attendanceStatusOptions() }),
+      attendanceField("shift_field", "SELECT", { options: [{ id: "day_option", isActive: true, value: "day" }] }),
+      attendanceField("sector_field", "SELECT", { options: [{ id: "north_option", isActive: true, value: "north" }] }),
       attendanceField("observation_field", "TEXTAREA"),
     ],
     id: "attendance",

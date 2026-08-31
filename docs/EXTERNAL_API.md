@@ -803,6 +803,8 @@ Only active `EntityField` rows are included. Historical values for inactive fiel
 
 Field `config.display` may include presentation metadata such as `primary`, `showInList`, `showInClient`, and legacy `listOrder`. `showInList` controls Opco Web record-list columns. `showInClient` controls compact record summaries in generic clients and must not hide fields from full record detail views.
 
+Attendance AppViews use semantic field ids in `appView.config`: `personFieldId`, `dateFieldId`, `statusFieldId`, optional `observationFieldId`, and optional ordered `contextFieldIds`. Context fields are additional simple `SELECT` fields from the attendance target entity. They are transported as regular STATE_UPDATE extra values, so required-field validation, offline sync, and reconciliation remain owned by the generic record/state-update pipeline. If `observationFieldId` is absent, no observation input or value is produced.
+
 For `SELECT` and `MULTISELECT`, fields include options:
 
 ```json

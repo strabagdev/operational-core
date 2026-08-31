@@ -27,6 +27,7 @@ type AppViewEntityTypeOption = {
       label: string;
       value: string;
     }>;
+    multiple?: boolean;
     type: string;
   }>;
   icon?: string | null;
@@ -129,6 +130,12 @@ export function AppViewForm({
     (initialValues?.config.type === "WORKFLOW" && initialValues.config.workflowKey === "attendance"
       ? initialValues.config.observationFieldId ?? ""
       : ""),
+  );
+  const [contextFieldIds, setContextFieldIds] = useState<string[]>(
+    valuesFromState(state, "contextFieldIds") ??
+      (initialValues?.config.type === "WORKFLOW" && initialValues.config.workflowKey === "attendance"
+        ? initialValues.config.contextFieldIds ?? []
+        : []),
   );
   const [stateFieldIds, setStateFieldIds] = useState<Set<string>>(
     new Set(valuesFromState(state, "stateFieldIds") ??
@@ -261,6 +268,7 @@ export function AppViewForm({
 
       <ConfigFields
         activeBoardFields={activeBoardFields}
+        contextFieldIds={contextFieldIds}
         dashboardEntityTypeIds={dashboardEntityTypeIds}
         entityTypeId={entityTypeId}
         entityTypes={entityTypes}
@@ -276,6 +284,7 @@ export function AppViewForm({
         historyMode={historyMode}
         requiredStateFieldIds={requiredStateFieldIds}
         setDateFieldId={setDateFieldId}
+        setContextFieldIds={setContextFieldIds}
         setExtraFieldIds={setExtraFieldIds}
         setGroupByFieldKey={setGroupByFieldKey}
         setHistoryMode={setHistoryMode}
@@ -331,6 +340,7 @@ export function AppViewForm({
 
 function ConfigFields({
   activeBoardFields,
+  contextFieldIds,
   dashboardEntityTypeIds,
   dateFieldId,
   entityTypeId,
@@ -343,6 +353,7 @@ function ConfigFields({
   observationFieldId,
   personFieldId,
   requiredStateFieldIds,
+  setContextFieldIds,
   setDateFieldId,
   setDefaultCheckInOptionId,
   setEntityTypeId,
@@ -370,6 +381,7 @@ function ConfigFields({
   workflowKey,
 }: {
   activeBoardFields: AppViewEntityTypeOption["fields"];
+  contextFieldIds: string[];
   dashboardEntityTypeIds: Set<string>;
   dateFieldId: string;
   entityTypeId: string;
@@ -382,6 +394,7 @@ function ConfigFields({
   observationFieldId: string;
   personFieldId: string;
   requiredStateFieldIds: Set<string>;
+  setContextFieldIds: (value: string[]) => void;
   setDateFieldId: (value: string) => void;
   setDefaultCheckInOptionId: (value: string) => void;
   setEntityTypeId: (value: string) => void;
@@ -440,6 +453,7 @@ function ConfigFields({
             setStatusFieldId(nextStatusFieldId);
             setDefaultCheckInOptionId(firstActiveOptionId(nextStatusField));
             setObservationFieldId(firstActiveFieldId(nextTarget, "TEXTAREA"));
+            setContextFieldIds([]);
             setStateFieldIds(nextStatusFieldId ? new Set([nextStatusFieldId]) : new Set());
             setRequiredStateFieldIds(nextStatusFieldId ? new Set([nextStatusFieldId]) : new Set());
             setExtraFieldIds(new Set());
@@ -540,57 +554,71 @@ function ConfigFields({
             <FieldError errors={fieldErrors?.stateFieldIds ?? fieldErrors?.extraFieldIds} />
           </div>
         ) : (
-          <div className="grid gap-3 sm:grid-cols-2">
-            <FieldSelect
-              fields={activeTargetFields}
-              label="Campo Persona"
-              name="personFieldId"
-              onChange={setPersonFieldId}
-              preferredType="RELATION"
-              value={personFieldId}
-              errors={fieldErrors?.personFieldId}
-            />
-            <FieldSelect
-              fields={activeTargetFields}
-              label="Campo Fecha"
-              name="dateFieldId"
-              onChange={setDateFieldId}
-              preferredType="DATE"
-              value={dateFieldId}
-              errors={fieldErrors?.dateFieldId}
-            />
-            <FieldSelect
-              fields={activeTargetFields}
-              label="Campo Estado"
-              name="statusFieldId"
-              onChange={(value) => {
-                const nextStatusField = activeTargetFields.find((field) => field.id === value);
+          <div className="grid gap-3">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <FieldSelect
+                fields={activeTargetFields}
+                label="Campo Persona"
+                name="personFieldId"
+                onChange={setPersonFieldId}
+                preferredType="RELATION"
+                value={personFieldId}
+                errors={fieldErrors?.personFieldId}
+              />
+              <FieldSelect
+                fields={activeTargetFields}
+                label="Campo Fecha"
+                name="dateFieldId"
+                onChange={setDateFieldId}
+                preferredType="DATE"
+                value={dateFieldId}
+                errors={fieldErrors?.dateFieldId}
+              />
+              <FieldSelect
+                fields={activeTargetFields}
+                label="Campo Estado"
+                name="statusFieldId"
+                onChange={(value) => {
+                  const nextStatusField = activeTargetFields.find((field) => field.id === value);
 
-                setStatusFieldId(value);
-                setDefaultCheckInOptionId(firstActiveOptionId(nextStatusField));
-              }}
-              preferredType="SELECT"
-              value={statusFieldId}
-              errors={fieldErrors?.statusFieldId}
+                  setStatusFieldId(value);
+                  setDefaultCheckInOptionId(firstActiveOptionId(nextStatusField));
+                }}
+                preferredType="SELECT"
+                value={statusFieldId}
+                errors={fieldErrors?.statusFieldId}
+              />
+              <OptionSelect
+                errors={fieldErrors?.defaultCheckInOptionId}
+                label="Estado por defecto de checking"
+                name="defaultCheckInOptionId"
+                onChange={setDefaultCheckInOptionId}
+                options={activeStatusOptions}
+                value={defaultCheckInOptionId}
+              />
+              <FieldSelect
+                fields={activeTargetFields}
+                includeEmpty
+                label="Campo Observación"
+                name="observationFieldId"
+                onChange={setObservationFieldId}
+                preferredType="TEXTAREA"
+                value={observationFieldId}
+                errors={fieldErrors?.observationFieldId}
+              />
+            </div>
+            <OrderedFieldChecklist
+              fields={activeTargetFields.filter((field) =>
+                field.type === "SELECT" &&
+                !field.multiple &&
+                !new Set([personFieldId, dateFieldId, statusFieldId, observationFieldId].filter(Boolean)).has(field.id),
+              )}
+              label="Campos de contexto"
+              name="contextFieldIds"
+              selected={contextFieldIds}
+              setSelected={setContextFieldIds}
             />
-            <OptionSelect
-              errors={fieldErrors?.defaultCheckInOptionId}
-              label="Estado por defecto de checking"
-              name="defaultCheckInOptionId"
-              onChange={setDefaultCheckInOptionId}
-              options={activeStatusOptions}
-              value={defaultCheckInOptionId}
-            />
-            <FieldSelect
-              fields={activeTargetFields}
-              includeEmpty
-              label="Campo Observación"
-              name="observationFieldId"
-              onChange={setObservationFieldId}
-              preferredType="TEXTAREA"
-              value={observationFieldId}
-              errors={fieldErrors?.observationFieldId}
-            />
+            <FieldError errors={fieldErrors?.contextFieldIds} />
           </div>
         )}
       </fieldset>
@@ -857,6 +885,61 @@ function FieldChecklist({
           </div>
         ))}
       </div>
+    </fieldset>
+  );
+}
+
+function OrderedFieldChecklist({
+  fields,
+  label,
+  name,
+  selected,
+  setSelected,
+}: {
+  fields: AppViewEntityTypeOption["fields"];
+  label: string;
+  name: string;
+  selected: string[];
+  setSelected: (value: string[]) => void;
+}) {
+  const fieldsById = new Map(fields.map((field) => [field.id, field]));
+  const selectedIds = selected.filter((fieldId, index) =>
+    selected.indexOf(fieldId) === index && fieldsById.has(fieldId),
+  );
+  const selectedSet = new Set(selectedIds);
+  const orderedFields = [
+    ...selectedIds.map((fieldId) => fieldsById.get(fieldId)!),
+    ...fields.filter((field) => !selectedSet.has(field.id)),
+  ];
+
+  return (
+    <fieldset className="grid gap-2 rounded-md border border-border p-3">
+      <legend className="px-1 text-sm font-medium">{label}</legend>
+      {orderedFields.length === 0 ? (
+        <p className="text-sm text-muted-foreground">No hay campos SELECT adicionales compatibles.</p>
+      ) : (
+        <div className="grid gap-2 sm:grid-cols-2">
+          {orderedFields.map((field) => (
+            <label className="flex items-center gap-2 text-sm" key={field.id}>
+              <input
+                checked={selectedSet.has(field.id)}
+                className="h-4 w-4"
+                name={name}
+                onChange={(event) => {
+                  if (event.target.checked) {
+                    setSelected([...selectedIds, field.id]);
+                  } else {
+                    setSelected(selectedIds.filter((fieldId) => fieldId !== field.id));
+                  }
+                }}
+                type="checkbox"
+                value={field.id}
+              />
+              {field.name}
+            </label>
+          ))}
+        </div>
+      )}
     </fieldset>
   );
 }

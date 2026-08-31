@@ -30,6 +30,28 @@ const entityTypes = [
         ],
         type: "SELECT",
       },
+      {
+        id: "shift_field",
+        isActive: true,
+        key: "turno",
+        multiple: false,
+        name: "Turno",
+        options: [
+          { id: "day_option", isActive: true, label: "Día", value: "dia" },
+        ],
+        type: "SELECT",
+      },
+      {
+        id: "sector_field",
+        isActive: true,
+        key: "sector",
+        multiple: false,
+        name: "Sector",
+        options: [
+          { id: "north_option", isActive: true, label: "Norte", value: "norte" },
+        ],
+        type: "SELECT",
+      },
       { id: "observation_field", isActive: true, key: "observacion", name: "Observación", options: [], type: "TEXTAREA" },
     ],
     icon: "clipboard-check",
@@ -74,6 +96,7 @@ describe("AppViewForm", () => {
             dateFieldId: "date_field",
             statusFieldId: "status_field",
             defaultCheckInOptionId: "present_option",
+            contextFieldIds: ["sector_field", "shift_field"],
             observationFieldId: "observation_field",
             type: "WORKFLOW",
             workflowKey: "attendance",
@@ -97,6 +120,10 @@ describe("AppViewForm", () => {
     expect(html).toContain("Campo Estado");
     expect(html).toContain("Estado por defecto de checking");
     expect(html).toContain("Campo Observación");
+    expect(html).toContain("Campos de contexto");
+    expect(html).toContain("Turno");
+    expect(html).toContain("Sector");
+    expect(html).toContain('name="contextFieldIds"');
   });
 
   it("renders returned validation errors and preserved workflow values", () => {
