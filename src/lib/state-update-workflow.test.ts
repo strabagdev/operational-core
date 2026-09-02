@@ -230,6 +230,113 @@ describe("state-update workflow runtime", () => {
     expect(tx.entityRecord.update).not.toHaveBeenCalled();
   });
 
+  it("updates an existing record when the requested state field is missing remotely", async () => {
+    mockExistingState([existingState({
+      values: [
+        { booleanValue: null, dateValue: new Date("2026-08-22T00:00:00.000Z"), decimalValue: null, entityFieldId: "date_field", integerValue: null, jsonValue: null, textValue: null },
+        { booleanValue: null, dateValue: null, decimalValue: null, entityFieldId: "availability_field", integerValue: null, jsonValue: null, textValue: "disponible" },
+      ],
+    })]);
+
+    const result = await saveStateUpdateWorkflow(saveBody({
+      states: { operational_field: "operational_ok" },
+    }));
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: {
+        result: {
+          recordId: "state_existing",
+          result: "UPDATED",
+        },
+      },
+    });
+    expect(tx.entityRecord.update).toHaveBeenCalled();
+  });
+
+  it("updates an existing record when the requested state field is null remotely", async () => {
+    mockExistingState([existingState({
+      values: [
+        { booleanValue: null, dateValue: new Date("2026-08-22T00:00:00.000Z"), decimalValue: null, entityFieldId: "date_field", integerValue: null, jsonValue: null, textValue: null },
+        { booleanValue: null, dateValue: null, decimalValue: null, entityFieldId: "operational_field", integerValue: null, jsonValue: null, textValue: null },
+        { booleanValue: null, dateValue: null, decimalValue: null, entityFieldId: "availability_field", integerValue: null, jsonValue: null, textValue: "disponible" },
+      ],
+    })]);
+
+    const result = await saveStateUpdateWorkflow(saveBody({
+      states: { operational_field: "operational_ok" },
+    }));
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: {
+        result: {
+          recordId: "state_existing",
+          result: "UPDATED",
+        },
+      },
+    });
+    expect(tx.entityRecord.update).toHaveBeenCalled();
+  });
+
+  it("updates an existing record when the requested state field is an empty string remotely", async () => {
+    mockExistingState([existingState({
+      values: [
+        { booleanValue: null, dateValue: new Date("2026-08-22T00:00:00.000Z"), decimalValue: null, entityFieldId: "date_field", integerValue: null, jsonValue: null, textValue: null },
+        { booleanValue: null, dateValue: null, decimalValue: null, entityFieldId: "operational_field", integerValue: null, jsonValue: null, textValue: "   " },
+        { booleanValue: null, dateValue: null, decimalValue: null, entityFieldId: "availability_field", integerValue: null, jsonValue: null, textValue: "disponible" },
+      ],
+    })]);
+
+    const result = await saveStateUpdateWorkflow(saveBody({
+      states: { operational_field: "operational_ok" },
+    }));
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: {
+        result: {
+          recordId: "state_existing",
+          result: "UPDATED",
+        },
+      },
+    });
+    expect(tx.entityRecord.update).toHaveBeenCalled();
+  });
+
+  it("keeps an unresolvable remote state value as a conflict", async () => {
+    mockExistingState([existingState({
+      values: [
+        { booleanValue: null, dateValue: new Date("2026-08-22T00:00:00.000Z"), decimalValue: null, entityFieldId: "date_field", integerValue: null, jsonValue: null, textValue: null },
+        { booleanValue: null, dateValue: null, decimalValue: null, entityFieldId: "operational_field", integerValue: null, jsonValue: null, textValue: "legacy_operational_value" },
+        { booleanValue: null, dateValue: null, decimalValue: null, entityFieldId: "availability_field", integerValue: null, jsonValue: null, textValue: "disponible" },
+      ],
+    })]);
+
+    const result = await saveStateUpdateWorkflow(saveBody({
+      states: { operational_field: "operational_ok" },
+    }));
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: {
+        result: {
+          result: "CONFLICT",
+          differences: [
+            {
+              currentValue: "legacy_operational_value",
+              existingOptionId: null,
+              fieldId: "operational_field",
+              kind: "state",
+              requestedOptionId: "operational_ok",
+            },
+          ],
+        },
+      },
+    });
+    expect(tx.entityRecord.update).not.toHaveBeenCalled();
+  });
+
   it("updates current state with overwrite and expectedUpdatedAt", async () => {
     mockExistingState([existingState()]);
 

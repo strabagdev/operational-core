@@ -97,6 +97,7 @@ export type StateUpdateResult =
         requestedOptionId?: string;
         requestedLabel?: string;
       }>;
+      conflictReason?: "CURRENT_VALUE_DIFFERS" | "EXPECTED_UPDATED_AT_MISMATCH";
       existing: { recordId: string; updatedAt: string };
       requested: { states: Record<string, string> };
       result: "CONFLICT";
@@ -394,15 +395,16 @@ export async function saveStateUpdateEntry({
     requestedStates: requested.states,
     subjectRecordId: input.subjectRecordId,
   });
-  const differences = diffRequestedIntent({
+  const intentDiff = diffRequestedIntent({
     context,
     existing,
     input,
     mutation,
     requestedStates: requested.states,
   });
+  const differences = intentDiff.differences;
 
-  if (differences.length === 0) {
+  if (differences.length === 0 && !intentDiff.hasAllowedFirstFill) {
     const result: StateUpdateResult = {
       recordId: existing.record.id,
       result: "UNCHANGED",
@@ -422,54 +424,56 @@ export async function saveStateUpdateEntry({
     return { ok: true, result };
   }
 
-  if (!input.overwrite) {
-    const result = conflictResult({ differences, existing, input });
+  if (differences.length > 0) {
+    if (!input.overwrite) {
+      const result = conflictResult({ conflictReason: "CURRENT_VALUE_DIFFERS", differences, existing, input });
 
-    await persistStateUpdateResultIfNeeded({
-      appId,
-      context,
-      idempotencyKey,
-      input,
-      result,
-      timing,
-    });
+      await persistStateUpdateResultIfNeeded({
+        appId,
+        context,
+        idempotencyKey,
+        input,
+        result,
+        timing,
+      });
 
-    return { ok: true, result };
-  }
+      return { ok: true, result };
+    }
 
-  if (!input.expectedUpdatedAt) {
-    const result: StateUpdateResult = {
-      code: "OVERWRITE_EXPECTATION_REQUIRED",
-      message: "overwrite requiere expectedUpdatedAt.",
-      result: "ERROR",
-      subjectRecordId: input.subjectRecordId,
-    };
+    if (!input.expectedUpdatedAt) {
+      const result: StateUpdateResult = {
+        code: "OVERWRITE_EXPECTATION_REQUIRED",
+        message: "overwrite requiere expectedUpdatedAt.",
+        result: "ERROR",
+        subjectRecordId: input.subjectRecordId,
+      };
 
-    await persistStateUpdateResultIfNeeded({
-      appId,
-      context,
-      idempotencyKey,
-      input,
-      result,
-      timing,
-    });
+      await persistStateUpdateResultIfNeeded({
+        appId,
+        context,
+        idempotencyKey,
+        input,
+        result,
+        timing,
+      });
 
-    return { ok: true, result };
-  }
+      return { ok: true, result };
+    }
 
-  if (existing.record.updatedAt.toISOString() !== input.expectedUpdatedAt) {
-    const result = conflictResult({ differences, existing, input });
+    if (existing.record.updatedAt.toISOString() !== input.expectedUpdatedAt) {
+      const result = conflictResult({ conflictReason: "EXPECTED_UPDATED_AT_MISMATCH", differences, existing, input });
 
-    await persistStateUpdateResultIfNeeded({
-      appId,
-      context,
-      idempotencyKey,
-      input,
-      result,
-      timing,
-    });
+      await persistStateUpdateResultIfNeeded({
+        appId,
+        context,
+        idempotencyKey,
+        input,
+        result,
+        timing,
+      });
 
-    return { ok: true, result };
+      return { ok: true, result };
+    }
   }
 
   const record = await updateStateUpdateRecord({
@@ -983,21 +987,24 @@ function diffRequestedIntent({
     requestedOptionId?: string;
     requestedLabel?: string;
   }> = [];
+  let hasAllowedFirstFill = false;
 
   for (const [fieldId, requestedOption] of Object.entries(requestedStates)) {
-    const existingValue = existing.record.values.find((value) => value.entityFieldId === fieldId)?.textValue ?? null;
-    const existingOption = existingValue
-      ? context.stateOptionsByValueByFieldId.get(fieldId)?.get(existingValue) ?? null
-      : null;
+    const existingState = resolveExistingStateFieldValue({ context, existing, fieldId });
 
-    if (existingOption?.id !== requestedOption.id) {
+    if (existingState.kind === "empty") {
+      hasAllowedFirstFill = true;
+      continue;
+    }
+
+    if (existingState.option?.id !== requestedOption.id) {
       differences.push({
         fieldId,
         kind: "state",
-        currentValue: existingOption?.id ?? null,
+        currentValue: existingState.option?.id ?? existingState.value,
         requestedValue: requestedOption.id,
-        existingOptionId: existingOption?.id ?? null,
-        existingLabel: existingOption?.label ?? null,
+        existingOptionId: existingState.option?.id ?? null,
+        existingLabel: existingState.option?.label ?? null,
         requestedOptionId: requestedOption.id,
         requestedLabel: requestedOption.label,
       });
@@ -1019,14 +1026,37 @@ function diffRequestedIntent({
     }
   }
 
-  return differences;
+  return { differences, hasAllowedFirstFill };
+}
+
+function resolveExistingStateFieldValue({
+  context,
+  existing,
+  fieldId,
+}: {
+  context: StateUpdateContext;
+  existing: ExistingStateUpdate;
+  fieldId: string;
+}) {
+  const value = existing.record.values.find((item) => item.entityFieldId === fieldId);
+  const rawValue = value?.textValue;
+
+  if (rawValue === undefined || rawValue === null || rawValue.trim() === "") {
+    return { kind: "empty" as const, option: null, value: null };
+  }
+
+  const option = context.stateOptionsByValueByFieldId.get(fieldId)?.get(rawValue) ?? null;
+
+  return { kind: option ? "resolved" as const : "unresolved" as const, option, value: rawValue };
 }
 
 function conflictResult({
+  conflictReason,
   differences,
   existing,
   input,
 }: {
+  conflictReason?: "CURRENT_VALUE_DIFFERS" | "EXPECTED_UPDATED_AT_MISMATCH";
   differences: Array<{
     fieldId: string;
     kind: "extra" | "state";
@@ -1041,6 +1071,7 @@ function conflictResult({
   input: StateUpdateInput;
 }): StateUpdateResult {
   return {
+    conflictReason,
     differences,
     existing: {
       recordId: existing.record.id,

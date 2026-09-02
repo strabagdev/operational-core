@@ -70,6 +70,8 @@ Without overwrite, an existing current record produces:
 - `UNCHANGED` only when every requested state and every requested extra value match after normalization.
 - `CONFLICT` when any requested state or requested extra value differs.
 
+For state fields, a missing, `null`, or blank current value is treated as no state yet and the first requested valid option is accepted. A non-blank current value that cannot be resolved to an active option remains conservative and produces `CONFLICT` instead of silently replacing potentially corrupt or legacy data.
+
 Conflict differences use this conceptual shape:
 
 ```json
@@ -82,6 +84,8 @@ Conflict differences use this conceptual shape:
 ```
 
 For state fields, responses also keep option id/label fields for compatibility. Relation extras compare target record ids, not display names. Select extras compare canonical option values. Date and time extras compare canonical date/time values.
+
+Conflict responses may include `conflictReason`, currently `CURRENT_VALUE_DIFFERS` or `EXPECTED_UPDATED_AT_MISMATCH`, as additive diagnostic metadata.
 
 ## Overwrite
 
