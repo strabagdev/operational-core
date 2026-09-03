@@ -54,6 +54,8 @@ type AppViewFormProps = {
   submitLabel: string;
 };
 
+const stateUpdateStateFieldTypes = new Set(["SELECT", "TEXT", "INTEGER", "DECIMAL", "MONEY", "BOOLEAN", "DATE"]);
+
 export function AppViewForm({
   action,
   entityTypes,
@@ -155,6 +157,15 @@ export function AppViewForm({
       (initialValues?.config.type === "WORKFLOW" && initialValues.config.workflowKey === "state-update"
         ? initialValues.config.extraFieldIds
         : [])),
+  );
+  const stateFieldDefaultOptionIds = Object.fromEntries(
+    Array.from(stateFieldIds).map((fieldId) => [
+      fieldId,
+      valueFromState(state, `stateFieldDefaultOptionId:${fieldId}`) ||
+        (initialValues?.config.type === "WORKFLOW" && initialValues.config.workflowKey === "state-update"
+          ? initialValues.config.stateFields.find((field) => field.fieldId === fieldId)?.defaultOptionId ?? ""
+          : ""),
+    ]),
   );
   const [uniquenessMode, setUniquenessMode] = useState(
     valueFromState(state, "uniquenessMode") ||
@@ -349,6 +360,7 @@ export function AppViewForm({
         defaultCheckInOptionId={defaultCheckInOptionId}
         historyMode={historyMode}
         requiredStateFieldIds={requiredStateFieldIds}
+        stateFieldDefaultOptionIds={stateFieldDefaultOptionIds}
         reportTimeAllowChange={reportTimeAllowChange}
         reportTimeDefaultPeriod={reportTimeDefaultPeriod}
         reportTimeMode={reportTimeMode}
@@ -442,6 +454,7 @@ function ConfigFields({
   personFieldId,
   presentationMode,
   requiredStateFieldIds,
+  stateFieldDefaultOptionIds,
   reportTimeAllowChange,
   reportTimeDefaultPeriod,
   reportTimeMode,
@@ -506,6 +519,7 @@ function ConfigFields({
   personFieldId: string;
   presentationMode: string;
   requiredStateFieldIds: Set<string>;
+  stateFieldDefaultOptionIds: Record<string, string>;
   reportTimeAllowChange: boolean;
   reportTimeDefaultPeriod: string;
   reportTimeMode: string;
@@ -558,6 +572,8 @@ function ConfigFields({
     const activeTargetFields = targetEntityType?.fields.filter((field) => field.isActive) ?? [];
     const statusField = activeTargetFields.find((field) => field.id === statusFieldId);
     const activeStatusOptions = statusField?.options.filter((option) => option.isActive) ?? [];
+    const selectedStateFields = activeTargetFields.filter((field) => stateFieldIds.has(field.id));
+    const effectiveExtraFieldIds = new Set(Array.from(extraFieldIds).filter((fieldId) => !stateFieldIds.has(fieldId)));
 
     return (
       <fieldset className="grid gap-3 rounded-md border border-border p-3">
@@ -654,17 +670,23 @@ function ConfigFields({
               />
             </div>
             <FieldChecklist
-              fields={activeTargetFields.filter((field) => field.type === "SELECT")}
+              fields={activeTargetFields.filter((field) =>
+                stateUpdateStateFieldTypes.has(field.type) &&
+                (!extraFieldIds.has(field.id) || stateFieldIds.has(field.id))
+              )}
               label="Campos de estado"
               name="stateFieldIds"
               requiredName="requiredStateFieldIds"
               selected={stateFieldIds}
               requiredSelected={requiredStateFieldIds}
               setRequiredSelected={setRequiredStateFieldIds}
-              setSelected={setStateFieldIds}
+              setSelected={(next) => {
+                setStateFieldIds(next);
+                setExtraFieldIds(new Set(Array.from(extraFieldIds).filter((fieldId) => !next.has(fieldId))));
+              }}
             />
-            {activeTargetFields
-              .filter((field) => stateFieldIds.has(field.id))
+            {selectedStateFields
+              .filter((field) => field.type === "SELECT")
               .map((field) => (
                 <OptionSelect
                   key={field.id}
@@ -672,16 +694,23 @@ function ConfigFields({
                   name={`stateFieldDefaultOptionId:${field.id}`}
                   onChange={() => undefined}
                   options={field.options.filter((option) => option.isActive)}
-                  value=""
+                  value={stateFieldDefaultOptionIds[field.id] ?? ""}
                   includeEmpty
                 />
               ))}
             <FieldChecklist
-              fields={activeTargetFields.filter((field) => stateUpdateExtraFieldTypes.has(field.type))}
+              fields={activeTargetFields.filter((field) =>
+                stateUpdateExtraFieldTypes.has(field.type) &&
+                !stateFieldIds.has(field.id)
+              )}
               label="Campos extra"
               name="extraFieldIds"
-              selected={extraFieldIds}
-              setSelected={setExtraFieldIds}
+              selected={effectiveExtraFieldIds}
+              setSelected={(next) => {
+                setExtraFieldIds(next);
+                setStateFieldIds(new Set(Array.from(stateFieldIds).filter((fieldId) => !next.has(fieldId))));
+                setRequiredStateFieldIds(new Set(Array.from(requiredStateFieldIds).filter((fieldId) => !next.has(fieldId))));
+              }}
             />
             <FieldError errors={fieldErrors?.stateFieldIds ?? fieldErrors?.extraFieldIds} />
           </div>

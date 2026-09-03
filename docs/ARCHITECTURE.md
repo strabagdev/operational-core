@@ -233,7 +233,7 @@ REPORT value presentation never changes stored option values. API field metadata
 - `sourceEntityTypeId`: entity being operated on, such as Equipos or Personas.
 - `targetEntityTypeId`: entity where the event/current state is persisted.
 - `subjectFieldId`: `RELATION` field on the target entity pointing to the source entity.
-- `stateFields`: one or more single `SELECT` fields, each with `required` and optional `defaultOptionId`.
+- `stateFields`: one or more compatible target fields, each with `required`; supported types are `SELECT`, `TEXT`, numeric fields (`INTEGER`, `DECIMAL`, `MONEY`), `DATE`, and `BOOLEAN`. `defaultOptionId` is exclusive to `SELECT`.
 - `extraFieldIds`: supported normal target fields such as text, number, date/time, select, boolean, money, and relation.
 - `dateFieldId`: optional `DATE` target field.
 - `uniqueness.mode`: `none`, `subject`, or `subject-date`, enforced as domain logic over EAV records.

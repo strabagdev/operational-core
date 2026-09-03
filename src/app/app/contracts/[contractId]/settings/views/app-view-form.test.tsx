@@ -52,6 +52,21 @@ const entityTypes = [
         ],
         type: "SELECT",
       },
+      { id: "revision_field", isActive: true, key: "revision", name: "Revisión", options: [], type: "TEXT" },
+      { id: "counter_field", isActive: true, key: "contador", name: "Contador", options: [], type: "INTEGER" },
+      { id: "reviewed_on_field", isActive: true, key: "revisado_el", name: "Revisado el", options: [], type: "DATE" },
+      { id: "approved_field", isActive: true, key: "aprobado", name: "Aprobado", options: [], type: "BOOLEAN" },
+      {
+        id: "tags_field",
+        isActive: true,
+        key: "tags",
+        multiple: true,
+        name: "Etiquetas",
+        options: [
+          { id: "tag_option", isActive: true, label: "Tag", value: "tag" },
+        ],
+        type: "MULTISELECT",
+      },
       { id: "observation_field", isActive: true, key: "observacion", name: "Observación", options: [], type: "TEXTAREA" },
     ],
     icon: "clipboard-check",
@@ -230,6 +245,51 @@ describe("AppViewForm", () => {
     expect(html).toContain("Turno");
     expect(html).toContain("Sector");
     expect(html).toContain('name="contextFieldIds"');
+  });
+
+  it("renders compatible STATE_UPDATE state fields without duplicating extras", () => {
+    const html = renderToStaticMarkup(
+      <AppViewForm
+        action={noopAction}
+        entityTypes={entityTypes}
+        initialValues={{
+          active: true,
+          config: {
+            sourceEntityTypeId: "people",
+            targetEntityTypeId: "attendance",
+            subjectFieldId: "person_field",
+            stateFields: [
+              { fieldId: "status_field", required: true, defaultOptionId: "present_option" },
+              { fieldId: "revision_field", required: true },
+            ],
+            extraFieldIds: ["revision_field", "observation_field"],
+            dateFieldId: "date_field",
+            uniqueness: { mode: "subject-date" },
+            historyMode: "update-current",
+            type: "WORKFLOW",
+            workflowKey: "state-update",
+          },
+          icon: "clipboard-check",
+          name: "Versionado",
+          slug: "versionado",
+          sortOrder: 1,
+          type: "WORKFLOW",
+        }}
+        submitLabel="Guardar experiencia"
+      />,
+    );
+
+    expect(html).toContain("Campos de estado");
+    expect(html).toContain("Estado");
+    expect(html).toContain("Revisión");
+    expect(html).toContain("Contador");
+    expect(html).toContain("Revisado el");
+    expect(html).toContain("Aprobado");
+    expect(html).not.toMatch(/name="stateFieldIds"[^>]+value="tags_field"/);
+    expect(html).toContain("Opción por defecto · Estado");
+    expect(html).not.toContain("Opción por defecto · Revisión");
+    expect(html).toContain('name="stateFieldIds"');
+    expect(html).not.toMatch(/name="extraFieldIds"[^>]+value="revision_field"/);
   });
 
   it("renders returned validation errors and preserved workflow values", () => {

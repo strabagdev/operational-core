@@ -58,6 +58,13 @@ type StateOption = {
   value: string;
 };
 
+type RequestedState = {
+  field: StateUpdateField;
+  normalizedValue: unknown;
+  option?: StateOption;
+  value: unknown;
+};
+
 type StateUpdateIdempotencyKey = {
   operation: string;
   requestHash: string;
@@ -80,7 +87,7 @@ export type StateUpdateInput = {
   expectedUpdatedAt?: string;
   extraValues: Record<string, unknown>;
   overwrite: boolean;
-  states: Record<string, string>;
+  states: Record<string, unknown>;
   subjectRecordId: string;
 };
 
@@ -99,7 +106,7 @@ export type StateUpdateResult =
       }>;
       conflictReason?: "CURRENT_VALUE_DIFFERS" | "EXPECTED_UPDATED_AT_MISMATCH";
       existing: { recordId: string; updatedAt: string };
-      requested: { states: Record<string, string> };
+      requested: { states: Record<string, unknown> };
       result: "CONFLICT";
       subjectRecordId: string;
     }
@@ -340,7 +347,7 @@ export async function saveStateUpdateEntry({
     return { ok: true, result };
   }
 
-  const requested = resolveRequestedStates({ context, input });
+  const requested = await resolveRequestedStates({ context, input });
 
   if (!requested.ok) {
     await persistStateUpdateResultIfNeeded({
@@ -698,24 +705,40 @@ function validateStateUpdateRuntimeConfig({
   const stateOptionsById = new Map<string, StateOption>();
   const stateOptionsByValueByFieldId = new Map<string, Map<string, StateOption>>();
 
+  const stateFieldIds = new Set<string>();
   for (const stateField of config.stateFields) {
+    if (stateFieldIds.has(stateField.fieldId)) {
+      return {
+        ok: false as const,
+        response: badRequest("La configuración del workflow repite campos de estado.", "INVALID_WORKFLOW_CONFIG"),
+      };
+    }
+    stateFieldIds.add(stateField.fieldId);
+
     const field = targetFields.find((item) => item.id === stateField.fieldId);
 
-    if (!field || field.type !== "SELECT" || field.multiple) {
+    if (!field || !stateUpdateStateFieldTypes.has(field.type) || field.multiple) {
       return {
         ok: false as const,
         response: badRequest("La configuración del workflow tiene un campo de estado inválido.", "INVALID_WORKFLOW_CONFIG"),
       };
     }
 
-    const options = field.options
+    if (stateField.defaultOptionId && field.type !== "SELECT") {
+      return {
+        ok: false as const,
+        response: badRequest("La opción por defecto de estado solo aplica a campos SELECT.", "INVALID_WORKFLOW_CONFIG"),
+      };
+    }
+
+    const options = field.type === "SELECT" ? field.options
       .filter((option) => option.isActive)
       .map((option) => ({
         fieldId: field.id,
         id: option.id,
         label: option.label,
         value: option.value,
-      }));
+      })) : [];
 
     if (stateField.defaultOptionId && !options.some((option) => option.id === stateField.defaultOptionId)) {
       return {
@@ -732,6 +755,13 @@ function validateStateUpdateRuntimeConfig({
   }
 
   for (const extraFieldId of config.extraFieldIds) {
+    if (extraFieldId === config.subjectFieldId || extraFieldId === config.dateFieldId || stateFieldIds.has(extraFieldId)) {
+      return {
+        ok: false as const,
+        response: badRequest("La configuración del workflow repite campos extra.", "INVALID_WORKFLOW_CONFIG"),
+      };
+    }
+
     const field = targetFields.find((item) => item.id === extraFieldId);
     if (!field || !stateUpdateExtraFieldTypes.has(field.type)) {
       return {
@@ -791,21 +821,18 @@ function parseStateUpdateBody(body: unknown, config: StateUpdateWorkflowConfig) 
   }
 
   const rawStates = isRecord(body.states) ? body.states : {};
-  const states: Record<string, string> = {};
+  const states: Record<string, unknown> = {};
   const allowedStateFieldIds = new Set(config.stateFields.map((field) => field.fieldId));
 
-  for (const [fieldId, optionId] of Object.entries(rawStates)) {
+  for (const [fieldId, rawValue] of Object.entries(rawStates)) {
     if (!allowedStateFieldIds.has(fieldId)) {
       return writeError("UNKNOWN_STATE_FIELD", `El campo de estado ${fieldId} no está configurado.`);
     }
-    if (typeof optionId !== "string" || !optionId.trim()) {
-      return writeError("INVALID_STATE_VALUE", `El estado ${fieldId} debe ser una opción válida.`);
-    }
-    states[fieldId] = optionId.trim();
+    states[fieldId] = typeof rawValue === "string" ? rawValue.trim() : rawValue;
   }
 
   for (const stateField of config.stateFields) {
-    if (stateField.required && !states[stateField.fieldId]) {
+    if (stateField.required && !Object.prototype.hasOwnProperty.call(states, stateField.fieldId)) {
       return writeError("MISSING_STATE_FIELD", `El campo de estado ${stateField.fieldId} es obligatorio.`);
     }
   }
@@ -833,31 +860,88 @@ function parseStateUpdateBody(body: unknown, config: StateUpdateWorkflowConfig) 
   };
 }
 
-function resolveRequestedStates({
+async function resolveRequestedStates({
   context,
   input,
 }: {
   context: StateUpdateContext;
   input: StateUpdateInput;
 }) {
-  const states: Record<string, StateOption> = {};
+  const states: Record<string, RequestedState> = {};
 
-  for (const [fieldId, optionId] of Object.entries(input.states)) {
-    const option = context.stateOptionsById.get(optionId);
+  for (const [fieldId, rawValue] of Object.entries(input.states)) {
+    const field = requireField(context, fieldId);
 
-    if (!option || option.fieldId !== fieldId) {
-      return {
-        ok: false as const,
-        result: {
-          code: "INVALID_STATE_OPTION",
-          message: "El estado solicitado no pertenece al campo configurado o está inactivo.",
-          result: "ERROR" as const,
-          subjectRecordId: input.subjectRecordId,
-        },
+    if (field.type === "SELECT") {
+      if (typeof rawValue !== "string" || !rawValue.trim()) {
+        return {
+          ok: false as const,
+          result: {
+            code: "INVALID_STATE_VALUE",
+            message: "El estado solicitado debe ser una opción válida.",
+            result: "ERROR" as const,
+            subjectRecordId: input.subjectRecordId,
+          },
+        };
+      }
+
+      const option = context.stateOptionsById.get(rawValue);
+
+      if (!option || option.fieldId !== fieldId) {
+        return {
+          ok: false as const,
+          result: {
+            code: "INVALID_STATE_OPTION",
+            message: "El estado solicitado no pertenece al campo configurado o está inactivo.",
+            result: "ERROR" as const,
+            subjectRecordId: input.subjectRecordId,
+          },
+        };
+      }
+
+      states[fieldId] = {
+        field,
+        normalizedValue: option.id,
+        option,
+        value: option.value,
       };
+      continue;
     }
 
-    states[fieldId] = option;
+    const formData = new FormData();
+    appendRawValue(formData, field, rawValue);
+
+    try {
+      const values = await validateEntityValues({
+        fields: [{
+          ...field,
+          required: context.config.stateFields.find((item) => item.fieldId === fieldId)?.required ?? false,
+        }],
+        formData,
+        mode: "edit",
+      });
+      const serializedValue = values.find((value) => value.fieldId === fieldId);
+
+      states[fieldId] = {
+        field,
+        normalizedValue: normalizedSerializedValue(serializedValue, field),
+        value: rawValue,
+      };
+    } catch (error) {
+      if (error instanceof FieldValidationError || (error instanceof Error && error.name === "UserFacingError")) {
+        return {
+          ok: false as const,
+          result: {
+            code: "INVALID_STATE_VALUE",
+            message: `${field.name} no tiene un valor válido.`,
+            result: "ERROR" as const,
+            subjectRecordId: input.subjectRecordId,
+          },
+        };
+      }
+
+      throw error;
+    }
   }
 
   return { ok: true as const, states };
@@ -975,7 +1059,7 @@ function diffRequestedIntent({
   existing: ExistingStateUpdate;
   input: StateUpdateInput;
   mutation: StateUpdateMutation;
-  requestedStates: Record<string, StateOption>;
+  requestedStates: Record<string, RequestedState>;
 }) {
   const differences: Array<{
     fieldId: string;
@@ -989,7 +1073,7 @@ function diffRequestedIntent({
   }> = [];
   let hasAllowedFirstFill = false;
 
-  for (const [fieldId, requestedOption] of Object.entries(requestedStates)) {
+  for (const [fieldId, requestedState] of Object.entries(requestedStates)) {
     const existingState = resolveExistingStateFieldValue({ context, existing, fieldId });
 
     if (existingState.kind === "empty") {
@@ -997,17 +1081,23 @@ function diffRequestedIntent({
       continue;
     }
 
-    if (existingState.option?.id !== requestedOption.id) {
-      differences.push({
+    if (!stableValueEqual(existingState.normalizedValue, requestedState.normalizedValue)) {
+      const difference = {
         fieldId,
-        kind: "state",
-        currentValue: existingState.option?.id ?? existingState.value,
-        requestedValue: requestedOption.id,
-        existingOptionId: existingState.option?.id ?? null,
-        existingLabel: existingState.option?.label ?? null,
-        requestedOptionId: requestedOption.id,
-        requestedLabel: requestedOption.label,
-      });
+        kind: "state" as const,
+        currentValue: existingState.normalizedValue,
+        requestedValue: requestedState.normalizedValue,
+      };
+
+      differences.push(requestedState.option
+        ? {
+            ...difference,
+            existingOptionId: existingState.option?.id ?? null,
+            existingLabel: existingState.option?.label ?? null,
+            requestedOptionId: requestedState.option.id,
+            requestedLabel: requestedState.option.label,
+          }
+        : difference);
     }
   }
 
@@ -1039,15 +1129,25 @@ function resolveExistingStateFieldValue({
   fieldId: string;
 }) {
   const value = existing.record.values.find((item) => item.entityFieldId === fieldId);
-  const rawValue = value?.textValue;
-
-  if (rawValue === undefined || rawValue === null || rawValue.trim() === "") {
-    return { kind: "empty" as const, option: null, value: null };
+  const field = requireField(context, fieldId);
+  if (field.type === "SELECT" && (!value?.textValue || value.textValue.trim() === "")) {
+    return { kind: "empty" as const, normalizedValue: null, option: null };
   }
 
+  const normalizedValue = normalizedSerializedValue(value, field);
+
+  if (normalizedValue === null || normalizedValue === "") {
+    return { kind: "empty" as const, normalizedValue: null, option: null };
+  }
+
+  if (field.type !== "SELECT") {
+    return { kind: "resolved" as const, normalizedValue, option: null };
+  }
+
+  const rawValue = value?.textValue ?? "";
   const option = context.stateOptionsByValueByFieldId.get(fieldId)?.get(rawValue) ?? null;
 
-  return { kind: option ? "resolved" as const : "unresolved" as const, option, value: rawValue };
+  return { kind: option ? "resolved" as const : "unresolved" as const, normalizedValue: option?.id ?? rawValue, option };
 }
 
 function conflictResult({
@@ -1165,7 +1265,7 @@ async function createStateUpdateRecord({
   contractId: string;
   idempotencyKey: StateUpdateIdempotencyKey | null;
   input: StateUpdateInput;
-  requestedStates: Record<string, StateOption>;
+  requestedStates: Record<string, RequestedState>;
   subject: { displayName: string; id: string };
   timing?: StateUpdateWorkflowTiming;
   userId: string;
@@ -1262,7 +1362,7 @@ async function updateStateUpdateRecord({
   idempotencyKey: StateUpdateIdempotencyKey | null;
   input: StateUpdateInput;
   mutation: StateUpdateMutation;
-  requestedStates: Record<string, StateOption>;
+  requestedStates: Record<string, RequestedState>;
   timing?: StateUpdateWorkflowTiming;
   userId: string;
 }) {
@@ -1393,7 +1493,7 @@ async function buildStateUpdateMutation({
   contractId: string;
   existing?: ExistingStateUpdate;
   input: StateUpdateInput;
-  requestedStates: Record<string, StateOption>;
+  requestedStates: Record<string, RequestedState>;
   subjectRecordId: string;
 }) {
   const formData = new FormData();
@@ -1408,8 +1508,13 @@ async function buildStateUpdateMutation({
     formData.set(fieldInputName(context.config.dateFieldId), input.dateValue);
   }
 
-  for (const [fieldId, option] of Object.entries(requestedStates)) {
-    formData.set(fieldInputName(fieldId), option.value);
+  for (const [fieldId, state] of Object.entries(requestedStates)) {
+    if (state.field.type === "SELECT") {
+      formData.set(fieldInputName(fieldId), String(state.value));
+      continue;
+    }
+
+    appendRawValue(formData, state.field, input.states[fieldId]);
   }
 
   for (const [fieldId, value] of Object.entries(input.extraValues)) {
@@ -1633,11 +1738,26 @@ function serializeExisting(existing: ExistingStateUpdate | undefined, context: S
   };
 }
 
-function serializeRecordStates(values: Array<{ entityFieldId: string; textValue: string | null }>, context: StateUpdateContext) {
+function serializeRecordStates(values: Array<{
+  booleanValue?: boolean | null;
+  dateValue?: Date | null;
+  decimalValue?: Prisma.Decimal | null;
+  entityFieldId: string;
+  integerValue?: number | null;
+  jsonValue?: Prisma.JsonValue;
+  textValue?: string | null;
+}>, context: StateUpdateContext) {
   return Object.fromEntries(context.config.stateFields.map((stateField) => {
-    const value = values.find((item) => item.entityFieldId === stateField.fieldId)?.textValue ?? null;
-    const option = value
-      ? context.stateOptionsByValueByFieldId.get(stateField.fieldId)?.get(value) ?? null
+    const field = requireField(context, stateField.fieldId);
+    const value = values.find((item) => item.entityFieldId === stateField.fieldId);
+
+    if (field.type !== "SELECT") {
+      return [stateField.fieldId, normalizedSerializedValue(value, field)];
+    }
+
+    const textValue = value?.textValue ?? null;
+    const option = textValue
+      ? context.stateOptionsByValueByFieldId.get(stateField.fieldId)?.get(textValue) ?? null
       : null;
 
     return [stateField.fieldId, option ? { optionId: option.id, label: option.label } : null];
@@ -2151,6 +2271,16 @@ class StateUpdateInputError extends Error {
     this.code = code;
   }
 }
+
+const stateUpdateStateFieldTypes = new Set<EntityFieldType>([
+  "TEXT",
+  "INTEGER",
+  "DECIMAL",
+  "MONEY",
+  "BOOLEAN",
+  "DATE",
+  "SELECT",
+]);
 
 const stateUpdateExtraFieldTypes = new Set<EntityFieldType>([
   "TEXT",

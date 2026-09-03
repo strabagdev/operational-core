@@ -550,7 +550,7 @@ Query:
 
 The response includes workflow metadata, source/target entity metadata, configured state fields, active options, extra field definitions, current state per returned subject when uniqueness applies, latest events, and summary counts.
 
-State field option ids are `FieldOption.id` values. Clients should cache definitions/options for offline use, but POST must still send option ids, not labels or persisted option values.
+For `SELECT` state fields, option ids are `FieldOption.id` values. Clients should cache definitions/options for offline use, but POST must still send option ids for `SELECT` states, not labels or persisted option values.
 
 ### POST /api/v1/contracts/:contractId/views/:appViewId/workflow/state-update
 
@@ -564,7 +564,11 @@ Request:
   "subjectRecordId": "source_record_id",
   "date": "2026-08-22",
   "states": {
-    "state_field_id": "field_option_id"
+    "select_state_field_id": "field_option_id",
+    "text_state_field_id": "R2",
+    "numeric_state_field_id": 12,
+    "date_state_field_id": "2026-08-22",
+    "boolean_state_field_id": true
   },
   "extraValues": {
     "extra_field_id": "Optional note"
@@ -574,11 +578,11 @@ Request:
 }
 ```
 
-Only field ids configured on the AppView are accepted. `stateFields` must be single `SELECT` fields and the submitted option id must belong to the same field and be active. `extraValues` may include supported normal target fields: `TEXT`, `TEXTAREA`, `INTEGER`, `DECIMAL`, `MONEY`, `BOOLEAN`, `DATE`, `TIME`, `DATETIME`, `SELECT`, and `RELATION`.
+Only field ids configured on the AppView are accepted. `stateFields` may be `SELECT`, `TEXT`, numeric fields (`INTEGER`, `DECIMAL`, `MONEY`), `DATE`, or `BOOLEAN`. `SELECT` states receive an active option id belonging to that field; `defaultOptionId` is exclusive to `SELECT`. Other state field types receive the same scalar value shape used by generic record validation. `extraValues` may include supported normal target fields: `TEXT`, `TEXTAREA`, `INTEGER`, `DECIMAL`, `MONEY`, `BOOLEAN`, `DATE`, `TIME`, `DATETIME`, `SELECT`, and `RELATION`.
 
 Results use `CREATED`, `UNCHANGED`, `UPDATED`, `CONFLICT`, and `ERROR`. `CREATED`, `UNCHANGED`, and `UPDATED` include `recordId` and the real persisted `updatedAt` from PostgreSQL/Prisma. `UNCHANGED` does not perform an artificial write; its `updatedAt` is the current version of the existing record.
 
-When `historyMode = "update-current"` finds an existing record, Operational Core compares the exact requested intention: `subjectRecordId`, applicable `date`, submitted `states`, and submitted `extraValues`. Without `overwrite`, any differing requested state or extra value returns `CONFLICT`; matching requested values return `UNCHANGED`. For state fields, a missing, `null`, or blank current value is treated as no state yet and accepts the first requested valid option. A non-blank current value that cannot be resolved to an active option remains conservative and returns `CONFLICT`. Conflict differences identify `kind: "state"` or `kind: "extra"` plus normalized `currentValue` and `requestedValue`. State differences also include option ids/labels for compatibility. Conflict responses may include additive `conflictReason` metadata such as `CURRENT_VALUE_DIFFERS` or `EXPECTED_UPDATED_AT_MISMATCH`.
+When `historyMode = "update-current"` finds an existing record, Operational Core compares the exact requested intention: `subjectRecordId`, applicable `date`, submitted `states`, and submitted `extraValues`. Without `overwrite`, any differing requested state or extra value returns `CONFLICT`; matching requested values return `UNCHANGED`. For state fields, a missing, `null`, or blank current value is treated as no state yet and accepts the first requested valid value. For `SELECT`, a non-blank current value that cannot be resolved to an active option remains conservative and returns `CONFLICT`. Conflict differences identify `kind: "state"` or `kind: "extra"` plus normalized `currentValue` and `requestedValue`. SELECT state differences also include option ids/labels for compatibility. Conflict responses may include additive `conflictReason` metadata such as `CURRENT_VALUE_DIFFERS` or `EXPECTED_UPDATED_AT_MISMATCH`.
 
 `extraValues` preserve omit-vs-null semantics. An omitted extra field is preserved and is not part of the requested comparison. An explicit `null` clears the value when the field validation allows it. `RELATION` extras compare target record ids, `SELECT` extras compare the canonical persisted option value, and `DATE`/`TIME` compare canonical values.
 

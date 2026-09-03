@@ -163,6 +163,159 @@ describe("state-update workflow runtime", () => {
     expect(tx.entityRecord.create).toHaveBeenCalled();
   });
 
+  it("creates state updates with scalar state fields", async () => {
+    appViewFindFirst.mockResolvedValue(appView({
+      config: {
+        ...stateConfig(),
+        dateFieldId: undefined,
+        extraFieldIds: [],
+        historyMode: "append",
+        stateFields: [
+          { fieldId: "operational_field", required: true, defaultOptionId: "operational_ok" },
+          { fieldId: "revision_field", required: true },
+          { fieldId: "counter_field", required: true },
+          { fieldId: "reviewed_on_field", required: true },
+          { fieldId: "approved_field", required: true },
+          { fieldId: "score_field", required: true },
+        ],
+        uniqueness: { mode: "none" },
+      },
+    }) as never);
+
+    const result = await saveStateUpdateWorkflow(saveBody({
+      states: {
+        approved_field: true,
+        counter_field: 12,
+        operational_field: "operational_ok",
+        reviewed_on_field: "2026-08-23",
+        revision_field: "R2",
+        score_field: "98.5",
+      },
+    }));
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: { result: { recordId: "state_new", result: "CREATED" } },
+    });
+    expect(tx.entityValue.createMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.arrayContaining([
+        expect.objectContaining({ entityFieldId: "operational_field", textValue: "operativo" }),
+        expect.objectContaining({ entityFieldId: "revision_field", textValue: "R2" }),
+        expect.objectContaining({ entityFieldId: "counter_field", integerValue: 12 }),
+        expect.objectContaining({ entityFieldId: "reviewed_on_field", dateValue: new Date("2026-08-23T00:00:00.000Z") }),
+        expect.objectContaining({ entityFieldId: "approved_field", booleanValue: true }),
+        expect.objectContaining({ entityFieldId: "score_field", decimalValue: new Prisma.Decimal("98.5") }),
+      ]),
+    }));
+  });
+
+  it("serializes scalar state fields from existing records", async () => {
+    appViewFindFirst.mockResolvedValue(appView({
+      config: {
+        ...stateConfig(),
+        stateFields: [
+          { fieldId: "revision_field", required: true },
+          { fieldId: "counter_field", required: false },
+          { fieldId: "reviewed_on_field", required: false },
+          { fieldId: "approved_field", required: false },
+        ],
+      },
+    }) as never);
+    mockExistingState([existingState({
+      values: [
+        { booleanValue: null, dateValue: null, decimalValue: null, entityFieldId: "revision_field", integerValue: null, jsonValue: null, textValue: "R2" },
+        { booleanValue: null, dateValue: null, decimalValue: null, entityFieldId: "counter_field", integerValue: 12, jsonValue: null, textValue: null },
+        { booleanValue: null, dateValue: new Date("2026-08-23T00:00:00.000Z"), decimalValue: null, entityFieldId: "reviewed_on_field", integerValue: null, jsonValue: null, textValue: null },
+        { booleanValue: true, dateValue: null, decimalValue: null, entityFieldId: "approved_field", integerValue: null, jsonValue: null, textValue: null },
+      ],
+    })]);
+
+    const result = await getStateUpdateWorkflow(query({ search: "exc" }));
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: {
+        subjects: [{
+          current: {
+            states: {
+              approved_field: true,
+              counter_field: 12,
+              reviewed_on_field: "2026-08-23T00:00:00.000Z",
+              revision_field: "R2",
+            },
+          },
+        }],
+      },
+    });
+  });
+
+  it("rejects blank required scalar state fields", async () => {
+    appViewFindFirst.mockResolvedValue(appView({
+      config: {
+        ...stateConfig(),
+        stateFields: [{ fieldId: "revision_field", required: true }],
+      },
+    }) as never);
+
+    const result = await saveStateUpdateWorkflow(saveBody({
+      states: { revision_field: "" },
+    }));
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: {
+        result: {
+          code: "INVALID_STATE_VALUE",
+          result: "ERROR",
+        },
+      },
+    });
+    expect(tx.entityRecord.create).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["location_field"],
+    ["tags_field"],
+  ])("rejects unsupported runtime state field %s", async (fieldId) => {
+    appViewFindFirst.mockResolvedValue(appView({
+      config: {
+        ...stateConfig(),
+        stateFields: [{ fieldId, required: true }],
+      },
+    }) as never);
+
+    const result = await getStateUpdateWorkflow(query());
+
+    expect(result).toMatchObject({
+      ok: false,
+      response: expect.objectContaining({ status: 400 }),
+    });
+    await expect(result.ok ? null : result.response.json()).resolves.toMatchObject({
+      error: { code: "INVALID_WORKFLOW_CONFIG" },
+      ok: false,
+    });
+  });
+
+  it("rejects defaultOptionId on runtime scalar state fields", async () => {
+    appViewFindFirst.mockResolvedValue(appView({
+      config: {
+        ...stateConfig(),
+        stateFields: [{ fieldId: "revision_field", required: true, defaultOptionId: "operational_ok" }],
+      },
+    }) as never);
+
+    const result = await getStateUpdateWorkflow(query());
+
+    expect(result).toMatchObject({
+      ok: false,
+      response: expect.objectContaining({ status: 400 }),
+    });
+    await expect(result.ok ? null : result.response.json()).resolves.toMatchObject({
+      error: { code: "INVALID_WORKFLOW_CONFIG" },
+      ok: false,
+    });
+  });
+
   it("records sanitized runtime timing phases without changing the save result", async () => {
     const timing = { mark: vi.fn() };
 
@@ -1141,6 +1294,11 @@ function targetEntityType() {
           option("availability_no", "No disponible", "no_disponible"),
         ],
       }),
+      field("revision_field", "revision", "Revisión", "TEXT"),
+      field("counter_field", "contador", "Contador", "INTEGER"),
+      field("reviewed_on_field", "revisado_el", "Revisado el", "DATE"),
+      field("approved_field", "aprobado", "Aprobado", "BOOLEAN"),
+      field("score_field", "puntaje", "Puntaje", "DECIMAL"),
       field("observation_field", "observacion", "Observación", "TEXTAREA", { required: false }),
       field("condition_field", "condicion", "Condición", "SELECT", {
         required: false,
@@ -1151,6 +1309,10 @@ function targetEntityType() {
       }),
       field("location_field", "ubicacion", "Ubicación", "RELATION", {
         config: { targetEntityTypeId: "equipment", relationKind: "ONE" },
+        required: false,
+      }),
+      field("tags_field", "etiquetas", "Etiquetas", "MULTISELECT", {
+        options: [option("tag_one", "Etiqueta", "etiqueta")],
         required: false,
       }),
     ],

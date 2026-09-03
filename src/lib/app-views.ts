@@ -1058,11 +1058,15 @@ function validateStateUpdateAppViewFields({
     stateFieldIds.add(stateField.fieldId);
     const field = requireActiveTargetField(targetFields, stateField.fieldId, "Estado");
 
-    if (field.type !== "SELECT" || field.multiple) {
-      throw new AppViewConfigError("Los campos de estado deben ser selección simple.", "stateFieldIds");
+    if (!stateUpdateStateFieldTypes.has(field.type) || field.multiple) {
+      throw new AppViewConfigError("Ese tipo de campo de estado no está soportado.", "stateFieldIds");
     }
 
     if (stateField.defaultOptionId) {
+      if (field.type !== "SELECT") {
+        throw new AppViewConfigError("La opción por defecto solo aplica a campos de estado SELECT.", "stateFieldIds");
+      }
+
       const option = field.options.find((item) => item.id === stateField.defaultOptionId);
       if (!option || !option.isActive) {
         throw new AppViewConfigError("La opción por defecto debe pertenecer al campo de estado y estar activa.");
@@ -1086,7 +1090,13 @@ function validateStateUpdateAppViewFields({
     config.dateFieldId,
     ...config.stateFields.map((field) => field.fieldId),
   ].filter(Boolean));
+  const extraFieldIds = new Set<string>();
   for (const extraFieldId of config.extraFieldIds) {
+    if (extraFieldIds.has(extraFieldId)) {
+      throw new AppViewConfigError("No repitas campos extra.", "extraFieldIds");
+    }
+    extraFieldIds.add(extraFieldId);
+
     if (configuredFieldIds.has(extraFieldId)) {
       throw new AppViewConfigError("Los campos extra no deben repetir sujeto, fecha ni estados.", "extraFieldIds");
     }
@@ -1096,6 +1106,16 @@ function validateStateUpdateAppViewFields({
     }
   }
 }
+
+const stateUpdateStateFieldTypes = new Set([
+  "TEXT",
+  "INTEGER",
+  "DECIMAL",
+  "MONEY",
+  "BOOLEAN",
+  "DATE",
+  "SELECT",
+]);
 
 const stateUpdateExtraFieldTypes = new Set([
   "TEXT",

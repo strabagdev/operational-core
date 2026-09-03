@@ -9,7 +9,7 @@ State-update AppViews use `type = WORKFLOW` and `workflowKey = state-update`. Th
 - `sourceEntityTypeId`: subject entity.
 - `targetEntityTypeId`: entity where events/current state are persisted.
 - `subjectFieldId`: target `RELATION` field pointing to the source entity.
-- `stateFields`: single `SELECT` fields with required/default option metadata.
+- `stateFields`: one or more compatible target fields with `required` metadata. Supported state field types are `SELECT`, `TEXT`, numeric fields (`INTEGER`, `DECIMAL`, `MONEY`), `DATE`, and `BOOLEAN`. `defaultOptionId` is only valid for `SELECT`.
 - `extraFieldIds`: supported target fields captured with the state update.
 - `dateFieldId`: optional target `DATE` field.
 - `uniqueness.mode`: `none`, `subject`, or `subject-date`.
@@ -31,7 +31,11 @@ Clients POST this wire format:
   "subjectRecordId": "source_record_id",
   "date": "2026-08-22",
   "states": {
-    "state_field_id": "field_option_id"
+    "select_state_field_id": "field_option_id",
+    "text_state_field_id": "R2",
+    "numeric_state_field_id": 12,
+    "date_state_field_id": "2026-08-22",
+    "boolean_state_field_id": true
   },
   "extraValues": {
     "extra_field_id": "value"
@@ -70,7 +74,7 @@ Without overwrite, an existing current record produces:
 - `UNCHANGED` only when every requested state and every requested extra value match after normalization.
 - `CONFLICT` when any requested state or requested extra value differs.
 
-For state fields, a missing, `null`, or blank current value is treated as no state yet and the first requested valid option is accepted. A non-blank current value that cannot be resolved to an active option remains conservative and produces `CONFLICT` instead of silently replacing potentially corrupt or legacy data.
+For state fields, a missing, `null`, or blank current value is treated as no state yet and the first requested valid value is accepted. For `SELECT`, a non-blank current value that cannot be resolved to an active option remains conservative and produces `CONFLICT` instead of silently replacing potentially corrupt or legacy data.
 
 Conflict differences use this conceptual shape:
 
