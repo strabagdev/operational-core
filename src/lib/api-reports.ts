@@ -109,17 +109,21 @@ export async function getApiReport({
     .map((fieldId) => fieldsById.get(fieldId))
     .filter((field): field is NonNullable<typeof field> => Boolean(field));
 
-  if (
-    fields.length !== requiredFieldIds.length ||
-    (config.presentationMode !== "CURRENT_STATUS" && !fieldsById.has(config.dateFieldId))
-  ) {
+  if (fields.length !== requiredFieldIds.length) {
     return {
       ok: false as const,
       response: badRequest("Este reporte necesita configuración.", "INVALID_REPORT_CONFIG"),
     };
   }
 
-  if (config.presentationMode === "CURRENT_STATUS") {
+  if (!isLatestByRelationConfig(config) && !fieldsById.has(config.dateFieldId)) {
+    return {
+      ok: false as const,
+      response: badRequest("Este reporte necesita configuración.", "INVALID_REPORT_CONFIG"),
+    };
+  }
+
+  if (isLatestByRelationConfig(config)) {
     return getApiCurrentStatusReport({
       appView,
       config,
@@ -208,7 +212,7 @@ async function getApiCurrentStatusReport({
   query,
 }: {
   appView: { id: string; name: string; slug: string };
-  config: Extract<ReportAppViewConfig, { presentationMode: "CURRENT_STATUS" }>;
+  config: Extract<ReportAppViewConfig, { presentationMode: "CURRENT_STATUS" | "LATEST_BY_RELATION" }>;
   entity: {
     contractId: string;
     fields: Array<{
@@ -225,11 +229,22 @@ async function getApiCurrentStatusReport({
 }) {
   const requiredFieldIds = reportRequiredFieldIds(config);
   const search = query.search?.trim();
-  const dateFieldId = config.currentStatus.dateFieldId;
-  const subjectFieldId = config.currentStatus.subjectFieldId;
-  const subjectField = subjectFieldId ? fields.find((field) => field.id === subjectFieldId) : null;
+  const latestConfig = normalizeLatestByRelationConfig(config);
+  const orderFieldId = latestConfig.orderFieldId;
+  const relationFieldId = latestConfig.relationFieldId;
+  const requiredValueFieldId = latestConfig.requiredValueFieldId;
+
+  if (!relationFieldId) {
+    return {
+      ok: false as const,
+      response: badRequest("Configura el campo de registro relacionado.", "INVALID_REPORT_CONFIG"),
+    };
+  }
+
+  const subjectField = fields.find((field) => field.id === relationFieldId) ?? null;
   const subjectTargetEntityTypeId = subjectField ? getRelationConfig(subjectField.config).targetEntityTypeId : undefined;
-  const subjectEntity = subjectTargetEntityTypeId
+  const subjectEntityTypeId = latestConfig.relatedEntityTypeId ?? subjectTargetEntityTypeId;
+  const subjectEntity = subjectEntityTypeId
     ? await prisma.entityType.findFirst({
         select: {
           id: true,
@@ -238,7 +253,7 @@ async function getApiCurrentStatusReport({
         },
         where: {
           contractId: entity.contractId,
-          id: subjectTargetEntityTypeId,
+          id: subjectEntityTypeId,
           isActive: true,
         },
       })
@@ -257,7 +272,7 @@ async function getApiCurrentStatusReport({
           },
         },
         orderBy: { targetRecord: { displayName: "asc" } },
-        where: subjectFieldId ? { sourceFieldId: subjectFieldId } : { sourceFieldId: { in: requiredFieldIds } },
+        where: { sourceFieldId: relationFieldId },
       },
       values: {
         select: {
@@ -272,40 +287,26 @@ async function getApiCurrentStatusReport({
         where: { entityFieldId: { in: requiredFieldIds } },
       },
     },
-    orderBy: dateFieldId
+    orderBy: orderFieldId
       ? [{ displayName: "asc" }, { id: "asc" }]
       : [{ displayName: "asc" }, { id: "asc" }],
     where: {
       entityTypeId: entity.id,
-      values: {
-        some: {
-          entityFieldId: config.currentStatus.stateFieldId,
-          OR: [
-            { textValue: { not: null } },
-            { integerValue: { not: null } },
-            { decimalValue: { not: null } },
-            { booleanValue: { not: null } },
-            { dateValue: { not: null } },
-            { jsonValue: { not: Prisma.JsonNull } },
-          ],
-        },
-      },
+      ...(requiredValueFieldId ? { values: { some: fieldHasValueWhere(requiredValueFieldId) } } : {}),
       ...(search
         ? {
             OR: [
               { displayName: { contains: search, mode: "insensitive" as const } },
-              ...(subjectFieldId
-                ? [{
-                    outgoingRelations: {
-                      some: {
-                        sourceFieldId: subjectFieldId,
-                        targetRecord: {
-                          displayName: { contains: search, mode: "insensitive" as const },
-                        },
-                      },
+              {
+                outgoingRelations: {
+                  some: {
+                    sourceFieldId: relationFieldId,
+                    targetRecord: {
+                      displayName: { contains: search, mode: "insensitive" as const },
                     },
-                  }]
-                : []),
+                  },
+                },
+              },
             ],
           }
         : {}),
@@ -313,9 +314,9 @@ async function getApiCurrentStatusReport({
   });
 
   const currentRecords = latestCurrentStatusRecords({
-    dateFieldId,
+    orderFieldId,
     records,
-    subjectFieldId,
+    relationFieldId,
   });
 
   return {
@@ -450,11 +451,14 @@ function reportRequiredFieldIds(config: ReportAppViewConfig) {
     ].filter((fieldId): fieldId is string => Boolean(fieldId))));
   }
 
-  if (config.presentationMode === "CURRENT_STATUS") {
+  if (isLatestByRelationConfig(config)) {
+    const latestConfig = normalizeLatestByRelationConfig(config);
+
     return Array.from(new Set([
-      config.currentStatus.subjectFieldId,
-      config.currentStatus.stateFieldId,
-      config.currentStatus.dateFieldId,
+      ...latestConfig.displayFieldIds,
+      latestConfig.relationFieldId,
+      latestConfig.requiredValueFieldId,
+      latestConfig.orderFieldId,
     ].filter((fieldId): fieldId is string => Boolean(fieldId))));
   }
 
@@ -472,11 +476,11 @@ function reportRequiredFieldIds(config: ReportAppViewConfig) {
 }
 
 function latestCurrentStatusRecords({
-  dateFieldId,
+  orderFieldId,
   records,
-  subjectFieldId,
+  relationFieldId,
 }: {
-  dateFieldId?: string;
+  orderFieldId?: string;
   records: Array<{
     displayName: string;
     id: string;
@@ -495,24 +499,27 @@ function latestCurrentStatusRecords({
       entityFieldId: string;
     }>;
   }>;
-  subjectFieldId?: string;
+  relationFieldId: string;
 }) {
-  const sorted = dateFieldId
+  const sorted = orderFieldId
     ? [...records].sort((left, right) => {
-        const leftDate = currentStatusDateValue(left.values, dateFieldId);
-        const rightDate = currentStatusDateValue(right.values, dateFieldId);
-        const comparison = rightDate.localeCompare(leftDate);
+        const leftValue = currentStatusOrderValue(left.values, orderFieldId);
+        const rightValue = currentStatusOrderValue(right.values, orderFieldId);
+        const comparison = rightValue.localeCompare(leftValue);
 
-        return comparison === 0 ? left.displayName.localeCompare(right.displayName) || left.id.localeCompare(right.id) : comparison;
+        return comparison === 0 ? left.id.localeCompare(right.id) : comparison;
       })
     : [...records].sort((left, right) => left.displayName.localeCompare(right.displayName) || left.id.localeCompare(right.id));
   const bySubject = new Map<string, (typeof sorted)[number]>();
 
   for (const record of sorted) {
-    const subjectRelation = subjectFieldId
-      ? record.outgoingRelations.find((relation) => relation.sourceFieldId === subjectFieldId)
-      : null;
-    const groupKey = subjectRelation?.targetRecordId ?? record.id;
+    const subjectRelation = record.outgoingRelations.find((relation) => relation.sourceFieldId === relationFieldId);
+
+    if (!subjectRelation) {
+      continue;
+    }
+
+    const groupKey = subjectRelation.targetRecordId;
 
     if (!bySubject.has(groupKey)) {
       bySubject.set(groupKey, record);
@@ -522,8 +529,69 @@ function latestCurrentStatusRecords({
   return Array.from(bySubject.values());
 }
 
-function currentStatusDateValue(values: Array<{ dateValue?: Date | null; entityFieldId: string }>, fieldId: string) {
-  return values.find((value) => value.entityFieldId === fieldId)?.dateValue?.toISOString() ?? "";
+function currentStatusOrderValue(
+  values: Array<{
+    booleanValue?: boolean | null;
+    dateValue?: Date | null;
+    decimalValue?: Prisma.Decimal | null;
+    entityFieldId: string;
+    integerValue?: number | null;
+    jsonValue?: Prisma.JsonValue | null;
+    textValue?: string | null;
+  }>,
+  fieldId: string,
+) {
+  const value = values.find((item) => item.entityFieldId === fieldId);
+
+  if (!value) return "";
+  if (value.dateValue) return value.dateValue.toISOString();
+  if (value.integerValue !== null && value.integerValue !== undefined) return String(value.integerValue).padStart(20, "0");
+  if (value.decimalValue !== null && value.decimalValue !== undefined) return value.decimalValue.toString().padStart(20, "0");
+  if (value.booleanValue !== null && value.booleanValue !== undefined) return value.booleanValue ? "1" : "0";
+  if (value.textValue) return value.textValue;
+
+  return "";
+}
+
+function normalizeLatestByRelationConfig(config: Extract<ReportAppViewConfig, { presentationMode: "CURRENT_STATUS" | "LATEST_BY_RELATION" }>) {
+  if (config.presentationMode === "LATEST_BY_RELATION") {
+    return config.latestByRelation;
+  }
+
+  const relationFieldId = config.currentStatus.relationFieldId ?? config.currentStatus.subjectFieldId;
+  const requiredValueFieldId = config.currentStatus.requiredValueFieldId ?? config.currentStatus.stateFieldId;
+  const orderFieldId = config.currentStatus.orderFieldId ?? config.currentStatus.dateFieldId;
+  const displayFieldIds = config.currentStatus.displayFieldIds?.length
+    ? config.currentStatus.displayFieldIds
+    : [relationFieldId, requiredValueFieldId, orderFieldId].filter((fieldId): fieldId is string => Boolean(fieldId));
+
+  return {
+    displayFieldIds,
+    orderFieldId,
+    relationFieldId,
+    relatedEntityTypeId: undefined,
+    requiredValueFieldId,
+  };
+}
+
+function fieldHasValueWhere(entityFieldId: string) {
+  return {
+    entityFieldId,
+    OR: [
+      { textValue: { not: null } },
+      { integerValue: { not: null } },
+      { decimalValue: { not: null } },
+      { booleanValue: { not: null } },
+      { dateValue: { not: null } },
+      { jsonValue: { not: Prisma.JsonNull } },
+    ],
+  };
+}
+
+function isLatestByRelationConfig(
+  config: ReportAppViewConfig,
+): config is Extract<ReportAppViewConfig, { presentationMode: "CURRENT_STATUS" | "LATEST_BY_RELATION" }> {
+  return config.presentationMode === "CURRENT_STATUS" || config.presentationMode === "LATEST_BY_RELATION";
 }
 
 function sortStateUpdateProjectionRows({

@@ -70,9 +70,33 @@ export type ReportAppViewConfig =
       presentationMode: "CURRENT_STATUS";
       currentStatus: {
         subjectFieldId?: string;
-        stateFieldId: string;
+        relationFieldId?: string;
+        stateFieldId?: string;
+        requiredValueFieldId?: string;
         dateFieldId?: string;
+        orderFieldId?: string;
+        displayFieldIds?: string[];
       };
+      latestByRelation?: never;
+      dateFieldId?: never;
+      table?: never;
+      matrix?: never;
+    }
+  | {
+      type: "REPORT";
+      sourceMode?: "ENTITY";
+      entityTypeId: string;
+      timeFilter: ReportTimeFilterConfig;
+      valueDisplay: Record<string, ReportSelectValueDisplay>;
+      presentationMode: "LATEST_BY_RELATION";
+      latestByRelation: {
+        relatedEntityTypeId: string;
+        relationFieldId: string;
+        orderFieldId: string;
+        requiredValueFieldId?: string;
+        displayFieldIds: string[];
+      };
+      currentStatus?: never;
       dateFieldId?: never;
       table?: never;
       matrix?: never;
@@ -216,6 +240,10 @@ export function getAppViewInput(formData: FormData) {
       ),
       requiredStateFieldIds: formData.getAll("requiredStateFieldIds"),
       reportColumnFieldId: formData.get("reportColumnFieldId"),
+      latestByRelationOrderFieldId: formData.get("latestByRelationOrderFieldId"),
+      latestByRelationRelatedEntityTypeId: formData.get("latestByRelationRelatedEntityTypeId"),
+      latestByRelationRelationFieldId: formData.get("latestByRelationRelationFieldId"),
+      latestByRelationRequiredValueFieldId: formData.get("latestByRelationRequiredValueFieldId"),
       reportProjection: formData.get("reportProjection"),
       reportRowFieldId: formData.get("reportRowFieldId"),
       reportSummaryFieldId: formData.get("reportSummaryFieldId"),
@@ -230,9 +258,13 @@ export function getAppViewInput(formData: FormData) {
           .map(([key, value]) => [key.slice("stateFieldDefaultOptionId:".length), value]),
       ),
       statusFieldId: formData.get("statusFieldId"),
+      currentStatusOrderFieldId: formData.get("currentStatusOrderFieldId"),
+      currentStatusRelationFieldId: formData.get("currentStatusRelationFieldId"),
+      currentStatusRequiredValueFieldId: formData.get("currentStatusRequiredValueFieldId"),
       currentStatusDateFieldId: formData.get("currentStatusDateFieldId"),
       currentStatusStateFieldId: formData.get("currentStatusStateFieldId"),
       currentStatusSubjectFieldId: formData.get("currentStatusSubjectFieldId"),
+      displayFieldIds: formData.getAll("displayFieldIds"),
       subjectFieldId: formData.get("subjectFieldId"),
       targetEntityTypeId: formData.get("targetEntityTypeId"),
       uniquenessMode: formData.get("uniquenessMode"),
@@ -454,7 +486,13 @@ export function summarizeAppViewConfig({
       return `Actualización de estado · ${config.projection === "CURRENT" ? "Estado actual" : config.projection}`;
     }
 
-    return `${entityName(config.entityTypeId)} · ${config.presentationMode === "TABLE" ? "Tabla" : "Matriz"}`;
+    const presentationLabel = config.presentationMode === "TABLE"
+      ? "Tabla"
+      : config.presentationMode === "MATRIX"
+        ? "Matriz"
+        : "Último por relación";
+
+    return `${entityName(config.entityTypeId)} · ${presentationLabel}`;
   }
 
   if (config.type === "BOARD") {
@@ -655,34 +693,64 @@ async function validateAppViewConfig({
     }
 
     if (config.presentationMode === "CURRENT_STATUS") {
+      const relationFieldId = config.currentStatus.relationFieldId ?? config.currentStatus.subjectFieldId;
+      const requiredValueFieldId = config.currentStatus.requiredValueFieldId ?? config.currentStatus.stateFieldId;
+      const orderFieldId = config.currentStatus.orderFieldId ?? config.currentStatus.dateFieldId;
+
       return {
         type,
         entityTypeId: config.entityTypeId,
         timeFilter: config.timeFilter,
         valueDisplay: config.valueDisplay,
-        presentationMode: "CURRENT_STATUS",
+        presentationMode: config.presentationMode,
         currentStatus: {
-          ...(config.currentStatus.subjectFieldId ? { subjectFieldId: config.currentStatus.subjectFieldId } : {}),
-          stateFieldId: config.currentStatus.stateFieldId,
-          ...(config.currentStatus.dateFieldId ? { dateFieldId: config.currentStatus.dateFieldId } : {}),
+          ...(relationFieldId ? { relationFieldId, subjectFieldId: relationFieldId } : {}),
+          ...(requiredValueFieldId ? { requiredValueFieldId, stateFieldId: requiredValueFieldId } : {}),
+          ...(orderFieldId ? { orderFieldId, dateFieldId: orderFieldId } : {}),
+          displayFieldIds: config.currentStatus.displayFieldIds ?? [
+            relationFieldId,
+            requiredValueFieldId,
+            orderFieldId,
+          ].filter((fieldId): fieldId is string => Boolean(fieldId)),
         },
       };
     }
 
-    return {
-      type,
-      entityTypeId: config.entityTypeId,
-      dateFieldId: config.dateFieldId,
-      timeFilter: config.timeFilter,
-      valueDisplay: config.valueDisplay,
-      presentationMode: "MATRIX",
-      matrix: {
-        rowFieldId: config.matrix.rowFieldId,
-        columnFieldId: config.matrix.columnFieldId,
-        valueFieldId: config.matrix.valueFieldId,
-        ...(config.matrix.summaryFieldId ? { summaryFieldId: config.matrix.summaryFieldId } : {}),
-      },
-    };
+    if (config.presentationMode === "LATEST_BY_RELATION") {
+      return {
+        type,
+        entityTypeId: config.entityTypeId,
+        timeFilter: config.timeFilter,
+        valueDisplay: config.valueDisplay,
+        presentationMode: "LATEST_BY_RELATION",
+        latestByRelation: {
+          relatedEntityTypeId: config.latestByRelation.relatedEntityTypeId,
+          relationFieldId: config.latestByRelation.relationFieldId,
+          orderFieldId: config.latestByRelation.orderFieldId,
+          ...(config.latestByRelation.requiredValueFieldId ? { requiredValueFieldId: config.latestByRelation.requiredValueFieldId } : {}),
+          displayFieldIds: config.latestByRelation.displayFieldIds,
+        },
+      };
+    }
+
+    if (config.presentationMode === "MATRIX") {
+      return {
+        type,
+        entityTypeId: config.entityTypeId,
+        dateFieldId: config.dateFieldId,
+        timeFilter: config.timeFilter,
+        valueDisplay: config.valueDisplay,
+        presentationMode: "MATRIX",
+        matrix: {
+          rowFieldId: config.matrix.rowFieldId,
+          columnFieldId: config.matrix.columnFieldId,
+          valueFieldId: config.matrix.valueFieldId,
+          ...(config.matrix.summaryFieldId ? { summaryFieldId: config.matrix.summaryFieldId } : {}),
+        },
+      };
+    }
+
+    throw new AppViewConfigError("La presentación del reporte no es compatible.", "presentationMode");
   }
 
   if (type === "BOARD") {
@@ -760,14 +828,40 @@ const reportEntityConfigInputSchema = z.discriminatedUnion("presentationMode", [
         (value) => value === null ? undefined : value,
         z.string().trim().optional().transform((value) => value || undefined),
       ),
+      relationFieldId: z.preprocess(
+        (value) => value === null ? undefined : value,
+        z.string().trim().optional().transform((value) => value || undefined),
+      ),
       stateFieldId: z.preprocess(
-        (value) => value === null || value === undefined ? "" : value,
-        z.string().trim().min(1, "Selecciona el campo de estado."),
+        (value) => value === null ? undefined : value,
+        z.string().trim().optional().transform((value) => value || undefined),
+      ),
+      requiredValueFieldId: z.preprocess(
+        (value) => value === null ? undefined : value,
+        z.string().trim().optional().transform((value) => value || undefined),
       ),
       dateFieldId: z.preprocess(
         (value) => value === null ? undefined : value,
         z.string().trim().optional().transform((value) => value || undefined),
       ),
+      orderFieldId: z.preprocess(
+        (value) => value === null ? undefined : value,
+        z.string().trim().optional().transform((value) => value || undefined),
+      ),
+      displayFieldIds: z.array(z.string().trim().min(1)).default([]),
+    }),
+  }),
+  reportCurrentStatusBaseConfigInputSchema.extend({
+    presentationMode: z.literal("LATEST_BY_RELATION"),
+    latestByRelation: z.object({
+      relatedEntityTypeId: z.string({ message: "Selecciona la entidad relacionada." }).trim().min(1, "Selecciona la entidad relacionada."),
+      relationFieldId: z.string({ message: "Selecciona el campo de relación." }).trim().min(1, "Selecciona el campo de relación."),
+      orderFieldId: z.string({ message: "Selecciona el campo de orden." }).trim().min(1, "Selecciona el campo de orden."),
+      requiredValueFieldId: z.preprocess(
+        (value) => value === null ? undefined : value,
+        z.string().trim().optional().transform((value) => value || undefined),
+      ),
+      displayFieldIds: z.array(z.string().trim().min(1)).default([]),
     }),
   }),
 ]);
@@ -987,8 +1081,8 @@ function parseReportConfigInput(rawConfig: unknown) {
 
   const presentationMode = raw.presentationMode === "MATRIX"
     ? "MATRIX"
-    : raw.presentationMode === "CURRENT_STATUS"
-      ? "CURRENT_STATUS"
+    : raw.presentationMode === "CURRENT_STATUS" || raw.presentationMode === "LATEST_BY_RELATION"
+      ? raw.presentationMode
       : "TABLE";
 
   if (presentationMode === "MATRIX") {
@@ -1011,8 +1105,39 @@ function parseReportConfigInput(rawConfig: unknown) {
     });
   }
 
-  if (presentationMode === "CURRENT_STATUS") {
+  if (presentationMode === "CURRENT_STATUS" || presentationMode === "LATEST_BY_RELATION") {
+    if (presentationMode === "LATEST_BY_RELATION") {
+      const latestByRelation = isRecord(raw.latestByRelation) ? raw.latestByRelation : {};
+      const relatedEntityTypeId = raw.latestByRelationRelatedEntityTypeId ?? latestByRelation.relatedEntityTypeId;
+      const relationFieldId = raw.latestByRelationRelationFieldId ?? latestByRelation.relationFieldId;
+      const orderFieldId = raw.latestByRelationOrderFieldId ?? latestByRelation.orderFieldId;
+      const requiredValueFieldId = raw.latestByRelationRequiredValueFieldId ?? latestByRelation.requiredValueFieldId;
+      const displayFieldIds = uniqueStrings(stringArray(raw.displayFieldIds ?? latestByRelation.displayFieldIds));
+
+      return reportConfigInputSchema.parse({
+        entityTypeId: raw.entityTypeId,
+        timeFilter: parseReportTimeFilter(raw),
+        valueDisplay: parseReportValueDisplay(raw),
+        presentationMode,
+        latestByRelation: {
+          relatedEntityTypeId,
+          relationFieldId,
+          orderFieldId,
+          requiredValueFieldId,
+          displayFieldIds,
+        },
+      });
+    }
+
     const currentStatus = isRecord(raw.currentStatus) ? raw.currentStatus : {};
+    const relationFieldId = raw.currentStatusRelationFieldId ?? raw.currentStatusSubjectFieldId ?? currentStatus.relationFieldId ?? currentStatus.subjectFieldId;
+    const requiredValueFieldId = raw.currentStatusRequiredValueFieldId ?? raw.currentStatusStateFieldId ?? currentStatus.requiredValueFieldId ?? currentStatus.stateFieldId;
+    const orderFieldId = raw.currentStatusOrderFieldId ?? raw.currentStatusDateFieldId ?? currentStatus.orderFieldId ?? currentStatus.dateFieldId;
+    const displayFieldIds = uniqueStrings(stringArray(
+      raw.displayFieldIds ??
+        currentStatus.displayFieldIds ??
+        [relationFieldId, requiredValueFieldId, orderFieldId].filter(Boolean),
+    ));
 
     return reportConfigInputSchema.parse({
       entityTypeId: raw.entityTypeId,
@@ -1020,9 +1145,13 @@ function parseReportConfigInput(rawConfig: unknown) {
       valueDisplay: parseReportValueDisplay(raw),
       presentationMode,
       currentStatus: {
-        subjectFieldId: raw.currentStatusSubjectFieldId ?? currentStatus.subjectFieldId,
-        stateFieldId: raw.currentStatusStateFieldId ?? currentStatus.stateFieldId,
-        dateFieldId: raw.currentStatusDateFieldId ?? currentStatus.dateFieldId,
+        subjectFieldId: relationFieldId,
+        relationFieldId,
+        stateFieldId: requiredValueFieldId,
+        requiredValueFieldId,
+        dateFieldId: orderFieldId,
+        orderFieldId,
+        displayFieldIds,
       },
     });
   }
@@ -1074,6 +1203,7 @@ function validateReportAppViewFields({
 }: {
   config: z.infer<typeof reportEntityConfigInputSchema>;
   fields: Array<{
+    config: unknown;
     id: string;
     isActive: boolean;
     name: string;
@@ -1081,26 +1211,43 @@ function validateReportAppViewFields({
   }>;
 }) {
   if (config.presentationMode === "CURRENT_STATUS") {
-    const stateField = requireActiveTargetField(fields, config.currentStatus.stateFieldId, "Estado");
+    const relationFieldId = config.currentStatus.relationFieldId ?? config.currentStatus.subjectFieldId;
+    const requiredValueFieldId = config.currentStatus.requiredValueFieldId ?? config.currentStatus.stateFieldId;
+    const orderFieldId = config.currentStatus.orderFieldId ?? config.currentStatus.dateFieldId;
+    const displayFieldIds = config.currentStatus.displayFieldIds ?? [
+      relationFieldId,
+      requiredValueFieldId,
+      orderFieldId,
+    ].filter((fieldId): fieldId is string => Boolean(fieldId));
 
-    if (!reportCurrentStatusStateFieldTypes.has(stateField.type)) {
-      throw new AppViewConfigError("El campo de estado no es compatible.", "currentStatusStateFieldId");
+    if (!relationFieldId) {
+      throw new AppViewConfigError("Selecciona el campo de registro relacionado.", "currentStatusRelationFieldId");
     }
 
-    if (config.currentStatus.subjectFieldId) {
-      const subjectField = requireActiveTargetField(fields, config.currentStatus.subjectFieldId, "Registro relacionado");
+    const relationField = requireActiveTargetField(fields, relationFieldId, "Registro relacionado");
 
-      if (subjectField.type !== "RELATION") {
-        throw new AppViewConfigError("El campo de registro relacionado debe ser de tipo relación.", "currentStatusSubjectFieldId");
+    if (relationField.type !== "RELATION") {
+      throw new AppViewConfigError("El campo de registro relacionado debe ser de tipo relación.", "currentStatusRelationFieldId");
+    }
+
+    if (requiredValueFieldId) {
+      requireActiveTargetField(fields, requiredValueFieldId, "Campo requerido");
+    }
+
+    if (orderFieldId) {
+      const orderField = requireActiveTargetField(fields, orderFieldId, "Orden");
+
+      if (!reportSortableFieldTypes.has(orderField.type)) {
+        throw new AppViewConfigError("El campo de orden no es compatible.", "currentStatusOrderFieldId");
       }
     }
 
-    if (config.currentStatus.dateFieldId) {
-      const dateField = requireActiveTargetField(fields, config.currentStatus.dateFieldId, "Fecha");
+    if (displayFieldIds.length === 0) {
+      throw new AppViewConfigError("Selecciona al menos una columna visible.", "displayFieldIds");
+    }
 
-      if (!reportDateFieldTypes.has(dateField.type)) {
-        throw new AppViewConfigError("El campo de fecha debe ser de tipo fecha.", "currentStatusDateFieldId");
-      }
+    for (const fieldId of displayFieldIds) {
+      requireActiveTargetField(fields, fieldId, "Columnas visibles");
     }
 
     validateReportValueDisplayFields(config.valueDisplay, fields);
@@ -1108,13 +1255,50 @@ function validateReportAppViewFields({
     return;
   }
 
-  const dateField = requireActiveTargetField(fields, config.dateFieldId, "Fecha");
+  if (config.presentationMode === "LATEST_BY_RELATION") {
+    const { displayFieldIds, orderFieldId, relatedEntityTypeId, relationFieldId, requiredValueFieldId } = config.latestByRelation;
+    const relationField = requireActiveTargetField(fields, relationFieldId, "Registro relacionado");
 
-  if (!reportDateFieldTypes.has(dateField.type)) {
-    throw new AppViewConfigError("El campo de fecha debe ser de tipo fecha.", "dateFieldId");
+    if (relationField.type !== "RELATION") {
+      throw new AppViewConfigError("El campo de registro relacionado debe ser de tipo relación.", "latestByRelationRelationFieldId");
+    }
+
+    const relationTargetEntityTypeId = getRelationConfig(relationField.config).targetEntityTypeId;
+
+    if (relationTargetEntityTypeId !== relatedEntityTypeId) {
+      throw new AppViewConfigError("El campo de relación debe apuntar a la entidad relacionada seleccionada.", "latestByRelationRelationFieldId");
+    }
+
+    const orderField = requireActiveTargetField(fields, orderFieldId, "Orden");
+
+    if (!reportSortableFieldTypes.has(orderField.type)) {
+      throw new AppViewConfigError("El campo de orden no es compatible.", "latestByRelationOrderFieldId");
+    }
+
+    if (requiredValueFieldId) {
+      requireActiveTargetField(fields, requiredValueFieldId, "Campo requerido");
+    }
+
+    if (displayFieldIds.length === 0) {
+      throw new AppViewConfigError("Selecciona al menos una columna visible.", "displayFieldIds");
+    }
+
+    for (const fieldId of displayFieldIds) {
+      requireActiveTargetField(fields, fieldId, "Columnas visibles");
+    }
+
+    validateReportValueDisplayFields(config.valueDisplay, fields);
+
+    return;
   }
 
   if (config.presentationMode === "TABLE") {
+    const dateField = requireActiveTargetField(fields, config.dateFieldId, "Fecha");
+
+    if (!reportDateFieldTypes.has(dateField.type)) {
+      throw new AppViewConfigError("El campo de fecha debe ser de tipo fecha.", "dateFieldId");
+    }
+
     if (config.table.visibleFieldIds.length === 0) {
       throw new AppViewConfigError("Selecciona al menos una columna visible.", "visibleFieldIds");
     }
@@ -1136,15 +1320,23 @@ function validateReportAppViewFields({
     return;
   }
 
-  requireActiveTargetField(fields, config.matrix.rowFieldId, "Filas");
-  requireActiveTargetField(fields, config.matrix.columnFieldId, "Columnas");
-  requireActiveTargetField(fields, config.matrix.valueFieldId, "Valor");
+  if (config.presentationMode === "MATRIX") {
+    const dateField = requireActiveTargetField(fields, config.dateFieldId, "Fecha");
 
-  if (config.matrix.summaryFieldId) {
-    requireActiveTargetField(fields, config.matrix.summaryFieldId, "Resumen lateral");
+    if (!reportDateFieldTypes.has(dateField.type)) {
+      throw new AppViewConfigError("El campo de fecha debe ser de tipo fecha.", "dateFieldId");
+    }
+
+    requireActiveTargetField(fields, config.matrix.rowFieldId, "Filas");
+    requireActiveTargetField(fields, config.matrix.columnFieldId, "Columnas");
+    requireActiveTargetField(fields, config.matrix.valueFieldId, "Valor");
+
+    if (config.matrix.summaryFieldId) {
+      requireActiveTargetField(fields, config.matrix.summaryFieldId, "Resumen lateral");
+    }
+
+    validateReportValueDisplayFields(config.valueDisplay, fields);
   }
-
-  validateReportValueDisplayFields(config.valueDisplay, fields);
 }
 
 function validateStateUpdateReportTableFields(
@@ -1411,17 +1603,6 @@ const stateUpdateExtraFieldTypes = new Set([
 ]);
 
 const reportDateFieldTypes = new Set(["DATE", "DATETIME"]);
-
-const reportCurrentStatusStateFieldTypes = new Set([
-  "SELECT",
-  "TEXT",
-  "TEXTAREA",
-  "INTEGER",
-  "DECIMAL",
-  "MONEY",
-  "BOOLEAN",
-  "DATE",
-]);
 
 const reportSortableFieldTypes = new Set([
   "TEXT",

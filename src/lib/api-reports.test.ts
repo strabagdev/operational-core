@@ -268,16 +268,18 @@ describe("getApiReport", () => {
     });
   });
 
-  it("returns current status report rows with the latest version per procedure", async () => {
+  it("returns latest-by-relation report rows with configured fields from the latest version per procedure", async () => {
     appViewFindFirst.mockResolvedValueOnce({
       active: true,
       config: {
         entityTypeId: "versions",
-        presentationMode: "CURRENT_STATUS",
-        currentStatus: {
-          subjectFieldId: "subject_field",
-          stateFieldId: "status_field",
-          dateFieldId: "date_field",
+        presentationMode: "LATEST_BY_RELATION",
+        latestByRelation: {
+          relatedEntityTypeId: "procedures",
+          relationFieldId: "subject_field",
+          requiredValueFieldId: "status_field",
+          orderFieldId: "date_field",
+          displayFieldIds: ["subject_field", "version_field", "status_field", "date_field"],
         },
       },
       contractId: "contract_1",
@@ -297,6 +299,7 @@ describe("getApiReport", () => {
         id: "version_old",
         procedureId: "procedure_1",
         procedureName: "PET-001",
+        version: "1.0",
         status: "revision",
       }),
       versionRecord({
@@ -304,6 +307,7 @@ describe("getApiReport", () => {
         id: "version_new",
         procedureId: "procedure_1",
         procedureName: "PET-001",
+        version: "2.0",
         status: "vigente",
       }),
       versionRecord({
@@ -311,6 +315,7 @@ describe("getApiReport", () => {
         id: "version_other",
         procedureId: "procedure_2",
         procedureName: "PET-002",
+        version: "1.0",
         status: "vigente",
       }),
     ] as never);
@@ -347,35 +352,39 @@ describe("getApiReport", () => {
       }),
     }));
     expect(result.data.config).toMatchObject({
-      presentationMode: "CURRENT_STATUS",
-      currentStatus: {
-        subjectFieldId: "subject_field",
-        stateFieldId: "status_field",
-        dateFieldId: "date_field",
+      presentationMode: "LATEST_BY_RELATION",
+      latestByRelation: {
+        relatedEntityTypeId: "procedures",
+        relationFieldId: "subject_field",
+        requiredValueFieldId: "status_field",
+        orderFieldId: "date_field",
+        displayFieldIds: ["subject_field", "version_field", "status_field", "date_field"],
       },
     });
-    expect(result.data.fields.map((field) => field.key)).toEqual(["procedimiento", "estatus", "fecha"]);
+    expect(result.data.fields.map((field) => field.key)).toEqual(["procedimiento", "version", "estatus", "fecha"]);
     expect(result.data).toMatchObject({
       subjectEntity: { id: "procedures", name: "Procedimientos", slug: "procedimientos" },
     });
     expect(result.data.records.map((record) => record.id)).toEqual(["version_new", "version_other"]);
     expect(result.data.records[0].values).toMatchObject({
       procedimiento: { displayName: "PET-001", entityTypeId: "procedures", id: "procedure_1" },
+      version: "2.0",
       estatus: "vigente",
       fecha: "2026-08-05",
     });
   });
 
-  it("returns current status metadata for a different related entity", async () => {
+  it("returns latest-by-relation metadata for a different related entity without requiring status", async () => {
     appViewFindFirst.mockResolvedValueOnce({
       active: true,
       config: {
         entityTypeId: "equipment_versions",
-        presentationMode: "CURRENT_STATUS",
-        currentStatus: {
-          subjectFieldId: "equipment_field",
-          stateFieldId: "status_field",
-          dateFieldId: "date_field",
+        presentationMode: "LATEST_BY_RELATION",
+        latestByRelation: {
+          relatedEntityTypeId: "equipment",
+          relationFieldId: "equipment_field",
+          orderFieldId: "date_field",
+          displayFieldIds: ["equipment_field", "date_field"],
         },
       },
       contractId: "contract_1",
@@ -403,7 +412,7 @@ describe("getApiReport", () => {
         procedureName: "Excavadora 12",
         sourceFieldId: "equipment_field",
         targetEntityTypeId: "equipment",
-        status: "operativo",
+        status: "",
       }),
     ] as never);
 
@@ -420,10 +429,10 @@ describe("getApiReport", () => {
     expect(result.data).toMatchObject({
       subjectEntity: { id: "equipment", name: "Equipos", slug: "equipos" },
     });
-    expect(result.data.fields.map((field) => field.key)).toEqual(["equipo", "estatus", "fecha"]);
+    expect(result.data.fields.map((field) => field.key)).toEqual(["equipo", "fecha"]);
     expect(result.data.records[0].values).toMatchObject({
       equipo: { displayName: "Excavadora 12", entityTypeId: "equipment", id: "equipment_1" },
-      estatus: "operativo",
+      fecha: "2026-08-09",
     });
   });
 
@@ -600,6 +609,7 @@ function currentStatusEntity({
           { id: "status_review", isActive: true, label: "En revisión", sortOrder: 2, value: "revision" },
         ],
       }),
+      field("version_field", "version", "Versión", "TEXT"),
       field("date_field", "fecha", "Fecha", "DATE"),
     ],
     contractId: "contract_1",
@@ -626,6 +636,7 @@ function versionRecord({
   status,
   targetEntityTypeId = "procedures",
   updatedAt = "2026-08-01T12:00:00.000Z",
+  version,
 }: {
   date: string;
   id: string;
@@ -635,6 +646,7 @@ function versionRecord({
   status: string;
   targetEntityTypeId?: string;
   updatedAt?: string;
+  version?: string;
 }) {
   return {
     displayName: `${procedureName} ${date}`,
@@ -654,6 +666,7 @@ function versionRecord({
     values: [
       { entityFieldId: "date_field", dateValue: new Date(`${date}T00:00:00.000Z`) },
       { entityFieldId: "status_field", textValue: status },
+      ...(version ? [{ entityFieldId: "version_field", textValue: version }] : []),
     ],
   };
 }

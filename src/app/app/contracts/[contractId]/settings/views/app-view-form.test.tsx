@@ -16,7 +16,15 @@ const entityTypes = [
   },
   {
     fields: [
-      { id: "person_field", isActive: true, key: "persona", name: "Persona", options: [], type: "RELATION" },
+      {
+        config: { relationKind: "ONE", targetEntityTypeId: "people" },
+        id: "person_field",
+        isActive: true,
+        key: "persona",
+        name: "Persona",
+        options: [],
+        type: "RELATION",
+      },
       { id: "date_field", isActive: true, key: "fecha", name: "Fecha", options: [], type: "DATE" },
       {
         id: "status_field",
@@ -286,11 +294,13 @@ describe("AppViewForm", () => {
           active: true,
           config: {
             entityTypeId: "attendance",
-            presentationMode: "CURRENT_STATUS",
-            currentStatus: {
-              subjectFieldId: "person_field",
-              stateFieldId: "status_field",
-              dateFieldId: "reviewed_on_field",
+            presentationMode: "LATEST_BY_RELATION",
+            latestByRelation: {
+              relatedEntityTypeId: "people",
+              relationFieldId: "person_field",
+              requiredValueFieldId: "status_field",
+              orderFieldId: "reviewed_on_field",
+              displayFieldIds: ["person_field", "status_field", "reviewed_on_field"],
             },
             timeFilter: {
               allowChange: false,
@@ -310,12 +320,18 @@ describe("AppViewForm", () => {
       />,
     );
 
-    expect(html).toContain("Estado actual");
+    expect(html).toContain("Último por relación");
+    expect(html).not.toContain("Estado actual (compatibilidad)");
     expect(html).toContain("Registro relacionado");
     expect(html).toContain("Campo que identifica el registro cuyo estado se mostrará");
-    expect(html).toContain('name="currentStatusSubjectFieldId"');
-    expect(html).toContain('name="currentStatusStateFieldId"');
-    expect(html).toContain('name="currentStatusDateFieldId"');
+    expect(html).toContain("Campo requerido");
+    expect(html).toContain("Columnas visibles");
+    expect(html).toContain("Entidad relacionada");
+    expect(html).toContain('name="latestByRelationRelatedEntityTypeId"');
+    expect(html).toContain('name="latestByRelationRelationFieldId"');
+    expect(html).toContain('name="latestByRelationRequiredValueFieldId"');
+    expect(html).toContain('name="latestByRelationOrderFieldId"');
+    expect(html).toContain('name="displayFieldIds"');
     expect(html).not.toContain("Subvista Estados");
   });
 

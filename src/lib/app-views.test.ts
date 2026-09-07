@@ -930,18 +930,20 @@ describe("AppView config validation", () => {
     }));
   });
 
-  it("creates a valid REPORT current status view over version records", async () => {
+  it("creates a valid REPORT latest-by-relation view over version records", async () => {
     entityTypeFindFirst.mockResolvedValueOnce(attendanceEntityType() as never);
 
     await createAppView(
       "contract_1",
       "user_1",
       getAppViewInput(formData({
-        currentStatusDateFieldId: "date_field",
-        currentStatusStateFieldId: "status_field",
-        currentStatusSubjectFieldId: "person_field",
+        latestByRelationOrderFieldId: "date_field",
+        latestByRelationRelatedEntityTypeId: "people",
+        latestByRelationRelationFieldId: "person_field",
+        latestByRelationRequiredValueFieldId: "status_field",
+        displayFieldIds: ["person_field", "status_field", "date_field"],
         entityTypeId: "attendance",
-        presentationMode: "CURRENT_STATUS",
+        presentationMode: "LATEST_BY_RELATION",
         reportTimeAllowChange: false,
         type: "REPORT",
       })),
@@ -957,11 +959,13 @@ describe("AppView config validation", () => {
             mode: "RANGE",
           },
           valueDisplay: {},
-          presentationMode: "CURRENT_STATUS",
-          currentStatus: {
-            subjectFieldId: "person_field",
-            stateFieldId: "status_field",
-            dateFieldId: "date_field",
+          presentationMode: "LATEST_BY_RELATION",
+          latestByRelation: {
+            relatedEntityTypeId: "people",
+            relationFieldId: "person_field",
+            requiredValueFieldId: "status_field",
+            orderFieldId: "date_field",
+            displayFieldIds: ["person_field", "status_field", "date_field"],
           },
         },
         type: "REPORT",
@@ -969,7 +973,39 @@ describe("AppView config validation", () => {
     }));
   });
 
-  it("rejects REPORT current status without a state field", async () => {
+  it("creates a valid REPORT latest-by-relation view without a required value field", async () => {
+    entityTypeFindFirst.mockResolvedValueOnce(attendanceEntityType() as never);
+
+    await createAppView(
+      "contract_1",
+      "user_1",
+      getAppViewInput(formData({
+        latestByRelationOrderFieldId: "date_field",
+        latestByRelationRelatedEntityTypeId: "people",
+        latestByRelationRelationFieldId: "person_field",
+        displayFieldIds: ["person_field", "date_field"],
+        entityTypeId: "attendance",
+        presentationMode: "LATEST_BY_RELATION",
+        type: "REPORT",
+      })),
+    );
+
+    expect(appViewCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        config: expect.objectContaining({
+          presentationMode: "LATEST_BY_RELATION",
+          latestByRelation: expect.objectContaining({
+            relatedEntityTypeId: "people",
+            relationFieldId: "person_field",
+            orderFieldId: "date_field",
+            displayFieldIds: ["person_field", "date_field"],
+          }),
+        }),
+      }),
+    }));
+  });
+
+  it("rejects REPORT latest-by-relation without an order field", async () => {
     entityTypeFindFirst.mockResolvedValueOnce(attendanceEntityType() as never);
 
     await expect(
@@ -977,15 +1013,18 @@ describe("AppView config validation", () => {
         "contract_1",
         "user_1",
         getAppViewInput(formData({
+          latestByRelationRelatedEntityTypeId: "people",
+          latestByRelationRelationFieldId: "person_field",
+          displayFieldIds: ["person_field"],
           entityTypeId: "attendance",
-          presentationMode: "CURRENT_STATUS",
+          presentationMode: "LATEST_BY_RELATION",
           type: "REPORT",
         })),
       ),
-    ).rejects.toThrow("Selecciona el campo de estado.");
+    ).rejects.toThrow("Selecciona el campo de orden.");
   });
 
-  it("rejects REPORT current status when related record field is not a relation", async () => {
+  it("rejects REPORT latest-by-relation when related record field is not a relation", async () => {
     entityTypeFindFirst.mockResolvedValueOnce(attendanceEntityType() as never);
 
     await expect(
@@ -993,14 +1032,100 @@ describe("AppView config validation", () => {
         "contract_1",
         "user_1",
         getAppViewInput(formData({
-          currentStatusStateFieldId: "status_field",
-          currentStatusSubjectFieldId: "shift_field",
+          latestByRelationOrderFieldId: "date_field",
+          latestByRelationRelatedEntityTypeId: "people",
+          latestByRelationRelationFieldId: "shift_field",
+          latestByRelationRequiredValueFieldId: "status_field",
+          displayFieldIds: ["shift_field", "status_field"],
           entityTypeId: "attendance",
-          presentationMode: "CURRENT_STATUS",
+          presentationMode: "LATEST_BY_RELATION",
           type: "REPORT",
         })),
       ),
     ).rejects.toThrow("El campo de registro relacionado debe ser de tipo relación.");
+  });
+
+  it("rejects REPORT latest-by-relation when relation points to another entity", async () => {
+    entityTypeFindFirst.mockResolvedValueOnce(attendanceEntityType() as never);
+
+    await expect(
+      createAppView(
+        "contract_1",
+        "user_1",
+        getAppViewInput(formData({
+          latestByRelationOrderFieldId: "date_field",
+          latestByRelationRelatedEntityTypeId: "equipment",
+          latestByRelationRelationFieldId: "person_field",
+          displayFieldIds: ["person_field"],
+          entityTypeId: "attendance",
+          presentationMode: "LATEST_BY_RELATION",
+          type: "REPORT",
+        })),
+      ),
+    ).rejects.toThrow("El campo de relación debe apuntar a la entidad relacionada seleccionada.");
+  });
+
+  it("rejects REPORT latest-by-relation when order field is not sortable", async () => {
+    entityTypeFindFirst.mockResolvedValueOnce(attendanceEntityType() as never);
+
+    await expect(
+      createAppView(
+        "contract_1",
+        "user_1",
+        getAppViewInput(formData({
+          latestByRelationOrderFieldId: "person_field",
+          latestByRelationRelatedEntityTypeId: "people",
+          latestByRelationRelationFieldId: "person_field",
+          displayFieldIds: ["person_field"],
+          entityTypeId: "attendance",
+          presentationMode: "LATEST_BY_RELATION",
+          type: "REPORT",
+        })),
+      ),
+    ).rejects.toThrow("El campo de orden no es compatible.");
+  });
+
+  it("rejects REPORT latest-by-relation with empty display fields", async () => {
+    entityTypeFindFirst.mockResolvedValueOnce(attendanceEntityType() as never);
+
+    await expect(
+      createAppView(
+        "contract_1",
+        "user_1",
+        getAppViewInput(formData({
+          latestByRelationOrderFieldId: "date_field",
+          latestByRelationRelatedEntityTypeId: "people",
+          latestByRelationRelationFieldId: "person_field",
+          entityTypeId: "attendance",
+          presentationMode: "LATEST_BY_RELATION",
+          type: "REPORT",
+        })),
+      ),
+    ).rejects.toThrow("Selecciona al menos una columna visible.");
+  });
+
+  it("rejects REPORT latest-by-relation saved under currentStatus", async () => {
+    entityTypeFindFirst.mockResolvedValueOnce(attendanceEntityType() as never);
+
+    await expect(
+      createAppView(
+        "contract_1",
+        "user_1",
+        ({
+          ...getAppViewInput(formData({
+            displayFieldIds: ["person_field"],
+            entityTypeId: "attendance",
+            presentationMode: "LATEST_BY_RELATION",
+            type: "REPORT",
+          })),
+          currentStatus: {
+            relationFieldId: "person_field",
+            orderFieldId: "date_field",
+            displayFieldIds: ["person_field"],
+          },
+        } as never),
+      ),
+    ).rejects.toThrow("Selecciona la entidad relacionada.");
   });
 
   it("rejects STATE_UPDATE REPORT matrix presentation", async () => {

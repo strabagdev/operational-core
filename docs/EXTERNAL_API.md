@@ -482,14 +482,16 @@ Config shapes by `type`:
   "RECORDS": {
     "entityTypeId": "entity_type_id"
   },
-  "REPORT current status": {
+  "REPORT latest by relation": {
     "sourceMode": "ENTITY",
-    "entityTypeId": "version_records_entity_type_id",
-    "presentationMode": "CURRENT_STATUS",
-    "currentStatus": {
-      "subjectFieldId": "optional_relation_to_related_record_field_id",
-      "stateFieldId": "state_field_id",
-      "dateFieldId": "optional_date_field_id"
+    "entityTypeId": "source_records_entity_type_id",
+    "presentationMode": "LATEST_BY_RELATION",
+    "latestByRelation": {
+      "relatedEntityTypeId": "grouped_entity_type_id",
+      "relationFieldId": "relation_to_grouped_record_field_id",
+      "requiredValueFieldId": "optional_field_that_must_have_value",
+      "orderFieldId": "optional_field_used_to_pick_latest_record",
+      "displayFieldIds": ["relation_to_grouped_record_field_id", "any_other_visible_field_id"]
     }
   },
   "WORKFLOW attendance": {
@@ -542,10 +544,10 @@ Important: AppView access controls which experience appears to the user. It is n
 Returns data for a configured `REPORT` AppView assigned to the authenticated user. Query parameters:
 
 - `from`: optional `YYYY-MM-DD`.
-- `search`: optional text search. For `CURRENT_STATUS`, this searches the report record name and, when configured, the related record display name.
+- `search`: optional text search. For `LATEST_BY_RELATION` and its `CURRENT_STATUS` compatibility alias, this searches the report record name and the related record display name.
 - `to`: optional `YYYY-MM-DD`.
 
-For entity-backed reports, missing `sourceMode` means `ENTITY`. `TABLE` and `MATRIX` date ranges filter records using the report's configured top-level `dateFieldId`; display names such as "Fecha" are not used as identifiers. `CURRENT_STATUS` does not require a top-level report date field: it uses `currentStatus.stateFieldId` as the required state source, optional `currentStatus.subjectFieldId` to group rows by related record, and optional `currentStatus.dateFieldId` to choose the latest historical version per related record and sort descending. If no current-status date field is configured, Opco does not substitute `createdAt`, `updatedAt`, or audit dates. The response includes the REPORT config, including `timeFilter` and `valueDisplay`, entity metadata, optional `subjectEntity` metadata when `currentStatus.subjectFieldId` resolves to a relation target, selected field definitions including option `id`, visible `label`, and internal `value`, and serialized records with relation display names. Record values keep the stored value; clients apply `valueDisplay[fieldId] = LABEL | INTERNAL_VALUE` only when rendering REPORT output. Entity-backed presentation modes are `TABLE`, `MATRIX`, and `CURRENT_STATUS`. Reports stored before `timeFilter` are serialized with `mode = RANGE`, `defaultPeriod = CURRENT_MONTH`, and `allowChange = true`.
+For entity-backed reports, missing `sourceMode` means `ENTITY`. `TABLE` and `MATRIX` date ranges filter records using the report's configured top-level `dateFieldId`; display names such as "Fecha" are not used as identifiers. `LATEST_BY_RELATION` does not require a top-level report date field: it uses `latestByRelation.relatedEntityTypeId` as the grouped entity, `latestByRelation.relationFieldId` to group source rows, required `latestByRelation.orderFieldId` to select the latest row per group and sort descending, optional `latestByRelation.requiredValueFieldId` to include only rows where that field has value, and ordered `latestByRelation.displayFieldIds` to select response columns. Ties on the order field are resolved by record id only; Opco does not use `displayName`, `createdAt`, `updatedAt`, or audit dates to select the latest row. `CURRENT_STATUS` remains accepted as an alias and maps legacy `currentStatus.subjectFieldId`, `currentStatus.stateFieldId`, and `currentStatus.dateFieldId` to the internal latest-by-relation model. The response includes the REPORT config, including `timeFilter` and `valueDisplay`, entity metadata, optional `subjectEntity` metadata when the relation field resolves to a relation target, selected field definitions including option `id`, visible `label`, and internal `value`, and serialized records with relation display names. Record values keep the stored value; clients apply `valueDisplay[fieldId] = LABEL | INTERNAL_VALUE` only when rendering REPORT output. Entity-backed presentation modes are `TABLE`, `MATRIX`, `LATEST_BY_RELATION`, and the `CURRENT_STATUS` alias. Reports stored before `timeFilter` are serialized with `mode = RANGE`, `defaultPeriod = CURRENT_MONTH`, and `allowChange = true`.
 
 Reports can also use a STATE_UPDATE source in this first shape:
 
@@ -926,7 +928,7 @@ Success response:
 
 Records are never returned as raw `EntityRecord`/`EntityValue` Prisma objects. `values` is keyed by `EntityField.key`.
 
-Clients can use `fieldIdHasValue=<fieldId>` with normal RECORDS queries and combine it with `sort=fieldId:<fieldId>&direction=desc` where a field-backed listing needs this generic filtering or ordering. Status/version consultation belongs to REPORT `CURRENT_STATUS`, not to an embedded RECORDS subview.
+Clients can use `fieldIdHasValue=<fieldId>` with normal RECORDS queries and combine it with `sort=fieldId:<fieldId>&direction=desc` where a field-backed listing needs this generic filtering or ordering. Latest-per-related-record consultation belongs to REPORT `LATEST_BY_RELATION` or its `CURRENT_STATUS` compatibility alias, not to an embedded RECORDS subview.
 
 `updatedAt` is an ISO 8601 UTC string generated by the server/database from `EntityRecord.updatedAt`, for example `2026-08-19T18:32:10.123Z`. It represents the last server-side modification of the record and can be used by clients as the remote version observed for optimistic offline conflict detection. It is observable only in this stage; record write endpoints do not yet enforce it as a server-side precondition.
 

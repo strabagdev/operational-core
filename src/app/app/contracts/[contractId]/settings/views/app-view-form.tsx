@@ -17,6 +17,7 @@ import type { AppViewActionState } from "./actions";
 
 type AppViewEntityTypeOption = {
   fields: Array<{
+    config?: unknown;
     id: string;
     isActive: boolean;
     key: string;
@@ -287,23 +288,63 @@ export function AppViewForm({
       ? initialValues.config.matrix.summaryFieldId ?? ""
       : ""),
   );
-  const initialCurrentStatus = initialValues?.config.type === "REPORT" && initialValues.config.presentationMode === "CURRENT_STATUS"
+  const initialCurrentStatus = initialValues?.config.type === "REPORT" &&
+    initialValues.config.presentationMode === "CURRENT_STATUS"
     ? initialValues.config.currentStatus
     : undefined;
+  const initialLatestByRelation = initialValues?.config.type === "REPORT" &&
+    initialValues.config.presentationMode === "LATEST_BY_RELATION"
+    ? initialValues.config.latestByRelation
+    : undefined;
+  const initialRelatedEntityTypeId = valueFromState(state, "latestByRelationRelatedEntityTypeId") ||
+    initialLatestByRelation?.relatedEntityTypeId ||
+    relatedEntityTypeIdFromRelation(reportEntityType, initialCurrentStatus?.relationFieldId ?? initialCurrentStatus?.subjectFieldId) ||
+    relationTargetEntityTypeIds(reportEntityType)[0] ||
+    entityTypes[0]?.id ||
+    "";
+  const initialCompatibleRelationFields = relationFieldsTargeting(reportEntityType, initialRelatedEntityTypeId);
   const [currentStatusSubjectFieldId, setCurrentStatusSubjectFieldId] = useState(
+    valueFromState(state, "latestByRelationRelationFieldId") ||
+    valueFromState(state, "currentStatusRelationFieldId") ||
     valueFromState(state, "currentStatusSubjectFieldId") ||
+    initialLatestByRelation?.relationFieldId ||
+    initialCurrentStatus?.relationFieldId ||
     initialCurrentStatus?.subjectFieldId ||
-    firstActiveFieldId(reportEntityType, "RELATION"),
+    (initialCompatibleRelationFields.length === 1 ? initialCompatibleRelationFields[0].id : ""),
   );
   const [currentStatusStateFieldId, setCurrentStatusStateFieldId] = useState(
+    valueFromState(state, "latestByRelationRequiredValueFieldId") ||
+    valueFromState(state, "currentStatusRequiredValueFieldId") ||
     valueFromState(state, "currentStatusStateFieldId") ||
+    initialLatestByRelation?.requiredValueFieldId ||
+    initialCurrentStatus?.requiredValueFieldId ||
     initialCurrentStatus?.stateFieldId ||
-    firstActiveFieldId(reportEntityType, "SELECT"),
+    "",
   );
   const [currentStatusDateFieldId, setCurrentStatusDateFieldId] = useState(
+    valueFromState(state, "latestByRelationOrderFieldId") ||
+    valueFromState(state, "currentStatusOrderFieldId") ||
     valueFromState(state, "currentStatusDateFieldId") ||
+    initialLatestByRelation?.orderFieldId ||
+    initialCurrentStatus?.orderFieldId ||
     initialCurrentStatus?.dateFieldId ||
     "",
+  );
+  const [latestByRelationRelatedEntityTypeId, setLatestByRelationRelatedEntityTypeId] = useState(initialRelatedEntityTypeId);
+  const [displayFieldIds, setDisplayFieldIds] = useState<string[]>(
+    valuesFromState(state, "displayFieldIds") ??
+      (initialLatestByRelation?.displayFieldIds?.length
+        ? initialLatestByRelation.displayFieldIds
+        : initialCurrentStatus?.displayFieldIds?.length
+        ? initialCurrentStatus.displayFieldIds
+        : [
+            initialLatestByRelation?.relationFieldId ??
+            initialCurrentStatus?.relationFieldId ?? initialCurrentStatus?.subjectFieldId ?? firstActiveFieldId(reportEntityType, "RELATION"),
+            initialLatestByRelation?.requiredValueFieldId ??
+            initialCurrentStatus?.requiredValueFieldId ?? initialCurrentStatus?.stateFieldId,
+            initialLatestByRelation?.orderFieldId ??
+            initialCurrentStatus?.orderFieldId ?? initialCurrentStatus?.dateFieldId,
+          ].filter((fieldId): fieldId is string => Boolean(fieldId))),
   );
   const reportValueDisplay = initialValues?.config.type === "REPORT"
     ? initialValues.config.valueDisplay
@@ -409,6 +450,7 @@ export function AppViewForm({
         dashboardEntityTypeIds={dashboardEntityTypeIds}
         defaultSortDirection={defaultSortDirection}
         defaultSortFieldId={defaultSortFieldId}
+        displayFieldIds={displayFieldIds}
         entityTypeId={entityTypeId}
         entityTypes={entityTypes}
         fieldErrors={state.fieldErrors}
@@ -416,7 +458,9 @@ export function AppViewForm({
         dateFieldId={dateFieldId}
         extraFieldIds={extraFieldIds}
         appViews={appViews}
+        latestByRelationRelatedEntityTypeId={latestByRelationRelatedEntityTypeId}
         setEntityTypeId={setEntityTypeId}
+        setLatestByRelationRelatedEntityTypeId={setLatestByRelationRelatedEntityTypeId}
         observationFieldId={observationFieldId}
         personFieldId={personFieldId}
         presentationMode={presentationMode}
@@ -457,6 +501,7 @@ export function AppViewForm({
         setCurrentStatusStateFieldId={setCurrentStatusStateFieldId}
         setCurrentStatusSubjectFieldId={setCurrentStatusSubjectFieldId}
         setDefaultCheckInOptionId={setDefaultCheckInOptionId}
+        setDisplayFieldIds={setDisplayFieldIds}
         setSourceEntityTypeId={setSourceEntityTypeId}
         setStateFieldIds={setStateFieldIds}
         setStatusFieldId={setStatusFieldId}
@@ -518,12 +563,14 @@ function ConfigFields({
   dateFieldId,
   defaultSortDirection,
   defaultSortFieldId,
+  displayFieldIds,
   entityTypeId,
   entityTypes,
   extraFieldIds,
   fieldErrors,
   groupByFieldKey,
   historyMode,
+  latestByRelationRelatedEntityTypeId,
   defaultCheckInOptionId,
   observationFieldId,
   personFieldId,
@@ -545,12 +592,14 @@ function ConfigFields({
   setCurrentStatusSubjectFieldId,
   setDateFieldId,
   setDefaultCheckInOptionId,
+  setDisplayFieldIds,
   setDefaultSortDirection,
   setDefaultSortFieldId,
   setEntityTypeId,
   setExtraFieldIds,
   setGroupByFieldKey,
   setHistoryMode,
+  setLatestByRelationRelatedEntityTypeId,
   setObservationFieldId,
   setPersonFieldId,
   setPresentationMode,
@@ -594,12 +643,14 @@ function ConfigFields({
   dateFieldId: string;
   defaultSortDirection: string;
   defaultSortFieldId: string;
+  displayFieldIds: string[];
   entityTypeId: string;
   entityTypes: AppViewEntityTypeOption[];
   extraFieldIds: Set<string>;
   fieldErrors?: Record<string, string[]>;
   groupByFieldKey: string;
   historyMode: string;
+  latestByRelationRelatedEntityTypeId: string;
   defaultCheckInOptionId: string;
   observationFieldId: string;
   personFieldId: string;
@@ -621,12 +672,14 @@ function ConfigFields({
   setCurrentStatusSubjectFieldId: (value: string) => void;
   setDateFieldId: (value: string) => void;
   setDefaultCheckInOptionId: (value: string) => void;
+  setDisplayFieldIds: (value: string[]) => void;
   setDefaultSortDirection: (value: string) => void;
   setDefaultSortFieldId: (value: string) => void;
   setEntityTypeId: (value: string) => void;
   setExtraFieldIds: (value: Set<string>) => void;
   setGroupByFieldKey: (value: string) => void;
   setHistoryMode: (value: string) => void;
+  setLatestByRelationRelatedEntityTypeId: (value: string) => void;
   setObservationFieldId: (value: string) => void;
   setPersonFieldId: (value: string) => void;
   setPresentationMode: (value: string) => void;
@@ -967,16 +1020,21 @@ function ConfigFields({
                 setReportColumnFieldId(nextDateFieldId);
                 setReportValueFieldId(firstActiveFieldId(nextEntityType, "SELECT"));
                 setReportSummaryFieldId("");
-                setCurrentStatusSubjectFieldId(firstActiveFieldId(nextEntityType, "RELATION"));
-                setCurrentStatusStateFieldId(firstActiveFieldId(nextEntityType, "SELECT"));
+                const nextRelatedEntityTypeId = relationTargetEntityTypeIds(nextEntityType)[0] || entityTypes[0]?.id || "";
+                const nextRelationFields = relationFieldsTargeting(nextEntityType, nextRelatedEntityTypeId);
+
+                setLatestByRelationRelatedEntityTypeId(nextRelatedEntityTypeId);
+                setCurrentStatusSubjectFieldId(nextRelationFields.length === 1 ? nextRelationFields[0].id : "");
+                setCurrentStatusStateFieldId("");
                 setCurrentStatusDateFieldId("");
+                setDisplayFieldIds((nextRelationFields.length === 1 ? [nextRelationFields[0].id] : []).filter(Boolean));
               }}
               options={entityTypes}
               value={entityTypeId}
               errors={fieldErrors?.entityTypeId}
             />
             <div className="grid gap-3 sm:grid-cols-2">
-              {presentationMode === "CURRENT_STATUS" ? null : (
+              {presentationMode === "CURRENT_STATUS" || presentationMode === "LATEST_BY_RELATION" ? null : (
                 <FieldSelect
                   fields={activeReportFields}
                   label="Campo de fecha"
@@ -994,14 +1052,17 @@ function ConfigFields({
                 options={[
                   { label: "Tabla", value: "TABLE" },
                   { label: "Matriz", value: "MATRIX" },
-                  { label: "Estado actual", value: "CURRENT_STATUS" },
+                  { label: "Último por relación", value: "LATEST_BY_RELATION" },
+                  ...(presentationMode === "CURRENT_STATUS"
+                    ? [{ label: "Estado actual (compatibilidad)", value: "CURRENT_STATUS" }]
+                    : []),
                 ]}
                 value={presentationMode}
               />
             </div>
           </>
         )}
-        {presentationMode === "CURRENT_STATUS" ? null : (
+        {presentationMode === "CURRENT_STATUS" || presentationMode === "LATEST_BY_RELATION" ? null : (
           <fieldset className="grid gap-3 rounded-md border border-border p-3">
             <legend className="px-1 text-sm font-medium">Filtro temporal</legend>
             <div className="grid gap-3 sm:grid-cols-2">
@@ -1069,43 +1130,68 @@ function ConfigFields({
               />
             </div>
           </div>
-        ) : presentationMode === "CURRENT_STATUS" ? (
+        ) : presentationMode === "CURRENT_STATUS" || presentationMode === "LATEST_BY_RELATION" ? (
           <div className="grid gap-3">
+            {presentationMode === "LATEST_BY_RELATION" ? (
+              <EntitySelect
+                label="Entidad relacionada"
+                name="latestByRelationRelatedEntityTypeId"
+                onChange={(value) => {
+                  const compatibleRelationFields = relationFieldsTargeting(reportEntityType, value);
+
+                  setLatestByRelationRelatedEntityTypeId(value);
+                  setCurrentStatusSubjectFieldId(compatibleRelationFields.length === 1 ? compatibleRelationFields[0].id : "");
+                }}
+                options={entityTypes}
+                value={latestByRelationRelatedEntityTypeId}
+                errors={fieldErrors?.latestByRelationRelatedEntityTypeId}
+              />
+            ) : null}
             <div className="grid gap-3 sm:grid-cols-3">
               <FieldSelect
                 allowedTypes={["RELATION"]}
-                fields={activeReportFields}
+                fields={presentationMode === "LATEST_BY_RELATION"
+                  ? relationFieldsTargeting(reportEntityType, latestByRelationRelatedEntityTypeId)
+                  : activeReportFields}
                 helpText="Campo que identifica el registro cuyo estado se mostrará"
-                includeEmpty
                 label="Registro relacionado"
-                name="currentStatusSubjectFieldId"
+                name={presentationMode === "LATEST_BY_RELATION" ? "latestByRelationRelationFieldId" : "currentStatusRelationFieldId"}
                 onChange={setCurrentStatusSubjectFieldId}
                 preferredType="RELATION"
                 value={currentStatusSubjectFieldId}
-                errors={fieldErrors?.currentStatusSubjectFieldId}
-              />
-              <FieldSelect
-                fields={activeReportFields}
-                label="Estado"
-                name="currentStatusStateFieldId"
-                onChange={setCurrentStatusStateFieldId}
-                preferredType="SELECT"
-                value={currentStatusStateFieldId}
-                errors={fieldErrors?.currentStatusStateFieldId}
+                errors={fieldErrors?.latestByRelationRelationFieldId ?? fieldErrors?.currentStatusRelationFieldId ?? fieldErrors?.currentStatusSubjectFieldId}
               />
               <FieldSelect
                 fields={activeReportFields}
                 includeEmpty
-                label="Fecha"
-                name="currentStatusDateFieldId"
+                label="Campo requerido"
+                name={presentationMode === "LATEST_BY_RELATION" ? "latestByRelationRequiredValueFieldId" : "currentStatusRequiredValueFieldId"}
+                onChange={setCurrentStatusStateFieldId}
+                preferredType="SELECT"
+                value={currentStatusStateFieldId}
+                errors={fieldErrors?.latestByRelationRequiredValueFieldId ?? fieldErrors?.currentStatusRequiredValueFieldId ?? fieldErrors?.currentStatusStateFieldId}
+              />
+              <FieldSelect
+                fields={sortableFields}
+                label="Orden"
+                name={presentationMode === "LATEST_BY_RELATION" ? "latestByRelationOrderFieldId" : "currentStatusOrderFieldId"}
                 onChange={setCurrentStatusDateFieldId}
                 preferredType="DATE"
                 value={currentStatusDateFieldId}
-                errors={fieldErrors?.currentStatusDateFieldId}
+                errors={fieldErrors?.latestByRelationOrderFieldId ?? fieldErrors?.currentStatusOrderFieldId ?? fieldErrors?.currentStatusDateFieldId}
+                includeEmpty={presentationMode !== "LATEST_BY_RELATION"}
               />
             </div>
+            <OrderedFieldChecklist
+              fields={activeReportFields}
+              label="Columnas visibles"
+              name="displayFieldIds"
+              selected={displayFieldIds}
+              setSelected={setDisplayFieldIds}
+            />
+            <FieldError errors={fieldErrors?.displayFieldIds} />
             <ReportValueDisplayFields
-              fields={reportSelectDisplayFields(activeReportFields, [currentStatusStateFieldId])}
+              fields={reportSelectDisplayFields(activeReportFields, displayFieldIds)}
               valueDisplay={reportValueDisplay}
             />
           </div>
@@ -1661,6 +1747,45 @@ function firstActiveFieldId(
   type: string,
 ) {
   return entityType?.fields.find((field) => field.isActive && field.type === type)?.id ?? "";
+}
+
+function relationFieldsTargeting(
+  entityType: AppViewEntityTypeOption | undefined,
+  relatedEntityTypeId: string,
+) {
+  return entityType?.fields.filter((field) =>
+    field.isActive &&
+    field.type === "RELATION" &&
+    relationTargetEntityTypeId(field.config) === relatedEntityTypeId,
+  ) ?? [];
+}
+
+function relationTargetEntityTypeIds(entityType: AppViewEntityTypeOption | undefined) {
+  return Array.from(new Set(
+    entityType?.fields
+      .filter((field) => field.isActive && field.type === "RELATION")
+      .map((field) => relationTargetEntityTypeId(field.config))
+      .filter((entityTypeId): entityTypeId is string => Boolean(entityTypeId)) ?? [],
+  ));
+}
+
+function relatedEntityTypeIdFromRelation(
+  entityType: AppViewEntityTypeOption | undefined,
+  relationFieldId: string | undefined,
+) {
+  const relationField = entityType?.fields.find((field) => field.id === relationFieldId && field.type === "RELATION");
+
+  return relationTargetEntityTypeId(relationField?.config);
+}
+
+function relationTargetEntityTypeId(config: unknown) {
+  if (!config || typeof config !== "object" || !("targetEntityTypeId" in config)) {
+    return "";
+  }
+
+  const targetEntityTypeId = (config as { targetEntityTypeId?: unknown }).targetEntityTypeId;
+
+  return typeof targetEntityTypeId === "string" ? targetEntityTypeId : "";
 }
 
 function firstActiveOptionId(field: AppViewEntityTypeOption["fields"][number] | undefined) {
