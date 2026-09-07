@@ -57,6 +57,14 @@ async function workbookFile(headers: string[], rows: unknown[][] = [], name = "p
   });
 }
 
+async function excelFileFromWorkbook(workbook: ExcelJS.Workbook, name = "plantilla.xlsx") {
+  const buffer = await workbook.xlsx.writeBuffer();
+
+  return new File([buffer], name, {
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  });
+}
+
 function toComparableValues(values: ReturnType<typeof validateRecordValues>) {
   return values.map((value) => ({
     fieldId: value.fieldId,
@@ -198,6 +206,49 @@ describe("entity import template", () => {
     expect(workbook.worksheets[0].views[0]).toMatchObject({ state: "frozen", ySplit: 1 });
     expect(templateFileName("Personas Demo")).toBe("personas_demo_plantilla.xlsx");
   });
+
+  it("round-trips a generated template through the import parser", async () => {
+    const fields = [
+      field({ id: "name", name: "Nombre" }),
+      field({ id: "email", name: "Correo", type: "EMAIL" }),
+    ];
+    const buffer = await generateEntityTemplate({
+      entityName: "Personas",
+      fields,
+    });
+    const file = new File([buffer], "personas_plantilla.xlsx", {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    });
+
+    await expect(parseExcelRows({ fields, file })).resolves.toEqual([]);
+  });
+
+  it("parses data added to a generated template", async () => {
+    const fields = [
+      field({ id: "name", name: "Nombre" }),
+      field({ id: "email", name: "Correo", type: "EMAIL" }),
+    ];
+    const buffer = await generateEntityTemplate({
+      entityName: "Personas",
+      fields,
+    });
+    const workbook = new ExcelJS.Workbook();
+
+    await workbook.xlsx.load(buffer);
+    workbook.worksheets[0].addRow(["Ana", "ana@example.com"]);
+
+    const rows = await parseExcelRows({
+      fields,
+      file: await excelFileFromWorkbook(workbook),
+    });
+    const result = await validateImportRows({ fields, rows });
+
+    expect(result.errors).toEqual([]);
+    expect(result.validRows[0].values).toMatchObject([
+      { fieldId: "name", textValue: "Ana" },
+      { fieldId: "email", textValue: "ana@example.com" },
+    ]);
+  });
 });
 
 describe("entity import structure and values", () => {
@@ -219,6 +270,71 @@ describe("entity import structure and values", () => {
     await expect(parseExcelRows({ fields, file: await workbookFile(["", "Correo"]) })).rejects.toThrow(
       EntityImportUserError,
     );
+  });
+
+  it("reports missing headers with the worksheet that was read", async () => {
+    const fields = [field({ id: "name", name: "Nombre" }), field({ id: "email", name: "Correo" })];
+
+    await expect(
+      parseExcelRows({ fields, file: await workbookFile(["Nombre"]) }),
+    ).rejects.toThrow(
+      'La estructura del archivo no coincide con los campos actuales de esta entidad. Descarga una nueva plantilla e inténtalo nuevamente. Hoja utilizada: "Plantilla". Columnas faltantes: Correo.',
+    );
+  });
+
+  it("reports extra headers with the worksheet that was read", async () => {
+    const fields = [field({ id: "name", name: "Nombre" })];
+
+    await expect(
+      parseExcelRows({ fields, file: await workbookFile(["Nombre", "Otro"]) }),
+    ).rejects.toThrow(
+      'La estructura del archivo no coincide con los campos actuales de esta entidad. Descarga una nueva plantilla e inténtalo nuevamente. Hoja utilizada: "Plantilla". Columnas extra: Otro.',
+    );
+  });
+
+  it("reports incorrect header order with the expected order", async () => {
+    const fields = [field({ id: "name", name: "Nombre" }), field({ id: "email", name: "Correo" })];
+
+    await expect(
+      parseExcelRows({ fields, file: await workbookFile(["Correo", "Nombre"]) }),
+    ).rejects.toThrow(
+      'La estructura del archivo no coincide con los campos actuales de esta entidad. Descarga una nueva plantilla e inténtalo nuevamente. Hoja utilizada: "Plantilla". Orden esperado: Nombre, Correo.',
+    );
+  });
+
+  it("reports duplicate headers with the worksheet that was read", async () => {
+    const fields = [field({ id: "name", name: "Nombre" }), field({ id: "email", name: "Correo" })];
+
+    await expect(
+      parseExcelRows({ fields, file: await workbookFile(["Nombre", "Nombre"]) }),
+    ).rejects.toThrow(
+      'La estructura del archivo no coincide con los campos actuales de esta entidad. Descarga una nueva plantilla e inténtalo nuevamente. Hoja utilizada: "Plantilla". Headers duplicados: Nombre. Columnas faltantes: Correo.',
+    );
+  });
+
+  it("uses the first worksheet whose headers match the expected structure", async () => {
+    const fields = [field({ id: "name", name: "Nombre" }), field({ id: "email", name: "Correo" })];
+    const workbook = new ExcelJS.Workbook();
+
+    workbook.addWorksheet("Instrucciones").addRow(["Ignorar"]);
+    const validSheet = workbook.addWorksheet("Plantilla");
+    validSheet.addRow(["Nombre", "Correo"]);
+    validSheet.addRow(["Ana", "ana@example.com"]);
+
+    const rows = await parseExcelRows({
+      fields,
+      file: await excelFileFromWorkbook(workbook),
+    });
+
+    expect(rows).toEqual([
+      expect.objectContaining({
+        rowNumber: 2,
+        valuesByHeader: new Map([
+          ["Nombre", "Ana"],
+          ["Correo", "ana@example.com"],
+        ]),
+      }),
+    ]);
   });
 
   it("ignores empty rows and enforces row limits through parsed rows", async () => {
@@ -303,7 +419,7 @@ describe("entity import structure and values", () => {
     });
 
     await expect(parseExcelRows({ fields: [field()], file })).rejects.toThrow(
-      "No fue posible leer el archivo. Verifica que sea una plantilla Excel válida.",
+      "La celda A3 contiene una fórmula o valor no compatible. Convierte la celda a valor antes de importar.",
     );
   });
 
@@ -910,6 +1026,16 @@ describe("entity import structure and values", () => {
 
     await expect(parseExcelRows({ fields: [field()], file })).rejects.toThrow(
       "Selecciona una plantilla Excel descargada desde esta entidad.",
+    );
+  });
+
+  it("rejects unreadable xlsx files with a specific invalid Excel message", async () => {
+    const file = new File(["not excel"], "plantilla.xlsx", {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    });
+
+    await expect(parseExcelRows({ fields: [field()], file })).rejects.toThrow(
+      "El archivo no es un Excel .xlsx válido o está dañado.",
     );
   });
 });

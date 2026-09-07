@@ -53,6 +53,7 @@ export const importableFieldTypes = new Set<EntityFieldType>([
 
 const structureErrorMessage =
   "La estructura del archivo no coincide con los campos actuales de esta entidad. Descarga una nueva plantilla e inténtalo nuevamente.";
+const invalidExcelFileMessage = "El archivo no es un Excel .xlsx válido o está dañado.";
 type ImportField = EntityField & {
   options: Array<{
     id: string;
@@ -616,20 +617,19 @@ export async function parseExcelRows({
     const buffer = Buffer.from(await file.arrayBuffer());
     await workbook.xlsx.load(buffer as unknown as Parameters<typeof workbook.xlsx.load>[0]);
   } catch {
-    throw new EntityImportUserError(
-      "No fue posible leer el archivo. Verifica que sea una plantilla Excel válida.",
-    );
+    throw new EntityImportUserError(invalidExcelFileMessage);
   }
 
-  const worksheet = workbook.worksheets[0];
+  const selection = selectImportWorksheet(workbook, fields);
+  const worksheet = selection.worksheet;
 
   if (!worksheet) {
-    throw new EntityImportUserError(structureErrorMessage);
+    throw new EntityImportUserError(selection.errorMessage);
   }
 
   const headerRow = worksheet.getRow(1);
   const headers = rowValues(headerRow).map(cellToHeader);
-  const hasRecordId = validateHeaders(headers, fields);
+  const hasRecordId = validateHeaders(headers, fields, worksheet.name);
   const fieldHeaders = hasRecordId ? headers.slice(1) : headers;
 
   const rows: ParsedImportRow[] = [];
@@ -658,6 +658,32 @@ export async function parseExcelRows({
   }
 
   return rows;
+}
+
+function selectImportWorksheet(workbook: ExcelJS.Workbook, fields: ImportField[]) {
+  if (workbook.worksheets.length === 0) {
+    return {
+      worksheet: null,
+      errorMessage: buildStructureErrorMessage([], fields, null),
+    };
+  }
+
+  for (const worksheet of workbook.worksheets) {
+    const headers = rowValues(worksheet.getRow(1)).map(cellToHeader);
+    const validation = getHeaderValidation(headers, fields);
+
+    if (validation.valid) {
+      return { worksheet, errorMessage: null };
+    }
+  }
+
+  const firstWorksheet = workbook.worksheets[0];
+  const headers = rowValues(firstWorksheet.getRow(1)).map(cellToHeader);
+
+  return {
+    worksheet: null,
+    errorMessage: buildStructureErrorMessage(headers, fields, firstWorksheet.name),
+  };
 }
 
 export type ExistingUniqueValuesProvider = (field: ImportField) => Promise<Map<string, string> | Set<string>>;
@@ -1112,29 +1138,89 @@ function assertExcelFile(file: File) {
   }
 }
 
-function validateHeaders(headers: string[], fields: ImportField[]) {
+function validateHeaders(headers: string[], fields: ImportField[], worksheetName?: string) {
+  const validation = getHeaderValidation(headers, fields);
+
+  if (!validation.valid) {
+    throw new EntityImportUserError(buildStructureErrorMessage(headers, fields, worksheetName ?? null));
+  }
+
+  return validation.hasRecordId;
+}
+
+function getHeaderValidation(headers: string[], fields: ImportField[]) {
   const expectedHeaders = fields.map((field) => field.name);
   const hasRecordId = headers[0] === RECORD_ID_HEADER;
   const comparableHeaders = hasRecordId ? headers.slice(1) : headers;
 
   if (headers.length === 0 || headers.some((header) => !header)) {
-    throw new EntityImportUserError(structureErrorMessage);
+    return { valid: false, hasRecordId };
   }
 
   const duplicateHeaders = headers.filter((header, index) => headers.indexOf(header) !== index);
 
   if (duplicateHeaders.length > 0) {
-    throw new EntityImportUserError(structureErrorMessage);
+    return { valid: false, hasRecordId };
   }
 
   if (
     comparableHeaders.length !== expectedHeaders.length ||
     comparableHeaders.some((header, index) => header !== expectedHeaders[index])
   ) {
-    throw new EntityImportUserError(structureErrorMessage);
+    return { valid: false, hasRecordId };
   }
 
-  return hasRecordId;
+  return { valid: true, hasRecordId };
+}
+
+function buildStructureErrorMessage(headers: string[], fields: ImportField[], worksheetName: string | null) {
+  const expectedHeaders = fields.map((field) => field.name);
+  const hasRecordId = headers[0] === RECORD_ID_HEADER;
+  const comparableHeaders = hasRecordId ? headers.slice(1) : headers;
+  const details: string[] = [];
+
+  details.push(worksheetName ? `Hoja utilizada: "${worksheetName}".` : "No se encontró una hoja para importar.");
+
+  if (headers.length === 0) {
+    details.push("La fila 1 no tiene encabezados.");
+  }
+
+  if (headers.some((header) => !header)) {
+    details.push("Hay encabezados vacíos.");
+  }
+
+  const duplicateHeaders = Array.from(new Set(headers.filter((header, index) => header && headers.indexOf(header) !== index)));
+
+  if (duplicateHeaders.length > 0) {
+    details.push(`Headers duplicados: ${duplicateHeaders.join(", ")}.`);
+  }
+
+  const missingHeaders = expectedHeaders.filter((header) => !comparableHeaders.includes(header));
+  const extraHeaders = comparableHeaders.filter((header) => header && !expectedHeaders.includes(header));
+
+  if (missingHeaders.length > 0) {
+    details.push(`Columnas faltantes: ${missingHeaders.join(", ")}.`);
+  }
+
+  if (extraHeaders.length > 0) {
+    details.push(`Columnas extra: ${extraHeaders.join(", ")}.`);
+  }
+
+  const sameHeaderSet =
+    missingHeaders.length === 0 &&
+    extraHeaders.length === 0 &&
+    comparableHeaders.length === expectedHeaders.length;
+  const wrongOrder = sameHeaderSet && comparableHeaders.some((header, index) => header !== expectedHeaders[index]);
+
+  if (wrongOrder) {
+    details.push(`Orden esperado: ${expectedHeaders.join(", ")}.`);
+  }
+
+  if (headers.includes(RECORD_ID_HEADER) && !hasRecordId) {
+    details.push(`${RECORD_ID_HEADER} solo puede estar en la primera columna.`);
+  }
+
+  return `${structureErrorMessage} ${details.join(" ")}`;
 }
 
 function rowValues(row: ExcelJS.Row) {
@@ -1169,7 +1255,7 @@ function importRowValues({
 
 function cellToImportValueFromCell(cell: ExcelJS.Cell, preserveText: boolean): unknown {
   if (!preserveText) {
-    return cellToImportValue(cell.value);
+    return cellToImportValue(cell.value, cell.address);
   }
 
   return textCellToImportValue(cell);
@@ -1190,11 +1276,11 @@ function textCellToImportValue(cell: ExcelJS.Cell) {
     const record = value as { formula?: unknown; result?: unknown; text?: string; richText?: Array<{ text?: string }> };
 
     if (record.formula !== undefined) {
-      return cellToImportValue(value);
+      return cellToImportValue(value, cell.address);
     }
 
     if (record.text !== undefined || Array.isArray(record.richText)) {
-      return cellToImportValue(value);
+      return cellToImportValue(value, cell.address);
     }
   }
 
@@ -1202,7 +1288,7 @@ function textCellToImportValue(cell: ExcelJS.Cell) {
     return formatNumericTextCell(value, cell.numFmt) ?? cell.text;
   }
 
-  return cell.text || cellToImportValue(value);
+  return cell.text || cellToImportValue(value, cell.address);
 }
 
 function formatNumericTextCell(value: number, numFmt?: string) {
@@ -1257,7 +1343,7 @@ function formatStationNumber(
   return `${sign}${String(left).padStart(leftDigits, "0")}+${String(right).padStart(rightDigits, "0")}${decimal}`;
 }
 
-function cellToImportValue(value: unknown): unknown {
+function cellToImportValue(value: unknown, cellReference?: string): unknown {
   if (value === null || value === undefined) {
     return "";
   }
@@ -1270,7 +1356,7 @@ function cellToImportValue(value: unknown): unknown {
     const record = value as { result?: unknown; text?: string; richText?: Array<{ text?: string }> };
 
     if (record.result !== undefined) {
-      return cellToImportValue(record.result);
+      return cellToImportValue(record.result, cellReference);
     }
 
     if (record.text !== undefined) {
@@ -1281,12 +1367,16 @@ function cellToImportValue(value: unknown): unknown {
       return record.richText.map((item) => item.text ?? "").join("");
     }
 
-    throw new EntityImportUserError(
-      "No fue posible leer el archivo. Verifica que sea una plantilla Excel válida.",
-    );
+    throw new EntityImportUserError(unsupportedCellValueMessage(cellReference));
   }
 
   return String(value);
+}
+
+function unsupportedCellValueMessage(cellReference?: string) {
+  const reference = cellReference ? ` ${cellReference}` : "";
+
+  return `La celda${reference} contiene una fórmula o valor no compatible. Convierte la celda a valor antes de importar.`;
 }
 
 function isBlankCellValue(value: unknown) {
