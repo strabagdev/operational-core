@@ -151,6 +151,70 @@ describe("AppView config validation", () => {
     ).rejects.toThrow("La vista referencia una entidad que no pertenece a este contrato.");
   });
 
+  it("creates a RECORDS view with a versioning status subview", async () => {
+    entityTypeFindFirst.mockResolvedValueOnce(entityType({
+      fields: [
+        { id: "status_field", isActive: true, key: "estado", multiple: false, name: "Estado", type: "SELECT" },
+        { id: "date_field", isActive: true, key: "fecha", multiple: false, name: "Fecha", type: "DATE" },
+      ],
+    }) as never);
+
+    await createAppView(
+      "contract_1",
+      "user_1",
+      getAppViewInput(formData({
+        statusSubviewTemplate: "versioning",
+        statusSubviewStateFieldId: "status_field",
+        statusSubviewDateFieldId: "date_field",
+      })),
+    );
+
+    expect(appViewCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        config: {
+          entityTypeId: "entity_1",
+          statusSubview: {
+            template: "versioning",
+            stateFieldId: "status_field",
+            dateFieldId: "date_field",
+          },
+        },
+        type: "RECORDS",
+      }),
+    }));
+  });
+
+  it("rejects a RECORDS status subview without a state field", async () => {
+    await expect(
+      createAppView(
+        "contract_1",
+        "user_1",
+        getAppViewInput(formData({ statusSubviewTemplate: "versioning" })),
+      ),
+    ).rejects.toThrow("Selecciona el campo de estado.");
+  });
+
+  it("rejects a RECORDS status subview date field that is not DATE", async () => {
+    entityTypeFindFirst.mockResolvedValueOnce(entityType({
+      fields: [
+        { id: "status_field", isActive: true, key: "estado", multiple: false, name: "Estado", type: "SELECT" },
+        { id: "text_date_field", isActive: true, key: "fecha_texto", multiple: false, name: "Fecha texto", type: "TEXT" },
+      ],
+    }) as never);
+
+    await expect(
+      createAppView(
+        "contract_1",
+        "user_1",
+        getAppViewInput(formData({
+          statusSubviewTemplate: "versioning",
+          statusSubviewStateFieldId: "status_field",
+          statusSubviewDateFieldId: "text_date_field",
+        })),
+      ),
+    ).rejects.toThrow("El campo de fecha debe ser de tipo fecha.");
+  });
+
   it("creates a valid WORKFLOW view", async () => {
     entityTypeFindFirst
       .mockResolvedValueOnce(entityType({ id: "people" }) as never)
@@ -1311,6 +1375,24 @@ describe("AppView administration", () => {
       config: { entityTypeId: "entity_1" },
       type: "RECORDS",
     } as never)).toEqual({ entityTypeId: "entity_1", type: "RECORDS" });
+
+    expect(parseAppViewConfig({
+      config: {
+        entityTypeId: "entity_1",
+        statusSubview: {
+          template: "versioning",
+          stateFieldId: "status_field",
+        },
+      },
+      type: "RECORDS",
+    } as never)).toEqual({
+      entityTypeId: "entity_1",
+      statusSubview: {
+        template: "versioning",
+        stateFieldId: "status_field",
+      },
+      type: "RECORDS",
+    });
 
     expect(parseAppViewConfig({
       config: {

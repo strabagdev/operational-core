@@ -15,6 +15,7 @@ export const apiRecordMaxPageSize = 100;
 
 export type ApiRecordListQuery = {
   direction?: "asc" | "desc";
+  fieldIdHasValue?: string;
   page: number;
   pageSize: number;
   search?: string;
@@ -151,8 +152,20 @@ export function parseApiRecordListQuery(
     return {
       ok: false,
       response: badRequest(
-        "sort debe ser displayName, updatedAt o field:<fieldKey>.",
+        "sort debe ser displayName, updatedAt, field:<fieldKey> o fieldId:<fieldId>.",
         "INVALID_SORT",
+      ),
+    };
+  }
+
+  const fieldIdHasValue = searchParams.get("fieldIdHasValue")?.trim() || undefined;
+
+  if (fieldIdHasValue && !fields.some((field) => field.id === fieldIdHasValue)) {
+    return {
+      ok: false,
+      response: badRequest(
+        "fieldIdHasValue debe referenciar un campo activo de la entidad.",
+        "INVALID_FIELD_FILTER",
       ),
     };
   }
@@ -163,6 +176,7 @@ export function parseApiRecordListQuery(
     ok: true,
     query: {
       direction,
+      fieldIdHasValue,
       page,
       pageSize,
       search,
@@ -214,6 +228,21 @@ function parseApiRecordSort(
     return { ok: true, sort: { direction, key: `field:${field.id}` } };
   }
 
+  if (sort.startsWith("fieldId:")) {
+    const fieldId = sort.slice("fieldId:".length);
+    const field = fields.find((item) => item.id === fieldId);
+
+    if (!field || !resolveEntityRecordSort({
+      fields,
+      listFields: fields,
+      sortKey: `field:${field.id}`,
+    }).explicit) {
+      return { ok: false };
+    }
+
+    return { ok: true, sort: { direction, key: `field:${field.id}` } };
+  }
+
   return { ok: false };
 }
 
@@ -229,12 +258,14 @@ export async function getApiEntityRecords({
     entityTypeId: entityType.id,
     fields: orderedFields,
     query: query.search,
+    requiredValueFieldId: query.fieldIdHasValue,
   });
   const totalRecords = await prisma.entityRecord.count({ where: recordWhere });
   const skip = (query.page - 1) * query.pageSize;
   const sort = query.sort
     ? resolveEntityRecordSort({
         fields: orderedFields,
+        listFields: orderedFields,
         sortKey: query.sort.key,
         direction: query.sort.direction,
       })
@@ -242,7 +273,9 @@ export async function getApiEntityRecords({
   const sortedIds = await getEntityRecordIdsForSort({
     entityTypeId: entityType.id,
     fields: orderedFields,
+    listFields: orderedFields,
     query: query.search,
+    requiredValueFieldId: query.fieldIdHasValue,
     sort: {
       direction: sort.direction,
       key: sort.key,

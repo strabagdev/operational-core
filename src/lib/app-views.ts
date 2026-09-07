@@ -50,7 +50,15 @@ export const appViewCommonSchema = z.object({
 });
 
 export type AppViewConfig =
-  | { type: "RECORDS"; entityTypeId: string }
+  | {
+      type: "RECORDS";
+      entityTypeId: string;
+      statusSubview?: {
+        template: "versioning";
+        stateFieldId: string;
+        dateFieldId?: string;
+      };
+    }
   | AttendanceWorkflowConfig
   | StateUpdateWorkflowConfig
   | ReportAppViewConfig
@@ -211,6 +219,9 @@ export function getAppViewInput(formData: FormData) {
           .map(([key, value]) => [key.slice("stateFieldDefaultOptionId:".length), value]),
       ),
       statusFieldId: formData.get("statusFieldId"),
+      statusSubviewDateFieldId: formData.get("statusSubviewDateFieldId"),
+      statusSubviewStateFieldId: formData.get("statusSubviewStateFieldId"),
+      statusSubviewTemplate: formData.get("statusSubviewTemplate"),
       subjectFieldId: formData.get("subjectFieldId"),
       targetEntityTypeId: formData.get("targetEntityTypeId"),
       uniquenessMode: formData.get("uniquenessMode"),
@@ -387,7 +398,7 @@ export function parseAppViewConfig(view: Pick<AppView, "config" | "type">): AppV
   const raw = config as Record<string, unknown>;
 
   if (view.type === "RECORDS") {
-    return { type: "RECORDS", ...recordsConfigInputSchema.parse(raw) };
+    return { type: "RECORDS", ...parseRecordsConfigInput(raw) };
   }
 
   if (view.type === "WORKFLOW") {
@@ -506,10 +517,18 @@ async function validateAppViewConfig({
   client?: PrismaClientLike;
 }): Promise<AppViewConfig> {
   if (type === "RECORDS") {
-    const config = recordsConfigInputSchema.parse(rawConfig);
-    await requireEntityType(client, contractId, config.entityTypeId);
+    const config = parseRecordsConfigInput(rawConfig);
+    const entityType = await requireEntityType(client, contractId, config.entityTypeId);
+    validateRecordsAppViewFields({
+      config,
+      fields: entityType.fields,
+    });
 
-    return { type, entityTypeId: config.entityTypeId };
+    return {
+      type,
+      entityTypeId: config.entityTypeId,
+      ...(config.statusSubview ? { statusSubview: config.statusSubview } : {}),
+    };
   }
 
   if (type === "WORKFLOW") {
@@ -673,6 +692,17 @@ async function validateAppViewConfig({
 
 const recordsConfigInputSchema = z.object({
   entityTypeId: z.string().trim().min(1, "Selecciona una entidad."),
+  statusSubview: z.object({
+    template: z.literal("versioning"),
+    stateFieldId: z.preprocess(
+      (value) => value === null || value === undefined ? "" : value,
+      z.string().trim().min(1, "Selecciona el campo de estado."),
+    ),
+    dateFieldId: z.preprocess(
+      (value) => value === null ? undefined : value,
+      z.string().trim().optional().transform((value) => value || undefined),
+    ),
+  }).optional(),
 });
 
 const reportCommonConfigInputSchema = z.object({
@@ -785,6 +815,73 @@ const boardConfigInputSchema = z.object({
 const dashboardConfigInputSchema = z.object({
   entityTypeIds: z.array(z.string().trim().min(1)).min(1, "Selecciona al menos una entidad."),
 });
+
+function parseRecordsConfigInput(rawConfig: unknown) {
+  if (!rawConfig || typeof rawConfig !== "object" || Array.isArray(rawConfig)) {
+    return recordsConfigInputSchema.parse(rawConfig);
+  }
+
+  const raw = rawConfig as Record<string, unknown>;
+  const storedSubview = isRecord(raw.statusSubview) ? raw.statusSubview : undefined;
+  const submittedTemplate = raw.statusSubviewTemplate;
+  const submittedStateFieldId = raw.statusSubviewStateFieldId;
+  const submittedDateFieldId = raw.statusSubviewDateFieldId;
+  const hasSubmittedSubview = submittedTemplate === "versioning" || Boolean(submittedStateFieldId);
+  const statusSubview = hasSubmittedSubview
+    ? {
+        template: "versioning",
+        stateFieldId: submittedStateFieldId,
+        dateFieldId: submittedDateFieldId,
+      }
+    : storedSubview;
+
+  return recordsConfigInputSchema.parse({
+    entityTypeId: raw.entityTypeId,
+    ...(statusSubview ? { statusSubview } : {}),
+  });
+}
+
+const recordsStatusSubviewStateFieldTypes = new Set([
+  "SELECT",
+  "TEXT",
+  "TEXTAREA",
+  "INTEGER",
+  "DECIMAL",
+  "MONEY",
+  "BOOLEAN",
+  "DATE",
+]);
+
+function validateRecordsAppViewFields({
+  config,
+  fields,
+}: {
+  config: z.infer<typeof recordsConfigInputSchema>;
+  fields: Array<{
+    id: string;
+    isActive: boolean;
+    name: string;
+    type: string;
+  }>;
+}) {
+  if (!config.statusSubview) {
+    return;
+  }
+
+  const stateField = requireActiveTargetField(fields, config.statusSubview.stateFieldId, "Estado");
+
+  if (!recordsStatusSubviewStateFieldTypes.has(stateField.type)) {
+    throw new AppViewConfigError("El campo de estado no es compatible.", "statusSubviewStateFieldId");
+  }
+
+  if (config.statusSubview.dateFieldId) {
+    const dateField = requireActiveTargetField(fields, config.statusSubview.dateFieldId, "Fecha");
+
+    if (dateField.type !== "DATE") {
+      throw new AppViewConfigError("El campo de fecha debe ser de tipo fecha.", "statusSubviewDateFieldId");
+    }
+  }
+}
 
 async function requireEntityType(
   client: PrismaClientLike,

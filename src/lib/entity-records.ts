@@ -363,12 +363,14 @@ export async function getEntityRecordIdsForSort({
   fields,
   listFields,
   query,
+  requiredValueFieldId,
   sort,
 }: {
   entityTypeId: string;
   fields: FieldWithOptions[];
   listFields?: FieldWithOptions[];
   query?: string;
+  requiredValueFieldId?: string;
   sort?: {
     key?: string;
     direction?: string;
@@ -388,6 +390,7 @@ export async function getEntityRecordIdsForSort({
         fields,
         field: resolvedSort.field,
         query,
+        requiredValueFieldId,
         skip: 0,
         direction: resolvedSort.direction,
       }),
@@ -396,7 +399,7 @@ export async function getEntityRecordIdsForSort({
   }
 
   const records = await prisma.entityRecord.findMany({
-    where: buildEntityRecordSearchWhere({ entityTypeId, fields, query }),
+    where: buildEntityRecordSearchWhere({ entityTypeId, fields, query, requiredValueFieldId }),
     select: { id: true },
     orderBy: entityRecordOrderBy(resolvedSort),
   });
@@ -426,6 +429,7 @@ async function findRecordsSortedByField({
   include,
   pageSize,
   query,
+  requiredValueFieldId,
   skip,
   sort,
 }: {
@@ -435,6 +439,7 @@ async function findRecordsSortedByField({
   include: ReturnType<typeof entityRecordListInclude>;
   pageSize: number;
   query?: string;
+  requiredValueFieldId?: string;
   skip: number;
   sort: ResolvedEntityRecordSort;
 }) {
@@ -444,6 +449,7 @@ async function findRecordsSortedByField({
     field,
     pageSize,
     query,
+    requiredValueFieldId,
     skip,
     direction: sort.direction,
   });
@@ -472,6 +478,7 @@ async function getSortedRecordIdsByField({
   field,
   pageSize,
   query,
+  requiredValueFieldId,
   skip,
   direction,
 }: {
@@ -480,6 +487,7 @@ async function getSortedRecordIdsByField({
   field: FieldWithOptions;
   pageSize?: number;
   query?: string;
+  requiredValueFieldId?: string;
   skip: number;
   direction: EntityRecordSortDirection;
 }) {
@@ -495,6 +503,7 @@ async function getSortedRecordIdsByField({
         AND v."entityFieldId" = ${field.id}
       WHERE r."entityTypeId" = ${entityTypeId}
       ${entityRecordSearchSql({ entityTypeId, fields, query })}
+      ${entityRecordFieldHasValueSql(requiredValueFieldId)}
       ORDER BY
         (${valueExpression} IS NULL) ASC,
         ${valueExpression} ${directionSql},
@@ -620,14 +629,19 @@ export function buildEntityRecordSearchWhere({
   entityTypeId,
   fields,
   query,
+  requiredValueFieldId,
 }: {
   entityTypeId: string;
   fields: FieldWithOptions[];
   query?: string;
+  requiredValueFieldId?: string;
 }): Prisma.EntityRecordWhereInput {
   const normalizedQuery = query?.trim();
   const baseWhere: Prisma.EntityRecordWhereInput = {
     entityTypeId,
+    ...(requiredValueFieldId
+      ? { AND: [entityRecordFieldHasValueWhere(requiredValueFieldId)] }
+      : {}),
   };
 
   if (!normalizedQuery) {
@@ -711,6 +725,52 @@ export function buildEntityRecordSearchWhere({
     ...baseWhere,
     OR: orConditions,
   };
+}
+
+function entityRecordFieldHasValueWhere(fieldId: string): Prisma.EntityRecordWhereInput {
+  return {
+    values: {
+      some: {
+        entityFieldId: fieldId,
+        OR: [
+          {
+            AND: [
+              { textValue: { not: null } },
+              { textValue: { not: "" } },
+            ],
+          },
+          { integerValue: { not: null } },
+          { decimalValue: { not: null } },
+          { booleanValue: { not: null } },
+          { dateValue: { not: null } },
+          { jsonValue: { not: Prisma.JsonNull } },
+        ],
+      },
+    },
+  };
+}
+
+function entityRecordFieldHasValueSql(fieldId?: string) {
+  if (!fieldId) {
+    return Prisma.empty;
+  }
+
+  return Prisma.sql`
+    AND EXISTS (
+      SELECT 1
+      FROM "EntityValue" fv
+      WHERE fv."entityRecordId" = r."id"
+        AND fv."entityFieldId" = ${fieldId}
+        AND (
+          NULLIF(fv."textValue", '') IS NOT NULL
+          OR fv."integerValue" IS NOT NULL
+          OR fv."decimalValue" IS NOT NULL
+          OR fv."booleanValue" IS NOT NULL
+          OR fv."dateValue" IS NOT NULL
+          OR fv."jsonValue" IS NOT NULL
+        )
+    )
+  `;
 }
 
 function searchableRelationFieldIds(fields: FieldWithOptions[], entityTypeId: string) {

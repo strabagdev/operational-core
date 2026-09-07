@@ -299,6 +299,23 @@ export function AppViewForm({
     ? initialValues.config.groupByFieldKey
     : activeBoardFields[0]?.key ?? "";
   const [groupByFieldKey, setGroupByFieldKey] = useState(initialBoardFieldKey);
+  const recordsEntityType = entityTypes.find((item) => item.id === entityTypeId);
+  const initialStatusSubview = initialValues?.config.type === "RECORDS"
+    ? initialValues.config.statusSubview
+    : undefined;
+  const [statusSubviewEnabled, setStatusSubviewEnabled] = useState(
+    Boolean(initialStatusSubview) || valueFromState(state, "statusSubviewTemplate") === "versioning",
+  );
+  const [statusSubviewStateFieldId, setStatusSubviewStateFieldId] = useState(
+    valueFromState(state, "statusSubviewStateFieldId") ||
+    initialStatusSubview?.stateFieldId ||
+    firstActiveFieldId(recordsEntityType, "SELECT"),
+  );
+  const [statusSubviewDateFieldId, setStatusSubviewDateFieldId] = useState(
+    valueFromState(state, "statusSubviewDateFieldId") ||
+    initialStatusSubview?.dateFieldId ||
+    "",
+  );
 
   function toggleDashboardEntity(entityTypeId: string, checked: boolean) {
     const next = new Set(dashboardEntityTypeIds);
@@ -433,6 +450,9 @@ export function AppViewForm({
         setReportSourceMode={setReportSourceMode}
         setReportSummaryFieldId={setReportSummaryFieldId}
         setReportValueFieldId={setReportValueFieldId}
+        setStatusSubviewDateFieldId={setStatusSubviewDateFieldId}
+        setStatusSubviewEnabled={setStatusSubviewEnabled}
+        setStatusSubviewStateFieldId={setStatusSubviewStateFieldId}
         setDefaultCheckInOptionId={setDefaultCheckInOptionId}
         setSourceEntityTypeId={setSourceEntityTypeId}
         setStateFieldIds={setStateFieldIds}
@@ -446,6 +466,9 @@ export function AppViewForm({
         stateFieldIds={stateFieldIds}
         stateUpdateAppViewId={stateUpdateAppViewId}
         statusFieldId={statusFieldId}
+        statusSubviewDateFieldId={statusSubviewDateFieldId}
+        statusSubviewEnabled={statusSubviewEnabled}
+        statusSubviewStateFieldId={statusSubviewStateFieldId}
         targetEntityTypeId={targetEntityTypeId}
         toggleDashboardEntity={toggleDashboardEntity}
         type={type}
@@ -534,6 +557,9 @@ function ConfigFields({
   setReportSourceMode,
   setReportSummaryFieldId,
   setReportValueFieldId,
+  setStatusSubviewDateFieldId,
+  setStatusSubviewEnabled,
+  setStatusSubviewStateFieldId,
   setSourceEntityTypeId,
   setStateFieldIds,
   setStateUpdateAppViewId,
@@ -546,6 +572,9 @@ function ConfigFields({
   stateFieldIds,
   stateUpdateAppViewId,
   statusFieldId,
+  statusSubviewDateFieldId,
+  statusSubviewEnabled,
+  statusSubviewStateFieldId,
   subjectFieldId,
   targetEntityTypeId,
   toggleDashboardEntity,
@@ -604,6 +633,9 @@ function ConfigFields({
   setReportSourceMode: (value: string) => void;
   setReportSummaryFieldId: (value: string) => void;
   setReportValueFieldId: (value: string) => void;
+  setStatusSubviewDateFieldId: (value: string) => void;
+  setStatusSubviewEnabled: (value: boolean) => void;
+  setStatusSubviewStateFieldId: (value: string) => void;
   setSourceEntityTypeId: (value: string) => void;
   setStateFieldIds: (value: Set<string>) => void;
   setStateUpdateAppViewId: (value: string) => void;
@@ -616,6 +648,9 @@ function ConfigFields({
   stateFieldIds: Set<string>;
   stateUpdateAppViewId: string;
   statusFieldId: string;
+  statusSubviewDateFieldId: string;
+  statusSubviewEnabled: boolean;
+  statusSubviewStateFieldId: string;
   subjectFieldId: string;
   targetEntityTypeId: string;
   toggleDashboardEntity: (entityTypeId: string, checked: boolean) => void;
@@ -1181,11 +1216,50 @@ function ConfigFields({
       <EntitySelect
         label="Entidad"
         name="entityTypeId"
-        onChange={setEntityTypeId}
+        onChange={(value) => {
+          const nextEntityType = entityTypes.find((entityType) => entityType.id === value);
+
+          setEntityTypeId(value);
+          setStatusSubviewStateFieldId(firstActiveFieldId(nextEntityType, "SELECT"));
+          setStatusSubviewDateFieldId("");
+        }}
         options={entityTypes}
         value={entityTypeId}
         errors={fieldErrors?.entityTypeId}
       />
+      <label className="flex items-center gap-2 text-sm font-medium">
+        <input
+          checked={statusSubviewEnabled}
+          className="h-4 w-4"
+          onChange={(event) => setStatusSubviewEnabled(event.target.checked)}
+          type="checkbox"
+        />
+        Subvista Estados
+      </label>
+      {statusSubviewEnabled ? (
+        <div className="grid gap-3 sm:grid-cols-2">
+          <input name="statusSubviewTemplate" type="hidden" value="versioning" />
+          <FieldSelect
+            fields={entityTypes.find((entityType) => entityType.id === entityTypeId)?.fields.filter((field) => field.isActive) ?? []}
+            label="Campo Estado"
+            name="statusSubviewStateFieldId"
+            onChange={setStatusSubviewStateFieldId}
+            preferredType="SELECT"
+            value={statusSubviewStateFieldId}
+            errors={fieldErrors?.statusSubviewStateFieldId}
+          />
+          <FieldSelect
+            fields={entityTypes.find((entityType) => entityType.id === entityTypeId)?.fields.filter((field) => field.isActive) ?? []}
+            includeEmpty
+            label="Campo Fecha"
+            name="statusSubviewDateFieldId"
+            onChange={setStatusSubviewDateFieldId}
+            preferredType="DATE"
+            value={statusSubviewDateFieldId}
+            errors={fieldErrors?.statusSubviewDateFieldId}
+          />
+        </div>
+      ) : null}
     </fieldset>
   );
 }

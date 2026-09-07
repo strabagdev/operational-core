@@ -17,6 +17,7 @@ import { GET as entitiesGET } from "./route";
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     $transaction: vi.fn(),
+    $queryRaw: vi.fn(),
     apiIdempotencyKey: {
       create: vi.fn(),
       update: vi.fn(),
@@ -65,6 +66,7 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 const transaction = vi.mocked(prisma.$transaction);
+const queryRaw = vi.mocked(prisma.$queryRaw);
 const apiIdempotencyKeyCreate = vi.mocked(prisma.apiIdempotencyKey.create);
 const apiIdempotencyKeyUpdate = vi.mocked(prisma.apiIdempotencyKey.update);
 const auditEventCreate = vi.mocked(prisma.auditEvent.create);
@@ -164,6 +166,7 @@ function entity(overrides: Record<string, unknown> = {}) {
 beforeEach(() => {
   vi.clearAllMocks();
   process.env.API_AUTH_SECRET = "test-api-auth-secret";
+  queryRaw.mockResolvedValue([] as never);
   transaction.mockImplementation((async (
     callback: (tx: typeof prisma) => Promise<unknown>,
   ) => callback(prisma)) as never);
@@ -392,6 +395,71 @@ describe("GET /api/v1/contracts/[contractId]/entities/[entityTypeId]/records", (
     });
   });
 
+  it("filters records by a populated fieldId and sorts by date fieldId for status subviews", async () => {
+    entityTypeFindFirst.mockResolvedValue(entity({
+      fields: [
+        field({ id: "code", key: "codigo", searchable: true }),
+        field({ id: "status", key: "estado", type: "SELECT" }),
+        field({ id: "effective_date", key: "fecha", type: "DATE" }),
+      ],
+    }) as never);
+    entityRecordCount.mockResolvedValue(2);
+    queryRaw.mockResolvedValueOnce([{ id: "record_2" }, { id: "record_1" }] as never);
+    entityRecordFindMany.mockResolvedValue([
+      {
+        displayName: "EQ-001",
+        id: "record_1",
+        outgoingRelations: [],
+        updatedAt: recordUpdatedAt,
+        values: [
+          { entityFieldId: "code", textValue: "EQ-001" },
+          { entityFieldId: "status", textValue: "vigente" },
+          { dateValue: new Date("2026-08-01T00:00:00.000Z"), entityFieldId: "effective_date" },
+        ],
+      },
+      {
+        displayName: "EQ-002",
+        id: "record_2",
+        outgoingRelations: [],
+        updatedAt: laterRecordUpdatedAt,
+        values: [
+          { entityFieldId: "code", textValue: "EQ-002" },
+          { entityFieldId: "status", textValue: "pendiente" },
+          { dateValue: new Date("2026-08-02T00:00:00.000Z"), entityFieldId: "effective_date" },
+        ],
+      },
+    ] as never);
+
+    const response = await recordsGET(
+      await apiRequest("/api/v1/contracts/contract_1/entities/entity_1/records?search=EQ&fieldIdHasValue=status&sort=fieldId:effective_date&direction=desc&page=1&pageSize=2"),
+      { params: Promise.resolve({ contractId: "contract_1", entityTypeId: "entity_1" }) },
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      ok: true,
+      data: {
+        pagination: { page: 1, pageSize: 2, total: 2, totalPages: 1 },
+        records: [
+          { displayName: "EQ-002", values: { estado: "pendiente", fecha: "2026-08-02" } },
+          { displayName: "EQ-001", values: { estado: "vigente", fecha: "2026-08-01" } },
+        ],
+      },
+    });
+    expect(entityRecordCount).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        AND: [
+          expect.objectContaining({
+            values: expect.objectContaining({
+              some: expect.objectContaining({ entityFieldId: "status" }),
+            }),
+          }),
+        ],
+      }),
+    });
+    expect(queryRaw).toHaveBeenCalled();
+  });
+
   it("rejects invalid pagination and invalid sort", async () => {
     entityTypeFindFirst.mockResolvedValue(entity() as never);
 
@@ -403,6 +471,10 @@ describe("GET /api/v1/contracts/[contractId]/entities/[entityTypeId]/records", (
       await apiRequest("/api/v1/contracts/contract_1/entities/entity_1/records?sort=field:unknown"),
       { params: Promise.resolve({ contractId: "contract_1", entityTypeId: "entity_1" }) },
     );
+    const invalidFieldFilter = await recordsGET(
+      await apiRequest("/api/v1/contracts/contract_1/entities/entity_1/records?fieldIdHasValue=unknown"),
+      { params: Promise.resolve({ contractId: "contract_1", entityTypeId: "entity_1" }) },
+    );
 
     expect(invalidPagination.status).toBe(400);
     expect(await invalidPagination.json()).toMatchObject({
@@ -412,6 +484,11 @@ describe("GET /api/v1/contracts/[contractId]/entities/[entityTypeId]/records", (
     expect(invalidSort.status).toBe(400);
     expect(await invalidSort.json()).toMatchObject({
       error: { code: "INVALID_SORT" },
+      ok: false,
+    });
+    expect(invalidFieldFilter.status).toBe(400);
+    expect(await invalidFieldFilter.json()).toMatchObject({
+      error: { code: "INVALID_FIELD_FILTER" },
       ok: false,
     });
   });
