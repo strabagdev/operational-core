@@ -211,30 +211,19 @@ An AppView assignment means the experience is visible/available to the user. It 
 
 Current `AppView.type` values:
 
-- `RECORDS`: generic listing/detail/edit experience for one `EntityType`; config stores `entityTypeId` and may include `statusSubview` for the embedded versioning/status consultation tab.
+- `RECORDS`: generic listing/detail/edit experience for one `EntityType`; config stores `entityTypeId`.
 - `WORKFLOW`: renderer family for operational actions that read one entity and write or update another. `workflowKey` selects the concrete behavior. Current keys are `state-update` and the compatibility preset `attendance`.
-- `REPORT`: configurable data consultation experience. Entity-backed reports store `entityTypeId`, `dateFieldId`, and `presentationMode`; state-update reports store `sourceMode = STATE_UPDATE`, `stateUpdateAppViewId`, `projection = CURRENT`, and `presentationMode = TABLE`.
-- `BOARD`: grouped board for one `EntityType`; config stores `entityTypeId` and `groupByFieldKey`.
-- `DASHBOARD`: summary view over multiple entity types; config stores `entityTypeIds`.
+- `REPORT`: configurable derived list or matrix consultation experience. Entity-backed table/matrix reports store `entityTypeId`, `dateFieldId`, and `presentationMode`; current-status reports store `presentationMode = CURRENT_STATUS` plus `currentStatus`; state-update reports store `sourceMode = STATE_UPDATE`, `stateUpdateAppViewId`, `projection = CURRENT`, and `presentationMode = TABLE`.
+- `BOARD`: visual organization of records by state/group for one `EntityType`; config stores `entityTypeId` and `groupByFieldKey`.
+- `DASHBOARD`: composition surface for indicators and reports; config stores `entityTypeIds`.
 
 Although `AppView.config` is stored as JSON, it is not treated as arbitrary JSON. Server-side validators check the required shape for each type, verify every referenced `EntityType` belongs to the same contract, and for `BOARD` verify the grouping field exists and is active in that entity type. Workflow configs are also validated against active target fields, relation targets, and supported field types.
-
-A `RECORDS` AppView can expose a status subview inside the same client experience:
-
-```ts
-statusSubview?: {
-  template: "versioning";
-  stateFieldId: string;
-  dateFieldId?: string;
-}
-```
-
-The subview reuses the main entity, contract access, record permissions, search context, and normal record editing path from the parent `RECORDS` view. It does not create a standalone versioning template, duplicate records, write through `STATE_UPDATE`, or use `pending_operations`. It is read-only initially: changing the status still happens through normal record editing. `stateFieldId` and optional `dateFieldId` are stable `EntityField.id` references; field keys and labels are not identity. When `dateFieldId` is configured, the client requests records ordered by that field descending. When no date field is configured, the client keeps the stable order used by the parent records experience. Existing standalone `WORKFLOW` + `state-update` versioning experiences remain supported as temporary compatibility and are not migrated or removed automatically. Administrators should manually deactivate the old standalone views after validating the embedded subview to avoid duplicate navigation entries.
 
 `REPORT` is separate from `RECORDS`, `WORKFLOW`, `BOARD`, and `DASHBOARD`. It is a configurable query/presentation surface, not a traditional table-only view. `sourceMode` selects the report source; missing `sourceMode` means the legacy entity source. Its temporal scope is configured with `timeFilter`: `mode = RANGE | MONTH`, `defaultPeriod = CURRENT_MONTH`, and `allowChange`. SELECT and MULTISELECT presentation is configured with `valueDisplay[fieldId] = LABEL | INTERNAL_VALUE`; missing entries default to `LABEL`. Existing reports without `timeFilter` are read as editable current-month `RANGE` reports for compatibility. The first entity-backed presentation modes are:
 
 - `TABLE`: each row is one record. `table.visibleFieldIds` controls visible columns, and optional `defaultSortFieldId` plus `defaultSortDirection` controls default ordering.
 - `MATRIX`: records are transformed into dynamic rows and columns. `matrix.rowFieldId` defines rows, `matrix.columnFieldId` defines generated columns, `matrix.valueFieldId` defines cell values, and optional `summaryFieldId` builds a lateral per-row count summary.
+- `CURRENT_STATUS`: records are reduced to one current row per subject/procedure. `currentStatus.subjectFieldId` optionally points to the relation field that identifies the procedure, `currentStatus.stateFieldId` is required, and `currentStatus.dateFieldId` is optional. When the date field is configured, multiple historical rows for the same procedure are reduced to the latest by that field and ordered descending. When it is absent, Opco does not use `createdAt`, `updatedAt`, or audit metadata as a substitute.
 
 REPORT queries use `/api/v1/contracts/:contractId/reports/:appViewId?from=YYYY-MM-DD&to=YYYY-MM-DD`. The date range is applied to the configured `dateFieldId`; field names such as "Fecha" are never hardcoded. A monthly Attendance report can be configured generically with `rowFieldId = Persona`, `columnFieldId = Fecha`, `valueFieldId = Estado`, and `summaryFieldId = Estado`.
 

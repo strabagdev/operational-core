@@ -95,6 +95,7 @@ describe("AppViewForm", () => {
     expect(html).toContain("Tablero");
     expect(html).toContain("Dashboard");
     expect(html).toContain("Configuración de registros");
+    expect(html).not.toContain("Subvista Estados");
     expect(html).toContain("Crear experiencia");
   });
 
@@ -274,6 +275,46 @@ describe("AppViewForm", () => {
     expect(html).toContain("Actualizado");
     expect(html).toContain('name="visibleFieldIds"');
     expect(html).toMatch(/name="visibleFieldIds" checked="" value="state:counter_field"/);
+  });
+
+  it("renders REPORT current status configuration", () => {
+    const html = renderToStaticMarkup(
+      <AppViewForm
+        action={noopAction}
+        entityTypes={entityTypes}
+        initialValues={{
+          active: true,
+          config: {
+            entityTypeId: "attendance",
+            presentationMode: "CURRENT_STATUS",
+            currentStatus: {
+              subjectFieldId: "person_field",
+              stateFieldId: "status_field",
+              dateFieldId: "reviewed_on_field",
+            },
+            timeFilter: {
+              allowChange: false,
+              defaultPeriod: "CURRENT_MONTH",
+              mode: "RANGE",
+            },
+            type: "REPORT",
+            valueDisplay: {},
+          },
+          icon: "clipboard-check",
+          name: "Dashboard Procedimientos",
+          slug: "dashboard-procedimientos",
+          sortOrder: 4,
+          type: "REPORT",
+        }}
+        submitLabel="Guardar experiencia"
+      />,
+    );
+
+    expect(html).toContain("Estado actual");
+    expect(html).toContain('name="currentStatusSubjectFieldId"');
+    expect(html).toContain('name="currentStatusStateFieldId"');
+    expect(html).toContain('name="currentStatusDateFieldId"');
+    expect(html).not.toContain("Subvista Estados");
   });
 
   it("renders the selected workflow configuration", () => {

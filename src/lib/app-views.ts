@@ -53,11 +53,6 @@ export type AppViewConfig =
   | {
       type: "RECORDS";
       entityTypeId: string;
-      statusSubview?: {
-        template: "versioning";
-        stateFieldId: string;
-        dateFieldId?: string;
-      };
     }
   | AttendanceWorkflowConfig
   | StateUpdateWorkflowConfig
@@ -66,6 +61,22 @@ export type AppViewConfig =
   | { type: "DASHBOARD"; entityTypeIds: string[] };
 
 export type ReportAppViewConfig =
+  | {
+      type: "REPORT";
+      sourceMode?: "ENTITY";
+      entityTypeId: string;
+      timeFilter: ReportTimeFilterConfig;
+      valueDisplay: Record<string, ReportSelectValueDisplay>;
+      presentationMode: "CURRENT_STATUS";
+      currentStatus: {
+        subjectFieldId?: string;
+        stateFieldId: string;
+        dateFieldId?: string;
+      };
+      dateFieldId?: never;
+      table?: never;
+      matrix?: never;
+    }
   | ({
       type: "REPORT";
       sourceMode?: "ENTITY";
@@ -219,9 +230,9 @@ export function getAppViewInput(formData: FormData) {
           .map(([key, value]) => [key.slice("stateFieldDefaultOptionId:".length), value]),
       ),
       statusFieldId: formData.get("statusFieldId"),
-      statusSubviewDateFieldId: formData.get("statusSubviewDateFieldId"),
-      statusSubviewStateFieldId: formData.get("statusSubviewStateFieldId"),
-      statusSubviewTemplate: formData.get("statusSubviewTemplate"),
+      currentStatusDateFieldId: formData.get("currentStatusDateFieldId"),
+      currentStatusStateFieldId: formData.get("currentStatusStateFieldId"),
+      currentStatusSubjectFieldId: formData.get("currentStatusSubjectFieldId"),
       subjectFieldId: formData.get("subjectFieldId"),
       targetEntityTypeId: formData.get("targetEntityTypeId"),
       uniquenessMode: formData.get("uniquenessMode"),
@@ -518,16 +529,11 @@ async function validateAppViewConfig({
 }): Promise<AppViewConfig> {
   if (type === "RECORDS") {
     const config = parseRecordsConfigInput(rawConfig);
-    const entityType = await requireEntityType(client, contractId, config.entityTypeId);
-    validateRecordsAppViewFields({
-      config,
-      fields: entityType.fields,
-    });
+    await requireEntityType(client, contractId, config.entityTypeId);
 
     return {
       type,
       entityTypeId: config.entityTypeId,
-      ...(config.statusSubview ? { statusSubview: config.statusSubview } : {}),
     };
   }
 
@@ -648,6 +654,21 @@ async function validateAppViewConfig({
       };
     }
 
+    if (config.presentationMode === "CURRENT_STATUS") {
+      return {
+        type,
+        entityTypeId: config.entityTypeId,
+        timeFilter: config.timeFilter,
+        valueDisplay: config.valueDisplay,
+        presentationMode: "CURRENT_STATUS",
+        currentStatus: {
+          ...(config.currentStatus.subjectFieldId ? { subjectFieldId: config.currentStatus.subjectFieldId } : {}),
+          stateFieldId: config.currentStatus.stateFieldId,
+          ...(config.currentStatus.dateFieldId ? { dateFieldId: config.currentStatus.dateFieldId } : {}),
+        },
+      };
+    }
+
     return {
       type,
       entityTypeId: config.entityTypeId,
@@ -692,17 +713,6 @@ async function validateAppViewConfig({
 
 const recordsConfigInputSchema = z.object({
   entityTypeId: z.string().trim().min(1, "Selecciona una entidad."),
-  statusSubview: z.object({
-    template: z.literal("versioning"),
-    stateFieldId: z.preprocess(
-      (value) => value === null || value === undefined ? "" : value,
-      z.string().trim().min(1, "Selecciona el campo de estado."),
-    ),
-    dateFieldId: z.preprocess(
-      (value) => value === null ? undefined : value,
-      z.string().trim().optional().transform((value) => value || undefined),
-    ),
-  }).optional(),
 });
 
 const reportCommonConfigInputSchema = z.object({
@@ -718,6 +728,11 @@ const reportEntityBaseConfigInputSchema = reportCommonConfigInputSchema.extend({
   sourceMode: z.literal("ENTITY").optional(),
   entityTypeId: z.string().trim().min(1, "Selecciona una entidad."),
   dateFieldId: z.string().trim().min(1, "Selecciona el campo de fecha."),
+});
+
+const reportCurrentStatusBaseConfigInputSchema = reportCommonConfigInputSchema.extend({
+  sourceMode: z.literal("ENTITY").optional(),
+  entityTypeId: z.string().trim().min(1, "Selecciona una entidad."),
 });
 
 const reportEntityConfigInputSchema = z.discriminatedUnion("presentationMode", [
@@ -736,6 +751,23 @@ const reportEntityConfigInputSchema = z.discriminatedUnion("presentationMode", [
       columnFieldId: z.string().trim().min(1, "Selecciona el campo de columnas."),
       valueFieldId: z.string().trim().min(1, "Selecciona el campo de valor."),
       summaryFieldId: z.string().trim().optional().transform((value) => value || undefined),
+    }),
+  }),
+  reportCurrentStatusBaseConfigInputSchema.extend({
+    presentationMode: z.literal("CURRENT_STATUS"),
+    currentStatus: z.object({
+      subjectFieldId: z.preprocess(
+        (value) => value === null ? undefined : value,
+        z.string().trim().optional().transform((value) => value || undefined),
+      ),
+      stateFieldId: z.preprocess(
+        (value) => value === null || value === undefined ? "" : value,
+        z.string().trim().min(1, "Selecciona el campo de estado."),
+      ),
+      dateFieldId: z.preprocess(
+        (value) => value === null ? undefined : value,
+        z.string().trim().optional().transform((value) => value || undefined),
+      ),
     }),
   }),
 ]);
@@ -817,70 +849,7 @@ const dashboardConfigInputSchema = z.object({
 });
 
 function parseRecordsConfigInput(rawConfig: unknown) {
-  if (!rawConfig || typeof rawConfig !== "object" || Array.isArray(rawConfig)) {
-    return recordsConfigInputSchema.parse(rawConfig);
-  }
-
-  const raw = rawConfig as Record<string, unknown>;
-  const storedSubview = isRecord(raw.statusSubview) ? raw.statusSubview : undefined;
-  const submittedTemplate = raw.statusSubviewTemplate;
-  const submittedStateFieldId = raw.statusSubviewStateFieldId;
-  const submittedDateFieldId = raw.statusSubviewDateFieldId;
-  const hasSubmittedSubview = submittedTemplate === "versioning" || Boolean(submittedStateFieldId);
-  const statusSubview = hasSubmittedSubview
-    ? {
-        template: "versioning",
-        stateFieldId: submittedStateFieldId,
-        dateFieldId: submittedDateFieldId,
-      }
-    : storedSubview;
-
-  return recordsConfigInputSchema.parse({
-    entityTypeId: raw.entityTypeId,
-    ...(statusSubview ? { statusSubview } : {}),
-  });
-}
-
-const recordsStatusSubviewStateFieldTypes = new Set([
-  "SELECT",
-  "TEXT",
-  "TEXTAREA",
-  "INTEGER",
-  "DECIMAL",
-  "MONEY",
-  "BOOLEAN",
-  "DATE",
-]);
-
-function validateRecordsAppViewFields({
-  config,
-  fields,
-}: {
-  config: z.infer<typeof recordsConfigInputSchema>;
-  fields: Array<{
-    id: string;
-    isActive: boolean;
-    name: string;
-    type: string;
-  }>;
-}) {
-  if (!config.statusSubview) {
-    return;
-  }
-
-  const stateField = requireActiveTargetField(fields, config.statusSubview.stateFieldId, "Estado");
-
-  if (!recordsStatusSubviewStateFieldTypes.has(stateField.type)) {
-    throw new AppViewConfigError("El campo de estado no es compatible.", "statusSubviewStateFieldId");
-  }
-
-  if (config.statusSubview.dateFieldId) {
-    const dateField = requireActiveTargetField(fields, config.statusSubview.dateFieldId, "Fecha");
-
-    if (dateField.type !== "DATE") {
-      throw new AppViewConfigError("El campo de fecha debe ser de tipo fecha.", "statusSubviewDateFieldId");
-    }
-  }
+  return recordsConfigInputSchema.parse(rawConfig);
 }
 
 async function requireEntityType(
@@ -1016,7 +985,11 @@ function parseReportConfigInput(rawConfig: unknown) {
     });
   }
 
-  const presentationMode = raw.presentationMode === "MATRIX" ? "MATRIX" : "TABLE";
+  const presentationMode = raw.presentationMode === "MATRIX"
+    ? "MATRIX"
+    : raw.presentationMode === "CURRENT_STATUS"
+      ? "CURRENT_STATUS"
+      : "TABLE";
 
   if (presentationMode === "MATRIX") {
     const matrix = isRecord(raw.matrix) ? raw.matrix : {};
@@ -1034,6 +1007,22 @@ function parseReportConfigInput(rawConfig: unknown) {
         ...((raw.reportSummaryFieldId ?? matrix.summaryFieldId)
           ? { summaryFieldId: raw.reportSummaryFieldId ?? matrix.summaryFieldId }
           : {}),
+      },
+    });
+  }
+
+  if (presentationMode === "CURRENT_STATUS") {
+    const currentStatus = isRecord(raw.currentStatus) ? raw.currentStatus : {};
+
+    return reportConfigInputSchema.parse({
+      entityTypeId: raw.entityTypeId,
+      timeFilter: parseReportTimeFilter(raw),
+      valueDisplay: parseReportValueDisplay(raw),
+      presentationMode,
+      currentStatus: {
+        subjectFieldId: raw.currentStatusSubjectFieldId ?? currentStatus.subjectFieldId,
+        stateFieldId: raw.currentStatusStateFieldId ?? currentStatus.stateFieldId,
+        dateFieldId: raw.currentStatusDateFieldId ?? currentStatus.dateFieldId,
       },
     });
   }
@@ -1091,6 +1080,34 @@ function validateReportAppViewFields({
     type: string;
   }>;
 }) {
+  if (config.presentationMode === "CURRENT_STATUS") {
+    const stateField = requireActiveTargetField(fields, config.currentStatus.stateFieldId, "Estado");
+
+    if (!reportCurrentStatusStateFieldTypes.has(stateField.type)) {
+      throw new AppViewConfigError("El campo de estado no es compatible.", "currentStatusStateFieldId");
+    }
+
+    if (config.currentStatus.subjectFieldId) {
+      const subjectField = requireActiveTargetField(fields, config.currentStatus.subjectFieldId, "Procedimiento");
+
+      if (subjectField.type !== "RELATION") {
+        throw new AppViewConfigError("El campo de procedimiento debe ser de tipo relación.", "currentStatusSubjectFieldId");
+      }
+    }
+
+    if (config.currentStatus.dateFieldId) {
+      const dateField = requireActiveTargetField(fields, config.currentStatus.dateFieldId, "Fecha");
+
+      if (!reportDateFieldTypes.has(dateField.type)) {
+        throw new AppViewConfigError("El campo de fecha debe ser de tipo fecha.", "currentStatusDateFieldId");
+      }
+    }
+
+    validateReportValueDisplayFields(config.valueDisplay, fields);
+
+    return;
+  }
+
   const dateField = requireActiveTargetField(fields, config.dateFieldId, "Fecha");
 
   if (!reportDateFieldTypes.has(dateField.type)) {
@@ -1394,6 +1411,17 @@ const stateUpdateExtraFieldTypes = new Set([
 ]);
 
 const reportDateFieldTypes = new Set(["DATE", "DATETIME"]);
+
+const reportCurrentStatusStateFieldTypes = new Set([
+  "SELECT",
+  "TEXT",
+  "TEXTAREA",
+  "INTEGER",
+  "DECIMAL",
+  "MONEY",
+  "BOOLEAN",
+  "DATE",
+]);
 
 const reportSortableFieldTypes = new Set([
   "TEXT",

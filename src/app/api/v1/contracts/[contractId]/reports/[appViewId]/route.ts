@@ -21,6 +21,7 @@ export async function GET(
     contractId: access.context.contract.id,
     query: {
       from: searchParams.get("from"),
+      search: searchParams.get("search"),
       to: searchParams.get("to"),
     },
     userId: access.context.user.id,

@@ -287,6 +287,24 @@ export function AppViewForm({
       ? initialValues.config.matrix.summaryFieldId ?? ""
       : ""),
   );
+  const initialCurrentStatus = initialValues?.config.type === "REPORT" && initialValues.config.presentationMode === "CURRENT_STATUS"
+    ? initialValues.config.currentStatus
+    : undefined;
+  const [currentStatusSubjectFieldId, setCurrentStatusSubjectFieldId] = useState(
+    valueFromState(state, "currentStatusSubjectFieldId") ||
+    initialCurrentStatus?.subjectFieldId ||
+    firstActiveFieldId(reportEntityType, "RELATION"),
+  );
+  const [currentStatusStateFieldId, setCurrentStatusStateFieldId] = useState(
+    valueFromState(state, "currentStatusStateFieldId") ||
+    initialCurrentStatus?.stateFieldId ||
+    firstActiveFieldId(reportEntityType, "SELECT"),
+  );
+  const [currentStatusDateFieldId, setCurrentStatusDateFieldId] = useState(
+    valueFromState(state, "currentStatusDateFieldId") ||
+    initialCurrentStatus?.dateFieldId ||
+    "",
+  );
   const reportValueDisplay = initialValues?.config.type === "REPORT"
     ? initialValues.config.valueDisplay
     : {};
@@ -299,24 +317,6 @@ export function AppViewForm({
     ? initialValues.config.groupByFieldKey
     : activeBoardFields[0]?.key ?? "";
   const [groupByFieldKey, setGroupByFieldKey] = useState(initialBoardFieldKey);
-  const recordsEntityType = entityTypes.find((item) => item.id === entityTypeId);
-  const initialStatusSubview = initialValues?.config.type === "RECORDS"
-    ? initialValues.config.statusSubview
-    : undefined;
-  const [statusSubviewEnabled, setStatusSubviewEnabled] = useState(
-    Boolean(initialStatusSubview) || valueFromState(state, "statusSubviewTemplate") === "versioning",
-  );
-  const [statusSubviewStateFieldId, setStatusSubviewStateFieldId] = useState(
-    valueFromState(state, "statusSubviewStateFieldId") ||
-    initialStatusSubview?.stateFieldId ||
-    firstActiveFieldId(recordsEntityType, "SELECT"),
-  );
-  const [statusSubviewDateFieldId, setStatusSubviewDateFieldId] = useState(
-    valueFromState(state, "statusSubviewDateFieldId") ||
-    initialStatusSubview?.dateFieldId ||
-    "",
-  );
-
   function toggleDashboardEntity(entityTypeId: string, checked: boolean) {
     const next = new Set(dashboardEntityTypeIds);
 
@@ -403,6 +403,9 @@ export function AppViewForm({
       <ConfigFields
         activeBoardFields={activeBoardFields}
         contextFieldIds={contextFieldIds}
+        currentStatusDateFieldId={currentStatusDateFieldId}
+        currentStatusStateFieldId={currentStatusStateFieldId}
+        currentStatusSubjectFieldId={currentStatusSubjectFieldId}
         dashboardEntityTypeIds={dashboardEntityTypeIds}
         defaultSortDirection={defaultSortDirection}
         defaultSortFieldId={defaultSortFieldId}
@@ -450,9 +453,9 @@ export function AppViewForm({
         setReportSourceMode={setReportSourceMode}
         setReportSummaryFieldId={setReportSummaryFieldId}
         setReportValueFieldId={setReportValueFieldId}
-        setStatusSubviewDateFieldId={setStatusSubviewDateFieldId}
-        setStatusSubviewEnabled={setStatusSubviewEnabled}
-        setStatusSubviewStateFieldId={setStatusSubviewStateFieldId}
+        setCurrentStatusDateFieldId={setCurrentStatusDateFieldId}
+        setCurrentStatusStateFieldId={setCurrentStatusStateFieldId}
+        setCurrentStatusSubjectFieldId={setCurrentStatusSubjectFieldId}
         setDefaultCheckInOptionId={setDefaultCheckInOptionId}
         setSourceEntityTypeId={setSourceEntityTypeId}
         setStateFieldIds={setStateFieldIds}
@@ -466,9 +469,6 @@ export function AppViewForm({
         stateFieldIds={stateFieldIds}
         stateUpdateAppViewId={stateUpdateAppViewId}
         statusFieldId={statusFieldId}
-        statusSubviewDateFieldId={statusSubviewDateFieldId}
-        statusSubviewEnabled={statusSubviewEnabled}
-        statusSubviewStateFieldId={statusSubviewStateFieldId}
         targetEntityTypeId={targetEntityTypeId}
         toggleDashboardEntity={toggleDashboardEntity}
         type={type}
@@ -511,6 +511,9 @@ function ConfigFields({
   activeBoardFields,
   appViews,
   contextFieldIds,
+  currentStatusDateFieldId,
+  currentStatusStateFieldId,
+  currentStatusSubjectFieldId,
   dashboardEntityTypeIds,
   dateFieldId,
   defaultSortDirection,
@@ -537,6 +540,9 @@ function ConfigFields({
   reportValueFieldId,
   reportValueDisplay,
   setContextFieldIds,
+  setCurrentStatusDateFieldId,
+  setCurrentStatusStateFieldId,
+  setCurrentStatusSubjectFieldId,
   setDateFieldId,
   setDefaultCheckInOptionId,
   setDefaultSortDirection,
@@ -557,9 +563,6 @@ function ConfigFields({
   setReportSourceMode,
   setReportSummaryFieldId,
   setReportValueFieldId,
-  setStatusSubviewDateFieldId,
-  setStatusSubviewEnabled,
-  setStatusSubviewStateFieldId,
   setSourceEntityTypeId,
   setStateFieldIds,
   setStateUpdateAppViewId,
@@ -572,9 +575,6 @@ function ConfigFields({
   stateFieldIds,
   stateUpdateAppViewId,
   statusFieldId,
-  statusSubviewDateFieldId,
-  statusSubviewEnabled,
-  statusSubviewStateFieldId,
   subjectFieldId,
   targetEntityTypeId,
   toggleDashboardEntity,
@@ -587,6 +587,9 @@ function ConfigFields({
   activeBoardFields: AppViewEntityTypeOption["fields"];
   appViews: AppViewOption[];
   contextFieldIds: string[];
+  currentStatusDateFieldId: string;
+  currentStatusStateFieldId: string;
+  currentStatusSubjectFieldId: string;
   dashboardEntityTypeIds: Set<string>;
   dateFieldId: string;
   defaultSortDirection: string;
@@ -613,6 +616,9 @@ function ConfigFields({
   reportValueFieldId: string;
   reportValueDisplay: Record<string, "LABEL" | "INTERNAL_VALUE">;
   setContextFieldIds: (value: string[]) => void;
+  setCurrentStatusDateFieldId: (value: string) => void;
+  setCurrentStatusStateFieldId: (value: string) => void;
+  setCurrentStatusSubjectFieldId: (value: string) => void;
   setDateFieldId: (value: string) => void;
   setDefaultCheckInOptionId: (value: string) => void;
   setDefaultSortDirection: (value: string) => void;
@@ -633,9 +639,6 @@ function ConfigFields({
   setReportSourceMode: (value: string) => void;
   setReportSummaryFieldId: (value: string) => void;
   setReportValueFieldId: (value: string) => void;
-  setStatusSubviewDateFieldId: (value: string) => void;
-  setStatusSubviewEnabled: (value: boolean) => void;
-  setStatusSubviewStateFieldId: (value: string) => void;
   setSourceEntityTypeId: (value: string) => void;
   setStateFieldIds: (value: Set<string>) => void;
   setStateUpdateAppViewId: (value: string) => void;
@@ -648,9 +651,6 @@ function ConfigFields({
   stateFieldIds: Set<string>;
   stateUpdateAppViewId: string;
   statusFieldId: string;
-  statusSubviewDateFieldId: string;
-  statusSubviewEnabled: boolean;
-  statusSubviewStateFieldId: string;
   subjectFieldId: string;
   targetEntityTypeId: string;
   toggleDashboardEntity: (entityTypeId: string, checked: boolean) => void;
@@ -967,21 +967,26 @@ function ConfigFields({
                 setReportColumnFieldId(nextDateFieldId);
                 setReportValueFieldId(firstActiveFieldId(nextEntityType, "SELECT"));
                 setReportSummaryFieldId("");
+                setCurrentStatusSubjectFieldId(firstActiveFieldId(nextEntityType, "RELATION"));
+                setCurrentStatusStateFieldId(firstActiveFieldId(nextEntityType, "SELECT"));
+                setCurrentStatusDateFieldId("");
               }}
               options={entityTypes}
               value={entityTypeId}
               errors={fieldErrors?.entityTypeId}
             />
             <div className="grid gap-3 sm:grid-cols-2">
-              <FieldSelect
-                fields={activeReportFields}
-                label="Campo de fecha"
-                name="dateFieldId"
-                onChange={setDateFieldId}
-                preferredType="DATE"
-                value={dateFieldId}
-                errors={fieldErrors?.dateFieldId}
-              />
+              {presentationMode === "CURRENT_STATUS" ? null : (
+                <FieldSelect
+                  fields={activeReportFields}
+                  label="Campo de fecha"
+                  name="dateFieldId"
+                  onChange={setDateFieldId}
+                  preferredType="DATE"
+                  value={dateFieldId}
+                  errors={fieldErrors?.dateFieldId}
+                />
+              )}
               <SelectControl
                 label="Presentación"
                 name="presentationMode"
@@ -989,46 +994,49 @@ function ConfigFields({
                 options={[
                   { label: "Tabla", value: "TABLE" },
                   { label: "Matriz", value: "MATRIX" },
+                  { label: "Estado actual", value: "CURRENT_STATUS" },
                 ]}
                 value={presentationMode}
               />
             </div>
           </>
         )}
-        <fieldset className="grid gap-3 rounded-md border border-border p-3">
-          <legend className="px-1 text-sm font-medium">Filtro temporal</legend>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <SelectControl
-              label="Modo"
-              name="reportTimeMode"
-              onChange={setReportTimeMode}
-              options={[
-                { label: "Rango", value: "RANGE" },
-                { label: "Mes", value: "MONTH" },
-              ]}
-              value={reportTimeMode}
-            />
-            <SelectControl
-              label="Período inicial"
-              name="reportTimeDefaultPeriod"
-              onChange={setReportTimeDefaultPeriod}
-              options={[
-                { label: "Mes actual", value: "CURRENT_MONTH" },
-              ]}
-              value={reportTimeDefaultPeriod}
-            />
-          </div>
-          <label className="flex items-center gap-2 text-sm font-medium">
-            <input
-              checked={reportTimeAllowChange}
-              className="h-4 w-4"
-              name="reportTimeAllowChange"
-              onChange={(event) => setReportTimeAllowChange(event.target.checked)}
-              type="checkbox"
-            />
-            Permitir cambiar período
-          </label>
-        </fieldset>
+        {presentationMode === "CURRENT_STATUS" ? null : (
+          <fieldset className="grid gap-3 rounded-md border border-border p-3">
+            <legend className="px-1 text-sm font-medium">Filtro temporal</legend>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <SelectControl
+                label="Modo"
+                name="reportTimeMode"
+                onChange={setReportTimeMode}
+                options={[
+                  { label: "Rango", value: "RANGE" },
+                  { label: "Mes", value: "MONTH" },
+                ]}
+                value={reportTimeMode}
+              />
+              <SelectControl
+                label="Período inicial"
+                name="reportTimeDefaultPeriod"
+                onChange={setReportTimeDefaultPeriod}
+                options={[
+                  { label: "Mes actual", value: "CURRENT_MONTH" },
+                ]}
+                value={reportTimeDefaultPeriod}
+              />
+            </div>
+            <label className="flex items-center gap-2 text-sm font-medium">
+              <input
+                checked={reportTimeAllowChange}
+                className="h-4 w-4"
+                name="reportTimeAllowChange"
+                onChange={(event) => setReportTimeAllowChange(event.target.checked)}
+                type="checkbox"
+              />
+              Permitir cambiar período
+            </label>
+          </fieldset>
+        )}
         {isStateUpdateReport ? (
           <div className="grid gap-3">
             <OrderedVirtualFieldChecklist
@@ -1060,6 +1068,44 @@ function ConfigFields({
                 value={defaultSortDirection}
               />
             </div>
+          </div>
+        ) : presentationMode === "CURRENT_STATUS" ? (
+          <div className="grid gap-3">
+            <div className="grid gap-3 sm:grid-cols-3">
+              <FieldSelect
+                fields={activeReportFields}
+                includeEmpty
+                label="Procedimiento"
+                name="currentStatusSubjectFieldId"
+                onChange={setCurrentStatusSubjectFieldId}
+                preferredType="RELATION"
+                value={currentStatusSubjectFieldId}
+                errors={fieldErrors?.currentStatusSubjectFieldId}
+              />
+              <FieldSelect
+                fields={activeReportFields}
+                label="Estado"
+                name="currentStatusStateFieldId"
+                onChange={setCurrentStatusStateFieldId}
+                preferredType="SELECT"
+                value={currentStatusStateFieldId}
+                errors={fieldErrors?.currentStatusStateFieldId}
+              />
+              <FieldSelect
+                fields={activeReportFields}
+                includeEmpty
+                label="Fecha"
+                name="currentStatusDateFieldId"
+                onChange={setCurrentStatusDateFieldId}
+                preferredType="DATE"
+                value={currentStatusDateFieldId}
+                errors={fieldErrors?.currentStatusDateFieldId}
+              />
+            </div>
+            <ReportValueDisplayFields
+              fields={reportSelectDisplayFields(activeReportFields, [currentStatusStateFieldId])}
+              valueDisplay={reportValueDisplay}
+            />
           </div>
         ) : presentationMode === "MATRIX" ? (
           <div className="grid gap-3">
@@ -1216,50 +1262,11 @@ function ConfigFields({
       <EntitySelect
         label="Entidad"
         name="entityTypeId"
-        onChange={(value) => {
-          const nextEntityType = entityTypes.find((entityType) => entityType.id === value);
-
-          setEntityTypeId(value);
-          setStatusSubviewStateFieldId(firstActiveFieldId(nextEntityType, "SELECT"));
-          setStatusSubviewDateFieldId("");
-        }}
+        onChange={setEntityTypeId}
         options={entityTypes}
         value={entityTypeId}
         errors={fieldErrors?.entityTypeId}
       />
-      <label className="flex items-center gap-2 text-sm font-medium">
-        <input
-          checked={statusSubviewEnabled}
-          className="h-4 w-4"
-          onChange={(event) => setStatusSubviewEnabled(event.target.checked)}
-          type="checkbox"
-        />
-        Subvista Estados
-      </label>
-      {statusSubviewEnabled ? (
-        <div className="grid gap-3 sm:grid-cols-2">
-          <input name="statusSubviewTemplate" type="hidden" value="versioning" />
-          <FieldSelect
-            fields={entityTypes.find((entityType) => entityType.id === entityTypeId)?.fields.filter((field) => field.isActive) ?? []}
-            label="Campo Estado"
-            name="statusSubviewStateFieldId"
-            onChange={setStatusSubviewStateFieldId}
-            preferredType="SELECT"
-            value={statusSubviewStateFieldId}
-            errors={fieldErrors?.statusSubviewStateFieldId}
-          />
-          <FieldSelect
-            fields={entityTypes.find((entityType) => entityType.id === entityTypeId)?.fields.filter((field) => field.isActive) ?? []}
-            includeEmpty
-            label="Campo Fecha"
-            name="statusSubviewDateFieldId"
-            onChange={setStatusSubviewDateFieldId}
-            preferredType="DATE"
-            value={statusSubviewDateFieldId}
-            errors={fieldErrors?.statusSubviewDateFieldId}
-          />
-        </div>
-      ) : null}
     </fieldset>
   );
 }

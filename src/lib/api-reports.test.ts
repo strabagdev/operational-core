@@ -267,6 +267,153 @@ describe("getApiReport", () => {
       },
     });
   });
+
+  it("returns current status report rows with the latest version per procedure", async () => {
+    appViewFindFirst.mockResolvedValueOnce({
+      active: true,
+      config: {
+        entityTypeId: "versions",
+        presentationMode: "CURRENT_STATUS",
+        currentStatus: {
+          subjectFieldId: "subject_field",
+          stateFieldId: "status_field",
+          dateFieldId: "date_field",
+        },
+      },
+      contractId: "contract_1",
+      icon: null,
+      id: "view_report",
+      name: "Dashboard Procedimientos",
+      slug: "dashboard-procedimientos",
+      sortOrder: 1,
+      type: "REPORT",
+    } as never);
+    entityTypeFindFirst.mockResolvedValueOnce(currentStatusEntity() as never);
+    entityRecordFindMany.mockResolvedValueOnce([
+      versionRecord({
+        date: "2026-08-01",
+        id: "version_old",
+        procedureId: "procedure_1",
+        procedureName: "PET-001",
+        status: "revision",
+      }),
+      versionRecord({
+        date: "2026-08-05",
+        id: "version_new",
+        procedureId: "procedure_1",
+        procedureName: "PET-001",
+        status: "vigente",
+      }),
+      versionRecord({
+        date: "2026-08-03",
+        id: "version_other",
+        procedureId: "procedure_2",
+        procedureName: "PET-002",
+        status: "vigente",
+      }),
+    ] as never);
+
+    const result = await getApiReport({
+      appViewId: "view_report",
+      contractId: "contract_1",
+      query: { search: "PET" },
+      userId: "user_1",
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    expect(entityRecordFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        entityTypeId: "versions",
+        values: expect.objectContaining({
+          some: expect.objectContaining({ entityFieldId: "status_field" }),
+        }),
+        OR: [
+          { displayName: { contains: "PET", mode: "insensitive" } },
+          {
+            outgoingRelations: {
+              some: {
+                sourceFieldId: "subject_field",
+                targetRecord: {
+                  displayName: { contains: "PET", mode: "insensitive" },
+                },
+              },
+            },
+          },
+        ],
+      }),
+    }));
+    expect(result.data.config).toMatchObject({
+      presentationMode: "CURRENT_STATUS",
+      currentStatus: {
+        subjectFieldId: "subject_field",
+        stateFieldId: "status_field",
+        dateFieldId: "date_field",
+      },
+    });
+    expect(result.data.fields.map((field) => field.key)).toEqual(["procedimiento", "estatus", "fecha"]);
+    expect(result.data.records.map((record) => record.id)).toEqual(["version_new", "version_other"]);
+    expect(result.data.records[0].values).toMatchObject({
+      procedimiento: { displayName: "PET-001", entityTypeId: "procedures", id: "procedure_1" },
+      estatus: "vigente",
+      fecha: "2026-08-05",
+    });
+  });
+
+  it("does not use audit dates as a fallback for current status reports without dateFieldId", async () => {
+    appViewFindFirst.mockResolvedValueOnce({
+      active: true,
+      config: {
+        entityTypeId: "versions",
+        presentationMode: "CURRENT_STATUS",
+        currentStatus: {
+          subjectFieldId: "subject_field",
+          stateFieldId: "status_field",
+        },
+      },
+      contractId: "contract_1",
+      icon: null,
+      id: "view_report",
+      name: "Dashboard Procedimientos",
+      slug: "dashboard-procedimientos",
+      sortOrder: 1,
+      type: "REPORT",
+    } as never);
+    entityTypeFindFirst.mockResolvedValueOnce(currentStatusEntity() as never);
+    entityRecordFindMany.mockResolvedValueOnce([
+      versionRecord({
+        date: "2026-08-05",
+        id: "version_newer_audit",
+        procedureId: "procedure_1",
+        procedureName: "PET-001",
+        status: "vigente",
+        updatedAt: "2026-08-10T12:00:00.000Z",
+      }),
+      versionRecord({
+        date: "2026-08-01",
+        id: "version_stable_first",
+        procedureId: "procedure_1",
+        procedureName: "PET-001",
+        status: "revision",
+        updatedAt: "2026-08-20T12:00:00.000Z",
+      }),
+    ] as never);
+
+    const result = await getApiReport({
+      appViewId: "view_report",
+      contractId: "contract_1",
+      query: {},
+      userId: "user_1",
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    expect(result.data.fields.map((field) => field.key)).toEqual(["procedimiento", "estatus"]);
+    expect(result.data.records).toHaveLength(1);
+    expect(result.data.records[0].values).not.toHaveProperty("fecha");
+  });
 });
 
 function reportEntity() {
@@ -358,5 +505,62 @@ function stateUpdateTargetEntity() {
     id: "versions",
     name: "Versionado",
     slug: "versionado",
+  };
+}
+
+function currentStatusEntity() {
+  return {
+    fields: [
+      field("subject_field", "procedimiento", "Procedimiento", "RELATION", {
+        config: { relationKind: "ONE", targetEntityTypeId: "procedures" },
+      }),
+      field("status_field", "estatus", "Estatus", "SELECT", {
+        options: [
+          { id: "status_current", isActive: true, label: "Vigente", sortOrder: 1, value: "vigente" },
+          { id: "status_review", isActive: true, label: "En revisión", sortOrder: 2, value: "revision" },
+        ],
+      }),
+      field("date_field", "fecha", "Fecha", "DATE"),
+    ],
+    id: "versions",
+    name: "Versionado",
+    slug: "versionado",
+  };
+}
+
+function versionRecord({
+  date,
+  id,
+  procedureId,
+  procedureName,
+  status,
+  updatedAt = "2026-08-01T12:00:00.000Z",
+}: {
+  date: string;
+  id: string;
+  procedureId: string;
+  procedureName: string;
+  status: string;
+  updatedAt?: string;
+}) {
+  return {
+    displayName: `${procedureName} ${date}`,
+    id,
+    outgoingRelations: [
+      {
+        sourceFieldId: "subject_field",
+        targetRecord: {
+          displayName: procedureName,
+          entityTypeId: "procedures",
+          id: procedureId,
+        },
+        targetRecordId: procedureId,
+      },
+    ],
+    updatedAt: new Date(updatedAt),
+    values: [
+      { entityFieldId: "date_field", dateValue: new Date(`${date}T00:00:00.000Z`) },
+      { entityFieldId: "status_field", textValue: status },
+    ],
   };
 }

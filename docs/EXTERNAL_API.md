@@ -480,9 +480,14 @@ Config shapes by `type`:
 ```json
 {
   "RECORDS": {
-    "entityTypeId": "entity_type_id",
-    "statusSubview": {
-      "template": "versioning",
+    "entityTypeId": "entity_type_id"
+  },
+  "REPORT current status": {
+    "sourceMode": "ENTITY",
+    "entityTypeId": "version_records_entity_type_id",
+    "presentationMode": "CURRENT_STATUS",
+    "currentStatus": {
+      "subjectFieldId": "optional_relation_to_procedure_field_id",
       "stateFieldId": "state_field_id",
       "dateFieldId": "optional_date_field_id"
     }
@@ -537,9 +542,10 @@ Important: AppView access controls which experience appears to the user. It is n
 Returns data for a configured `REPORT` AppView assigned to the authenticated user. Query parameters:
 
 - `from`: optional `YYYY-MM-DD`.
+- `search`: optional text search. For `CURRENT_STATUS`, this searches the report record name and, when configured, the related subject/procedure display name.
 - `to`: optional `YYYY-MM-DD`.
 
-For entity-backed reports, missing `sourceMode` means `ENTITY`. The date range filters records using the report's configured `dateFieldId`; display names such as "Fecha" are not used as identifiers. The response includes the REPORT config, including `timeFilter` and `valueDisplay`, entity metadata, selected field definitions including option `id`, visible `label`, and internal `value`, and serialized records with relation display names. Record values keep the stored value; clients apply `valueDisplay[fieldId] = LABEL | INTERNAL_VALUE` only when rendering REPORT output. Entity-backed presentation modes are `TABLE` and `MATRIX`. Reports stored before `timeFilter` are serialized with `mode = RANGE`, `defaultPeriod = CURRENT_MONTH`, and `allowChange = true`.
+For entity-backed reports, missing `sourceMode` means `ENTITY`. `TABLE` and `MATRIX` date ranges filter records using the report's configured top-level `dateFieldId`; display names such as "Fecha" are not used as identifiers. `CURRENT_STATUS` does not require a top-level report date field: it uses `currentStatus.stateFieldId` as the required state source, optional `currentStatus.subjectFieldId` to group rows by procedure, and optional `currentStatus.dateFieldId` to choose the latest historical version per procedure and sort descending. If no current-status date field is configured, Opco does not substitute `createdAt`, `updatedAt`, or audit dates. The response includes the REPORT config, including `timeFilter` and `valueDisplay`, entity metadata, selected field definitions including option `id`, visible `label`, and internal `value`, and serialized records with relation display names. Record values keep the stored value; clients apply `valueDisplay[fieldId] = LABEL | INTERNAL_VALUE` only when rendering REPORT output. Entity-backed presentation modes are `TABLE`, `MATRIX`, and `CURRENT_STATUS`. Reports stored before `timeFilter` are serialized with `mode = RANGE`, `defaultPeriod = CURRENT_MONTH`, and `allowChange = true`.
 
 Reports can also use a STATE_UPDATE source in this first shape:
 
@@ -887,8 +893,8 @@ Query params:
 | `page` | `1` | Positive page number. |
 | `pageSize` | `50` | Positive page size, maximum `100`. |
 | `search` | none | Text search using the current Opco searchable-field rules. Searchable `RELATION` fields match related records by `targetRecord.displayName`, not by raw record id. |
-| `fieldIdHasValue` | none | Optional active `EntityField.id`. When present, only records with a stored value for that field are returned. This is intended for embedded status/versioning subviews and is evaluated before pagination. |
-| `sort` | `createdAt DESC, id DESC` | `displayName`, `updatedAt`, `field:<fieldKey>`, or `fieldId:<fieldId>`. New AppView subviews should use `fieldId:<fieldId>` for stable field identity. |
+| `fieldIdHasValue` | none | Optional active `EntityField.id`. When present, only records with a stored value for that field are returned. It is evaluated before pagination. |
+| `sort` | `createdAt DESC, id DESC` | `displayName`, `updatedAt`, `field:<fieldKey>`, or `fieldId:<fieldId>`. New field-backed queries should use `fieldId:<fieldId>` for stable field identity. |
 | `direction` | `desc` | `asc` or `desc`. Used only with explicit `sort`. |
 
 Success response:
@@ -920,7 +926,7 @@ Success response:
 
 Records are never returned as raw `EntityRecord`/`EntityValue` Prisma objects. `values` is keyed by `EntityField.key`.
 
-For a `RECORDS` AppView with `statusSubview.template = "versioning"`, clients should request the embedded status tab from this same records endpoint instead of calling workflow endpoints. Use `fieldIdHasValue=<stateFieldId>` and the current parent search term. If `dateFieldId` is configured, use `sort=fieldId:<dateFieldId>&direction=desc`; do not replace a missing `dateFieldId` with `createdAt`, `updatedAt`, or audit dates. The response remains paginated and sourced from the same entity records as the parent `RECORDS` view.
+Clients can use `fieldIdHasValue=<fieldId>` with normal RECORDS queries and combine it with `sort=fieldId:<fieldId>&direction=desc` where a field-backed listing needs this generic filtering or ordering. Status/version consultation belongs to REPORT `CURRENT_STATUS`, not to an embedded RECORDS subview.
 
 `updatedAt` is an ISO 8601 UTC string generated by the server/database from `EntityRecord.updatedAt`, for example `2026-08-19T18:32:10.123Z`. It represents the last server-side modification of the record and can be used by clients as the remote version observed for optimistic offline conflict detection. It is observable only in this stage; record write endpoints do not yet enforce it as a server-side precondition.
 

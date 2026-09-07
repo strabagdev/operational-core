@@ -12,6 +12,7 @@ import {
 
 type ReportQuery = {
   from?: string | null;
+  search?: string | null;
   to?: string | null;
 };
 
@@ -107,11 +108,24 @@ export async function getApiReport({
     .map((fieldId) => fieldsById.get(fieldId))
     .filter((field): field is NonNullable<typeof field> => Boolean(field));
 
-  if (fields.length !== requiredFieldIds.length || !fieldsById.has(config.dateFieldId)) {
+  if (
+    fields.length !== requiredFieldIds.length ||
+    (config.presentationMode !== "CURRENT_STATUS" && !fieldsById.has(config.dateFieldId))
+  ) {
     return {
       ok: false as const,
       response: badRequest("Este reporte necesita configuración.", "INVALID_REPORT_CONFIG"),
     };
+  }
+
+  if (config.presentationMode === "CURRENT_STATUS") {
+    return getApiCurrentStatusReport({
+      appView,
+      config,
+      entity,
+      fields,
+      query,
+    });
   }
 
   const records = await prisma.entityRecord.findMany({
@@ -181,6 +195,128 @@ export async function getApiReport({
       from: formatDateParam(range.from),
       records: sortedRecords.map((record) => serializeApiEntityRecord({ fields, record })),
       to: formatDateParam(range.to),
+    },
+  };
+}
+
+async function getApiCurrentStatusReport({
+  appView,
+  config,
+  entity,
+  fields,
+  query,
+}: {
+  appView: { id: string; name: string; slug: string };
+  config: Extract<ReportAppViewConfig, { presentationMode: "CURRENT_STATUS" }>;
+  entity: {
+    fields: Array<{
+      id: string;
+      key: string;
+    }>;
+    id: string;
+    name: string;
+    slug: string;
+  };
+  fields: Parameters<typeof serializeApiEntityRecord>[0]["fields"];
+  query: ReportQuery;
+}) {
+  const requiredFieldIds = reportRequiredFieldIds(config);
+  const search = query.search?.trim();
+  const dateFieldId = config.currentStatus.dateFieldId;
+  const subjectFieldId = config.currentStatus.subjectFieldId;
+
+  const records = await prisma.entityRecord.findMany({
+    include: {
+      outgoingRelations: {
+        include: {
+          targetRecord: {
+            select: {
+              displayName: true,
+              entityTypeId: true,
+              id: true,
+            },
+          },
+        },
+        orderBy: { targetRecord: { displayName: "asc" } },
+        where: subjectFieldId ? { sourceFieldId: subjectFieldId } : { sourceFieldId: { in: requiredFieldIds } },
+      },
+      values: {
+        select: {
+          booleanValue: true,
+          dateValue: true,
+          decimalValue: true,
+          entityFieldId: true,
+          integerValue: true,
+          jsonValue: true,
+          textValue: true,
+        },
+        where: { entityFieldId: { in: requiredFieldIds } },
+      },
+    },
+    orderBy: dateFieldId
+      ? [{ displayName: "asc" }, { id: "asc" }]
+      : [{ displayName: "asc" }, { id: "asc" }],
+    where: {
+      entityTypeId: entity.id,
+      values: {
+        some: {
+          entityFieldId: config.currentStatus.stateFieldId,
+          OR: [
+            { textValue: { not: null } },
+            { integerValue: { not: null } },
+            { decimalValue: { not: null } },
+            { booleanValue: { not: null } },
+            { dateValue: { not: null } },
+            { jsonValue: { not: Prisma.JsonNull } },
+          ],
+        },
+      },
+      ...(search
+        ? {
+            OR: [
+              { displayName: { contains: search, mode: "insensitive" as const } },
+              ...(subjectFieldId
+                ? [{
+                    outgoingRelations: {
+                      some: {
+                        sourceFieldId: subjectFieldId,
+                        targetRecord: {
+                          displayName: { contains: search, mode: "insensitive" as const },
+                        },
+                      },
+                    },
+                  }]
+                : []),
+            ],
+          }
+        : {}),
+    },
+  });
+
+  const currentRecords = latestCurrentStatusRecords({
+    dateFieldId,
+    records,
+    subjectFieldId,
+  });
+
+  return {
+    ok: true as const,
+    data: {
+      appView: {
+        id: appView.id,
+        name: appView.name,
+        slug: appView.slug,
+      },
+      config: stripConfigType(config),
+      entity: {
+        id: entity.id,
+        name: entity.name,
+        slug: entity.slug,
+      },
+      fields: fields.map(serializeApiEntityField),
+      from: "",
+      records: currentRecords.map((record) => serializeApiEntityRecord({ fields, record })),
+      to: "",
     },
   };
 }
@@ -294,6 +430,14 @@ function reportRequiredFieldIds(config: ReportAppViewConfig) {
     ].filter((fieldId): fieldId is string => Boolean(fieldId))));
   }
 
+  if (config.presentationMode === "CURRENT_STATUS") {
+    return Array.from(new Set([
+      config.currentStatus.subjectFieldId,
+      config.currentStatus.stateFieldId,
+      config.currentStatus.dateFieldId,
+    ].filter((fieldId): fieldId is string => Boolean(fieldId))));
+  }
+
   const fieldIds = config.presentationMode === "TABLE"
     ? [config.dateFieldId, ...config.table.visibleFieldIds, config.table.defaultSortFieldId]
     : [
@@ -305,6 +449,61 @@ function reportRequiredFieldIds(config: ReportAppViewConfig) {
       ];
 
   return Array.from(new Set(fieldIds.filter((fieldId): fieldId is string => Boolean(fieldId))));
+}
+
+function latestCurrentStatusRecords({
+  dateFieldId,
+  records,
+  subjectFieldId,
+}: {
+  dateFieldId?: string;
+  records: Array<{
+    displayName: string;
+    id: string;
+    outgoingRelations: Array<{
+      sourceFieldId: string;
+      targetRecord: {
+        displayName: string;
+        entityTypeId: string;
+        id: string;
+      };
+      targetRecordId: string;
+    }>;
+    updatedAt: Date;
+    values: Array<{
+      dateValue?: Date | null;
+      entityFieldId: string;
+    }>;
+  }>;
+  subjectFieldId?: string;
+}) {
+  const sorted = dateFieldId
+    ? [...records].sort((left, right) => {
+        const leftDate = currentStatusDateValue(left.values, dateFieldId);
+        const rightDate = currentStatusDateValue(right.values, dateFieldId);
+        const comparison = rightDate.localeCompare(leftDate);
+
+        return comparison === 0 ? left.displayName.localeCompare(right.displayName) || left.id.localeCompare(right.id) : comparison;
+      })
+    : [...records].sort((left, right) => left.displayName.localeCompare(right.displayName) || left.id.localeCompare(right.id));
+  const bySubject = new Map<string, (typeof sorted)[number]>();
+
+  for (const record of sorted) {
+    const subjectRelation = subjectFieldId
+      ? record.outgoingRelations.find((relation) => relation.sourceFieldId === subjectFieldId)
+      : null;
+    const groupKey = subjectRelation?.targetRecordId ?? record.id;
+
+    if (!bySubject.has(groupKey)) {
+      bySubject.set(groupKey, record);
+    }
+  }
+
+  return Array.from(bySubject.values());
+}
+
+function currentStatusDateValue(values: Array<{ dateValue?: Date | null; entityFieldId: string }>, fieldId: string) {
+  return values.find((value) => value.entityFieldId === fieldId)?.dateValue?.toISOString() ?? "";
 }
 
 function sortStateUpdateProjectionRows({
