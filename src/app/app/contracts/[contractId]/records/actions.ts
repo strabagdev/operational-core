@@ -1,10 +1,11 @@
 "use server";
 
+import { Prisma } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
 import { requireAuthenticatedUser } from "@/lib/auth-guards";
-import { friendlyActionError } from "@/lib/entity-config";
+import { friendlyActionError, friendlyRecordUpdateError } from "@/lib/entity-config";
 import {
   EntityImportValidationError,
   EntityImportUserError,
@@ -192,6 +193,12 @@ export async function updateEntityRecordAction(
       formData,
     );
   } catch (error) {
+    logUnexpectedRecordUpdateError(error, {
+      contractId,
+      entityTypeId,
+      recordId,
+    });
+
     redirect(
       recordPath(
         contractId,
@@ -199,7 +206,7 @@ export async function updateEntityRecordAction(
         recordId,
         {
           edit: true,
-          message: friendlyActionError(error),
+          message: friendlyRecordUpdateError(error),
           fieldErrors: error instanceof FieldValidationError ? error.fieldErrors : undefined,
           formValues: serializeRecordFormValues(formData),
         },
@@ -271,6 +278,99 @@ function serializeRecordFormValues(formData: FormData) {
   }
 
   return values;
+}
+
+function logUnexpectedRecordUpdateError(
+  error: unknown,
+  context: {
+    contractId: string;
+    entityTypeId: string;
+    recordId: string;
+  },
+) {
+  if (isExpectedRecordUpdateError(error)) {
+    return;
+  }
+
+  const details = {
+    operation: "updateEntityRecord",
+    contractId: context.contractId,
+    entityTypeId: context.entityTypeId,
+    recordId: context.recordId,
+    errorName: error instanceof Error ? error.name : typeof error,
+    prismaCode: prismaErrorCode(error),
+    message: error instanceof Error ? error.message : String(error),
+    meta: safePrismaMeta(error),
+    stack: process.env.NODE_ENV === "development" && error instanceof Error
+      ? error.stack
+      : undefined,
+  };
+
+  console.error("Record update error", details);
+}
+
+function isExpectedRecordUpdateError(error: unknown) {
+  return (
+    error instanceof FieldValidationError ||
+    (error instanceof Error &&
+      (
+        error.name === "UserFacingError" ||
+        error.name === "FieldEditorInputError"
+      ))
+  );
+}
+
+function prismaErrorCode(error: unknown) {
+  if (error instanceof Prisma.PrismaClientKnownRequestError) {
+    return error.code;
+  }
+
+  if (error instanceof Prisma.PrismaClientInitializationError) {
+    return error.errorCode;
+  }
+
+  return undefined;
+}
+
+function safePrismaMeta(error: unknown) {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError)) {
+    return undefined;
+  }
+
+  return sanitizeLogValue(error.meta);
+}
+
+function sanitizeLogValue(value: unknown, depth = 0): unknown {
+  if (value === null || value === undefined) {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    return value.length > 200 ? `${value.slice(0, 200)}...` : value;
+  }
+
+  if (typeof value === "number" || typeof value === "boolean") {
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    return depth >= 2 ? "[Array]" : value.map((item) => sanitizeLogValue(item, depth + 1));
+  }
+
+  if (typeof value === "object") {
+    if (depth >= 2) {
+      return "[Object]";
+    }
+
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, item]) => [
+        key,
+        sanitizeLogValue(item, depth + 1),
+      ]),
+    );
+  }
+
+  return String(value);
 }
 
 export async function importEntityRecordsAction(

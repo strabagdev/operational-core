@@ -406,6 +406,85 @@ export function friendlyActionError(error: unknown) {
   return "No se pudo completar la operación.";
 }
 
+export function friendlyRecordUpdateError(error: unknown) {
+  const classified = classifyRecordUpdateError(error);
+
+  if (classified) {
+    return classified;
+  }
+
+  return friendlyActionError(error);
+}
+
+function classifyRecordUpdateError(error: unknown) {
+  if (error instanceof Prisma.PrismaClientKnownRequestError) {
+    if (error.code === "P2025") {
+      return "El registro ya no existe o fue modificado.";
+    }
+
+    if (error.code === "P2003") {
+      return "No fue posible guardar los cambios porque el registro está relacionado con otros datos.";
+    }
+
+    if (isTemporaryPersistenceCode(error.code)) {
+      return "No fue posible guardar los cambios por un problema temporal. Intenta nuevamente.";
+    }
+  }
+
+  if (
+    error instanceof Prisma.PrismaClientInitializationError ||
+    error instanceof Prisma.PrismaClientUnknownRequestError
+  ) {
+    return "No fue posible guardar los cambios por un problema temporal. Intenta nuevamente.";
+  }
+
+  if (isConnectionLikeError(error)) {
+    return "No fue posible guardar los cambios por un problema temporal. Intenta nuevamente.";
+  }
+
+  if (isExistingFriendlyError(error)) {
+    return undefined;
+  }
+
+  return "No fue posible guardar los cambios.";
+}
+
+function isExistingFriendlyError(error: unknown) {
+  return (
+    error instanceof z.ZodError ||
+    (error instanceof Error &&
+      (
+        error.name === "UserFacingError" ||
+        error.name === "FieldValidationError" ||
+        error.name === "FieldEditorInputError"
+      )) ||
+    (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002")
+  );
+}
+
+function isTemporaryPersistenceCode(code: string) {
+  return code === "P1001" ||
+    code === "P1008" ||
+    code === "P1017" ||
+    code === "P2028" ||
+    code === "P2034" ||
+    code === "P2037";
+}
+
+function isConnectionLikeError(error: unknown) {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  const message = error.message.toLowerCase();
+
+  return message.includes("can't reach database server") ||
+    message.includes("connection") ||
+    message.includes("timeout") ||
+    message.includes("timed out") ||
+    message.includes("transaction already closed");
+}
+
 export async function getContractEntityTypes(contractId: string, userId: string) {
   const contract = await getAuthorizedContractAdmin(contractId, userId);
 

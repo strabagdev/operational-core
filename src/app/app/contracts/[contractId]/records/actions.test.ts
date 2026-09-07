@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { Prisma } from "@prisma/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   createEntityRecordAction,
@@ -42,7 +43,12 @@ class RedirectError extends Error {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.spyOn(console, "error").mockImplementation(() => undefined);
   mocks.requireAuthenticatedUser.mockResolvedValue({ id: "user_1" });
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 describe("entity record save redirects", () => {
@@ -121,4 +127,134 @@ describe("entity record save redirects", () => {
       return !url.includes("edit=1") && !url.includes("mode=edit");
     });
   });
+
+  it("preserves domain error messages on edit", async () => {
+    const error = new Error("Cargo contiene registros relacionados no válidos.");
+
+    error.name = "UserFacingError";
+    mocks.updateEntityRecord.mockRejectedValue(error);
+
+    await expectUpdateRedirectMessage(
+      new FormData(),
+      "Cargo contiene registros relacionados no válidos.",
+    );
+
+    expect(console.error).not.toHaveBeenCalled();
+  });
+
+  it("maps P2003 relation constraints to a friendly edit message", async () => {
+    mocks.updateEntityRecord.mockRejectedValue(
+      prismaKnownError(
+        "P2003",
+        "Foreign key constraint failed on the field: EntityRelation_targetRecordId_fkey",
+        { field_name: "EntityRelation_targetRecordId_fkey" },
+      ),
+    );
+
+    await expectUpdateRedirectMessage(
+      new FormData(),
+      "No fue posible guardar los cambios porque el registro está relacionado con otros datos.",
+    );
+
+    expect(console.error).toHaveBeenCalledWith(
+      "Record update error",
+      expect.objectContaining({
+        operation: "updateEntityRecord",
+        contractId: "contract_1",
+        entityTypeId: "entity_1",
+        recordId: "record_1",
+        errorName: "PrismaClientKnownRequestError",
+        prismaCode: "P2003",
+      }),
+    );
+  });
+
+  it("maps P2025 missing records to a friendly edit message", async () => {
+    mocks.updateEntityRecord.mockRejectedValue(
+      prismaKnownError("P2025", "Record to update not found.", {
+        modelName: "EntityRecord",
+      }),
+    );
+
+    await expectUpdateRedirectMessage(
+      new FormData(),
+      "El registro ya no existe o fue modificado.",
+    );
+  });
+
+  it("maps Prisma initialization errors to a temporary persistence message", async () => {
+    mocks.updateEntityRecord.mockRejectedValue(
+      new Prisma.PrismaClientInitializationError(
+        "Can't reach database server at db.example.test:5432",
+        "6.19.3",
+        "P1001",
+      ),
+    );
+
+    await expectUpdateRedirectMessage(
+      new FormData(),
+      "No fue posible guardar los cambios por un problema temporal. Intenta nuevamente.",
+    );
+  });
+
+  it("maps Prisma unknown request errors to a temporary persistence message", async () => {
+    mocks.updateEntityRecord.mockRejectedValue(
+      new Prisma.PrismaClientUnknownRequestError(
+        "Transaction already closed.",
+        { clientVersion: "6.19.3" },
+      ),
+    );
+
+    await expectUpdateRedirectMessage(
+      new FormData(),
+      "No fue posible guardar los cambios por un problema temporal. Intenta nuevamente.",
+    );
+  });
+
+  it("maps unknown exceptions to a generic save message without leaking technical details", async () => {
+    const formData = new FormData();
+
+    formData.set("field_name", "Ana corregida");
+    mocks.updateEntityRecord.mockRejectedValue(
+      new Error("database exploded while writing EntityRelation_targetRecordId_fkey"),
+    );
+
+    await expect(
+      updateEntityRecordAction("contract_1", "entity_1", "record_1", formData),
+    ).rejects.toSatisfy((error: unknown) => {
+      const url = error instanceof RedirectError ? error.url : "";
+
+      return (
+        url.includes("error=No+fue+posible+guardar+los+cambios.") &&
+        !url.includes("database+exploded") &&
+        !url.includes("EntityRelation_targetRecordId_fkey")
+      );
+    });
+  });
 });
+
+function prismaKnownError(
+  code: string,
+  message: string,
+  meta?: Record<string, unknown>,
+) {
+  return new Prisma.PrismaClientKnownRequestError(message, {
+    code,
+    clientVersion: "6.19.3",
+    meta,
+  });
+}
+
+async function expectUpdateRedirectMessage(formData: FormData, message: string) {
+  await expect(
+    updateEntityRecordAction("contract_1", "entity_1", "record_1", formData),
+  ).rejects.toSatisfy((error: unknown) => {
+    const url = error instanceof RedirectError ? error.url : "";
+
+    return (
+      url.startsWith("/app/contracts/contract_1/records/entity_1/record_1?") &&
+      url.includes("edit=1") &&
+      new URLSearchParams(url.split("?")[1] ?? "").get("error") === message
+    );
+  });
+}
