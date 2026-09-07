@@ -534,7 +534,27 @@ Returns data for a configured `REPORT` AppView assigned to the authenticated use
 - `from`: optional `YYYY-MM-DD`.
 - `to`: optional `YYYY-MM-DD`.
 
-The date range filters records using the report's configured `dateFieldId`; display names such as "Fecha" are not used as identifiers. The response includes the REPORT config, including `timeFilter` and `valueDisplay`, entity metadata, selected field definitions including option `id`, visible `label`, and internal `value`, and serialized records with relation display names. Record values keep the stored value; clients apply `valueDisplay[fieldId] = LABEL | INTERNAL_VALUE` only when rendering REPORT output. First presentation modes are `TABLE` and `MATRIX`. Reports stored before `timeFilter` are serialized with `mode = RANGE`, `defaultPeriod = CURRENT_MONTH`, and `allowChange = true`.
+For entity-backed reports, missing `sourceMode` means `ENTITY`. The date range filters records using the report's configured `dateFieldId`; display names such as "Fecha" are not used as identifiers. The response includes the REPORT config, including `timeFilter` and `valueDisplay`, entity metadata, selected field definitions including option `id`, visible `label`, and internal `value`, and serialized records with relation display names. Record values keep the stored value; clients apply `valueDisplay[fieldId] = LABEL | INTERNAL_VALUE` only when rendering REPORT output. Entity-backed presentation modes are `TABLE` and `MATRIX`. Reports stored before `timeFilter` are serialized with `mode = RANGE`, `defaultPeriod = CURRENT_MONTH`, and `allowChange = true`.
+
+Reports can also use a STATE_UPDATE source in this first shape:
+
+```json
+{
+  "sourceMode": "STATE_UPDATE",
+  "stateUpdateAppViewId": "state_update_view_id",
+  "projection": "CURRENT",
+  "presentationMode": "TABLE",
+  "table": {
+    "visibleFieldIds": ["subject.displayName", "state:status_field_id", "state:revision_field_id"],
+    "defaultSortFieldId": "subject.displayName",
+    "defaultSortDirection": "asc"
+  }
+}
+```
+
+`STATE_UPDATE` reports require the referenced workflow to be active, in the same contract, type `WORKFLOW`, and `workflowKey = state-update`. User access to the REPORT is sufficient for the request; the API does not require the user to have separate access to the referenced workflow. `projection = CURRENT` currently supports only `uniqueness.mode = subject` and returns one row per source subject, including subjects with no current event.
+
+STATE_UPDATE CURRENT field ids are virtual: `subject.displayName`, `state:<fieldId>` for configured state fields, and optional `current.updatedAt`. SELECT state values preserve `{ "optionId": "...", "label": "..." }`; scalar state values preserve their typed value. Each returned record includes the source subject id/display name, `currentRecordId`, `currentUpdatedAt`, `states`, and `values` keyed by the selected virtual field ids.
 
 ### GET /api/v1/contracts/:contractId/views/:appViewId/workflow/state-update
 

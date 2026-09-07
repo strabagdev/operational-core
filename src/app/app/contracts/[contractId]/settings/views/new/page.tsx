@@ -4,7 +4,7 @@ import { notFound, redirect } from "next/navigation";
 import { auth } from "@/auth";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { getAppViewAdminData } from "@/lib/app-views";
+import { getAppViewAdminData, parseAppViewConfig } from "@/lib/app-views";
 
 import { createAppViewAction } from "../actions";
 import { AppViewForm } from "../app-view-form";
@@ -48,6 +48,13 @@ export default async function NewAppViewPage({
         <CardContent>
           <AppViewForm
             action={createAppViewAction.bind(null, contractId)}
+            appViews={data.appViews.map((appView) => ({
+              active: appView.active,
+              config: parseAppViewConfig(appView),
+              id: appView.id,
+              name: appView.name,
+              type: appView.type,
+            }))}
             entityTypes={data.entityTypes}
             submitLabel="Crear experiencia"
           />

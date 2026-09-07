@@ -57,33 +57,52 @@ export type AppViewConfig =
   | { type: "BOARD"; entityTypeId: string; groupByFieldKey: string }
   | { type: "DASHBOARD"; entityTypeIds: string[] };
 
-export type ReportAppViewConfig = {
-  type: "REPORT";
-  entityTypeId: string;
-  dateFieldId: string;
-  timeFilter: ReportTimeFilterConfig;
-  valueDisplay: Record<string, ReportSelectValueDisplay>;
-} & (
+export type ReportAppViewConfig =
+  | ({
+      type: "REPORT";
+      sourceMode?: "ENTITY";
+      entityTypeId: string;
+      dateFieldId: string;
+      timeFilter: ReportTimeFilterConfig;
+      valueDisplay: Record<string, ReportSelectValueDisplay>;
+    } & (
+      | {
+          presentationMode: "TABLE";
+          table: {
+            visibleFieldIds: string[];
+            defaultSortFieldId?: string;
+            defaultSortDirection: "asc" | "desc";
+          };
+          matrix?: never;
+        }
+      | {
+          presentationMode: "MATRIX";
+          matrix: {
+            rowFieldId: string;
+            columnFieldId: string;
+            valueFieldId: string;
+            summaryFieldId?: string;
+          };
+          table?: never;
+        }
+    ))
   | {
+      type: "REPORT";
+      sourceMode: "STATE_UPDATE";
+      stateUpdateAppViewId: string;
+      projection: "CURRENT";
       presentationMode: "TABLE";
+      timeFilter: ReportTimeFilterConfig;
+      valueDisplay: Record<string, ReportSelectValueDisplay>;
       table: {
         visibleFieldIds: string[];
         defaultSortFieldId?: string;
         defaultSortDirection: "asc" | "desc";
       };
+      entityTypeId?: never;
+      dateFieldId?: never;
       matrix?: never;
-    }
-  | {
-      presentationMode: "MATRIX";
-      matrix: {
-        rowFieldId: string;
-        columnFieldId: string;
-        valueFieldId: string;
-        summaryFieldId?: string;
-      };
-      table?: never;
-    }
-);
+    };
 
 export type ReportTimeFilterConfig = {
   mode: "RANGE" | "MONTH";
@@ -178,10 +197,13 @@ export function getAppViewInput(formData: FormData) {
       ),
       requiredStateFieldIds: formData.getAll("requiredStateFieldIds"),
       reportColumnFieldId: formData.get("reportColumnFieldId"),
+      reportProjection: formData.get("reportProjection"),
       reportRowFieldId: formData.get("reportRowFieldId"),
       reportSummaryFieldId: formData.get("reportSummaryFieldId"),
       reportValueFieldId: formData.get("reportValueFieldId"),
+      reportSourceMode: formData.get("reportSourceMode"),
       sourceEntityTypeId: formData.get("sourceEntityTypeId"),
+      stateUpdateAppViewId: formData.get("stateUpdateAppViewId"),
       stateFieldIds: formData.getAll("stateFieldIds"),
       stateFieldDefaultOptions: Object.fromEntries(
         Array.from(formData.entries())
@@ -406,6 +428,10 @@ export function summarizeAppViewConfig({
   }
 
   if (config.type === "REPORT") {
+    if (config.sourceMode === "STATE_UPDATE") {
+      return `Actualización de estado · ${config.projection === "CURRENT" ? "Estado actual" : config.projection}`;
+    }
+
     return `${entityName(config.entityTypeId)} · ${config.presentationMode === "TABLE" ? "Tabla" : "Matriz"}`;
   }
 
@@ -543,6 +569,43 @@ async function validateAppViewConfig({
 
   if (type === "REPORT") {
     const config = parseReportConfigInput(rawConfig);
+
+    if (config.sourceMode === "STATE_UPDATE") {
+      const stateUpdateAppView = await requireStateUpdateReportSource(client, contractId, config.stateUpdateAppViewId);
+      const stateUpdateConfig = parseAppViewConfig(stateUpdateAppView);
+
+      if (stateUpdateConfig.type !== "WORKFLOW" || stateUpdateConfig.workflowKey !== "state-update") {
+        throw new AppViewConfigError(
+          "Selecciona una experiencia STATE_UPDATE válida.",
+          "stateUpdateAppViewId",
+        );
+      }
+
+      if (stateUpdateConfig.uniqueness.mode !== "subject") {
+        throw new AppViewConfigError(
+          "Los reportes de estado actual STATE_UPDATE solo soportan unicidad por sujeto en esta versión.",
+          "stateUpdateAppViewId",
+        );
+      }
+
+      validateStateUpdateReportTableFields(config, stateUpdateConfig);
+
+      return {
+        type,
+        sourceMode: "STATE_UPDATE",
+        stateUpdateAppViewId: config.stateUpdateAppViewId,
+        projection: "CURRENT",
+        presentationMode: "TABLE",
+        timeFilter: config.timeFilter,
+        valueDisplay: config.valueDisplay,
+        table: {
+          visibleFieldIds: config.table.visibleFieldIds,
+          ...(config.table.defaultSortFieldId ? { defaultSortFieldId: config.table.defaultSortFieldId } : {}),
+          defaultSortDirection: config.table.defaultSortDirection,
+        },
+      };
+    }
+
     const entityType = await requireEntityType(client, contractId, config.entityTypeId);
 
     validateReportAppViewFields({
@@ -612,9 +675,7 @@ const recordsConfigInputSchema = z.object({
   entityTypeId: z.string().trim().min(1, "Selecciona una entidad."),
 });
 
-const reportBaseConfigInputSchema = z.object({
-  entityTypeId: z.string().trim().min(1, "Selecciona una entidad."),
-  dateFieldId: z.string().trim().min(1, "Selecciona el campo de fecha."),
+const reportCommonConfigInputSchema = z.object({
   timeFilter: z.object({
     mode: z.enum(["RANGE", "MONTH"]),
     defaultPeriod: z.literal("CURRENT_MONTH"),
@@ -623,8 +684,14 @@ const reportBaseConfigInputSchema = z.object({
   valueDisplay: z.record(z.string(), z.enum(["LABEL", "INTERNAL_VALUE"])).default({}),
 });
 
-const reportConfigInputSchema = z.discriminatedUnion("presentationMode", [
-  reportBaseConfigInputSchema.extend({
+const reportEntityBaseConfigInputSchema = reportCommonConfigInputSchema.extend({
+  sourceMode: z.literal("ENTITY").optional(),
+  entityTypeId: z.string().trim().min(1, "Selecciona una entidad."),
+  dateFieldId: z.string().trim().min(1, "Selecciona el campo de fecha."),
+});
+
+const reportEntityConfigInputSchema = z.discriminatedUnion("presentationMode", [
+  reportEntityBaseConfigInputSchema.extend({
     presentationMode: z.literal("TABLE"),
     table: z.object({
       visibleFieldIds: z.array(z.string().trim().min(1)).default([]),
@@ -632,7 +699,7 @@ const reportConfigInputSchema = z.discriminatedUnion("presentationMode", [
       defaultSortDirection: z.enum(["asc", "desc"]).default("desc"),
     }),
   }),
-  reportBaseConfigInputSchema.extend({
+  reportEntityBaseConfigInputSchema.extend({
     presentationMode: z.literal("MATRIX"),
     matrix: z.object({
       rowFieldId: z.string().trim().min(1, "Selecciona el campo de filas."),
@@ -641,6 +708,25 @@ const reportConfigInputSchema = z.discriminatedUnion("presentationMode", [
       summaryFieldId: z.string().trim().optional().transform((value) => value || undefined),
     }),
   }),
+]);
+
+const reportStateUpdateConfigInputSchema = reportCommonConfigInputSchema.extend({
+  sourceMode: z.literal("STATE_UPDATE"),
+  stateUpdateAppViewId: z.string().trim().min(1, "Selecciona una experiencia de actualización de estado."),
+  projection: z.literal("CURRENT"),
+  presentationMode: z.literal("TABLE", {
+    message: "Los reportes STATE_UPDATE solo soportan tabla en esta versión.",
+  }),
+  table: z.object({
+    visibleFieldIds: z.array(z.string().trim().min(1)).default([]),
+    defaultSortFieldId: z.string().trim().optional().transform((value) => value || undefined),
+    defaultSortDirection: z.enum(["asc", "desc"]).default("asc"),
+  }),
+});
+
+const reportConfigInputSchema = z.union([
+  reportStateUpdateConfigInputSchema,
+  reportEntityConfigInputSchema,
 ]);
 
 const workflowBaseConfigInputSchema = z.object({
@@ -741,6 +827,30 @@ async function requireEntityType(
   return entityType;
 }
 
+async function requireStateUpdateReportSource(
+  client: PrismaClientLike,
+  contractId: string,
+  appViewId: string,
+) {
+  const appView = await client.appView.findFirst({
+    where: {
+      active: true,
+      contractId,
+      id: appViewId,
+      type: "WORKFLOW",
+    },
+  });
+
+  if (!appView) {
+    throw new AppViewConfigError(
+      "La experiencia STATE_UPDATE del reporte no está disponible.",
+      "stateUpdateAppViewId",
+    );
+  }
+
+  return appView;
+}
+
 function parseWorkflowConfigInput(rawConfig: unknown) {
   if (!rawConfig || typeof rawConfig !== "object" || Array.isArray(rawConfig)) {
     return z.discriminatedUnion("workflowKey", [
@@ -791,6 +901,24 @@ function parseReportConfigInput(rawConfig: unknown) {
   }
 
   const raw = rawConfig as Record<string, unknown>;
+  const sourceMode = raw.sourceMode ?? raw.reportSourceMode ?? "ENTITY";
+
+  if (sourceMode === "STATE_UPDATE") {
+    return reportConfigInputSchema.parse({
+      stateUpdateAppViewId: raw.stateUpdateAppViewId,
+      projection: raw.projection ?? raw.reportProjection ?? "CURRENT",
+      sourceMode,
+      timeFilter: parseReportTimeFilter(raw),
+      valueDisplay: parseReportValueDisplay(raw),
+      presentationMode: raw.presentationMode ?? "TABLE",
+      table: {
+        visibleFieldIds: uniqueStrings(stringArray(raw.visibleFieldIds ?? (isRecord(raw.table) ? raw.table.visibleFieldIds : []))),
+        defaultSortFieldId: raw.defaultSortFieldId ?? (isRecord(raw.table) ? raw.table.defaultSortFieldId : undefined),
+        defaultSortDirection: raw.defaultSortDirection ?? (isRecord(raw.table) ? raw.table.defaultSortDirection : undefined) ?? "asc",
+      },
+    });
+  }
+
   const presentationMode = raw.presentationMode === "MATRIX" ? "MATRIX" : "TABLE";
 
   if (presentationMode === "MATRIX") {
@@ -806,7 +934,9 @@ function parseReportConfigInput(rawConfig: unknown) {
         rowFieldId: raw.reportRowFieldId ?? matrix.rowFieldId,
         columnFieldId: raw.reportColumnFieldId ?? matrix.columnFieldId,
         valueFieldId: raw.reportValueFieldId ?? matrix.valueFieldId,
-        summaryFieldId: raw.reportSummaryFieldId ?? matrix.summaryFieldId,
+        ...((raw.reportSummaryFieldId ?? matrix.summaryFieldId)
+          ? { summaryFieldId: raw.reportSummaryFieldId ?? matrix.summaryFieldId }
+          : {}),
       },
     });
   }
@@ -856,7 +986,7 @@ function validateReportAppViewFields({
   config,
   fields,
 }: {
-  config: z.infer<typeof reportConfigInputSchema>;
+  config: z.infer<typeof reportEntityConfigInputSchema>;
   fields: Array<{
     id: string;
     isActive: boolean;
@@ -901,6 +1031,41 @@ function validateReportAppViewFields({
   }
 
   validateReportValueDisplayFields(config.valueDisplay, fields);
+}
+
+function validateStateUpdateReportTableFields(
+  config: z.infer<typeof reportStateUpdateConfigInputSchema>,
+  stateUpdateConfig: StateUpdateWorkflowConfig,
+) {
+  if (config.table.visibleFieldIds.length === 0) {
+    throw new AppViewConfigError("Selecciona al menos una columna visible.", "visibleFieldIds");
+  }
+
+  const validFieldIds = stateUpdateCurrentReportFieldIds(stateUpdateConfig);
+
+  for (const fieldId of config.table.visibleFieldIds) {
+    if (!validFieldIds.has(fieldId)) {
+      throw new AppViewConfigError(
+        "Las columnas del reporte STATE_UPDATE deben venir del sujeto o de sus campos de estado.",
+        "visibleFieldIds",
+      );
+    }
+  }
+
+  if (config.table.defaultSortFieldId && !validFieldIds.has(config.table.defaultSortFieldId)) {
+    throw new AppViewConfigError(
+      "El orden del reporte STATE_UPDATE debe usar una columna virtual disponible.",
+      "defaultSortFieldId",
+    );
+  }
+}
+
+function stateUpdateCurrentReportFieldIds(config: StateUpdateWorkflowConfig) {
+  return new Set([
+    "subject.displayName",
+    "current.updatedAt",
+    ...config.stateFields.map((field) => `state:${field.fieldId}`),
+  ]);
 }
 
 function validateReportValueDisplayFields(

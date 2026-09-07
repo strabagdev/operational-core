@@ -203,6 +203,79 @@ describe("AppViewForm", () => {
     expect(html).toContain('name="reportValueDisplay:status_field"');
   });
 
+  it("renders STATE_UPDATE CURRENT report table configuration", () => {
+    const html = renderToStaticMarkup(
+      <AppViewForm
+        action={noopAction}
+        appViews={[
+          {
+            active: true,
+            config: {
+              sourceEntityTypeId: "people",
+              targetEntityTypeId: "attendance",
+              subjectFieldId: "person_field",
+              stateFields: [
+                { fieldId: "status_field", label: "Estatus actual", required: true },
+                { fieldId: "counter_field", label: "Revisión actual", required: true },
+                { fieldId: "approved_field", required: false },
+              ],
+              extraFieldIds: [],
+              uniqueness: { mode: "subject" },
+              historyMode: "append",
+              type: "WORKFLOW",
+              workflowKey: "state-update",
+            },
+            id: "versionado_view",
+            name: "Versionado Procedimientos",
+            type: "WORKFLOW",
+          },
+        ]}
+        entityTypes={entityTypes}
+        initialValues={{
+          active: true,
+          config: {
+            sourceMode: "STATE_UPDATE",
+            stateUpdateAppViewId: "versionado_view",
+            projection: "CURRENT",
+            presentationMode: "TABLE",
+            timeFilter: {
+              allowChange: true,
+              defaultPeriod: "CURRENT_MONTH",
+              mode: "RANGE",
+            },
+            table: {
+              defaultSortDirection: "asc",
+              defaultSortFieldId: "subject.displayName",
+              visibleFieldIds: ["subject.displayName", "state:status_field", "state:counter_field"],
+            },
+            type: "REPORT",
+            valueDisplay: {},
+          },
+          icon: "clipboard-check",
+          name: "Estado actual",
+          slug: "estado-actual",
+          sortOrder: 4,
+          type: "REPORT",
+        }}
+        submitLabel="Guardar experiencia"
+      />,
+    );
+
+    expect(html).toContain("Fuente del reporte");
+    expect(html).toContain("Actualización de estado");
+    expect(html).toContain("Versionado Procedimientos");
+    expect(html).toContain("Estado actual");
+    expect(html).toContain("Tabla");
+    expect(html).not.toContain("Matriz");
+    expect(html).toContain("Columnas disponibles");
+    expect(html).toContain("Personas");
+    expect(html).toContain("Estatus actual");
+    expect(html).toContain("Revisión actual");
+    expect(html).toContain("Actualizado");
+    expect(html).toContain('name="visibleFieldIds"');
+    expect(html).toMatch(/name="visibleFieldIds" checked="" value="state:counter_field"/);
+  });
+
   it("renders the selected workflow configuration", () => {
     const html = renderToStaticMarkup(
       <AppViewForm

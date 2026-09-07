@@ -32,7 +32,7 @@ import {
 import { prisma } from "@/lib/prisma";
 import { isStateUpdateCompatibleWorkflow } from "@/lib/workflow-catalog";
 
-type StateUpdateField = {
+export type StateUpdateField = {
   config: Prisma.JsonValue | null;
   createdAt: Date;
   description: string | null;
@@ -73,8 +73,8 @@ type StateUpdateIdempotencyKey = {
 export type StateUpdateContext = {
   appView: { id: string; name: string; slug: string };
   config: StateUpdateWorkflowConfig;
-  sourceEntityType: { fields: StateUpdateField[]; id: string; name: string };
-  targetEntityType: { fields: StateUpdateField[]; id: string; name: string };
+  sourceEntityType: { fields: StateUpdateField[]; id: string; name: string; slug: string };
+  targetEntityType: { fields: StateUpdateField[]; id: string; name: string; slug: string };
   stateOptionsByFieldId: Map<string, StateOption[]>;
   stateOptionsById: Map<string, StateOption>;
   stateOptionsByValueByFieldId: Map<string, Map<string, StateOption>>;
@@ -665,6 +665,7 @@ function entityTypeSelect() {
     },
     id: true,
     name: true,
+    slug: true,
   } satisfies Prisma.EntityTypeSelect;
 }
 
@@ -947,7 +948,7 @@ async function resolveRequestedStates({
   return { ok: true as const, states };
 }
 
-type ExistingStateUpdate = {
+export type ExistingStateUpdate = {
   subjectRecordId: string;
   record: {
     displayName: string;
@@ -966,7 +967,7 @@ type ExistingStateUpdate = {
   };
 };
 
-async function findExistingStateUpdates({
+export async function findExistingStateUpdates({
   context,
   date,
   subjectRecordIds,
@@ -1738,7 +1739,7 @@ function serializeExisting(existing: ExistingStateUpdate | undefined, context: S
   };
 }
 
-function serializeRecordStates(values: Array<{
+export function serializeRecordStates(values: Array<{
   booleanValue?: boolean | null;
   dateValue?: Date | null;
   decimalValue?: Prisma.Decimal | null;
@@ -1764,7 +1765,7 @@ function serializeRecordStates(values: Array<{
   }));
 }
 
-function serializeStateFields(context: StateUpdateContext) {
+export function serializeStateFields(context: StateUpdateContext) {
   return context.config.stateFields.map((stateField) => {
     const field = requireField(context, stateField.fieldId);
 

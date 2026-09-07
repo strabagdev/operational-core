@@ -54,6 +54,13 @@ export default async function AppViewDetailPage({
         <CardContent>
           <AppViewForm
             action={updateAppViewAction.bind(null, contractId, appViewId)}
+            appViews={data.appViews.map((appView) => ({
+              active: appView.active,
+              config: parseAppViewConfig(appView),
+              id: appView.id,
+              name: appView.name,
+              type: appView.type,
+            }))}
             entityTypes={data.entityTypes}
             initialValues={{
               active: data.appView.active,

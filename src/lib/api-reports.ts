@@ -5,6 +5,10 @@ import { parseAppViewConfig, type ReportAppViewConfig } from "@/lib/app-views";
 import { serializeApiEntityField, serializeApiEntityRecord } from "@/lib/api-entity-serializer";
 import { badRequest, forbidden, notFound } from "@/lib/api-response";
 import { prisma } from "@/lib/prisma";
+import {
+  getStateUpdateCurrentProjection,
+  type StateUpdateCurrentProjectionRow,
+} from "@/lib/state-update-projection";
 
 type ReportQuery = {
   from?: string | null;
@@ -60,6 +64,15 @@ export async function getApiReport({
 
   if (!range.ok) {
     return range;
+  }
+
+  if (config.sourceMode === "STATE_UPDATE") {
+    return getApiStateUpdateCurrentReport({
+      appView,
+      config,
+      contractId,
+      range,
+    });
   }
 
   const entity = await prisma.entityType.findFirst({
@@ -172,6 +185,81 @@ export async function getApiReport({
   };
 }
 
+async function getApiStateUpdateCurrentReport({
+  appView,
+  config,
+  contractId,
+  range,
+}: {
+  appView: { id: string; name: string; slug: string };
+  config: Extract<ReportAppViewConfig, { sourceMode: "STATE_UPDATE" }>;
+  contractId: string;
+  range: Extract<ReturnType<typeof parseReportRange>, { ok: true }>;
+}) {
+  const projection = await getStateUpdateCurrentProjection({
+    contractId,
+    stateUpdateAppViewId: config.stateUpdateAppViewId,
+  });
+
+  if (!projection.ok) {
+    return projection;
+  }
+
+  const fieldsById = new Map(projection.data.fields.map((field) => [field.id, field]));
+  const requiredFieldIds = reportRequiredFieldIds(config);
+  const fields = requiredFieldIds
+    .map((fieldId) => fieldsById.get(fieldId))
+    .filter((field): field is NonNullable<typeof field> => Boolean(field));
+
+  if (fields.length !== requiredFieldIds.length) {
+    return {
+      ok: false as const,
+      response: badRequest("Este reporte necesita configuración.", "INVALID_REPORT_CONFIG"),
+    };
+  }
+
+  const records = sortStateUpdateProjectionRows({
+    config,
+    rows: projection.data.rows,
+  }).map((row) => ({
+    currentRecordId: row.currentRecordId,
+    currentUpdatedAt: row.currentUpdatedAt,
+    displayName: row.subject.displayName,
+    id: row.subject.id,
+    states: row.states,
+    subject: row.subject,
+    updatedAt: row.currentUpdatedAt,
+    values: Object.fromEntries(fields.map((field) => [field.key, row.values[field.id] ?? null])),
+  }));
+
+  return {
+    ok: true as const,
+    data: {
+      appView: {
+        id: appView.id,
+        name: appView.name,
+        slug: appView.slug,
+      },
+      config: stripConfigType(config),
+      entity: {
+        id: projection.data.subjectEntityType.id,
+        name: projection.data.subjectEntityType.name,
+        slug: projection.data.subjectEntityType.slug,
+      },
+      fields,
+      from: formatDateParam(range.from),
+      projection: {
+        sourceAppView: projection.data.appView,
+        targetEntityType: projection.data.targetEntityType,
+        type: "STATE_UPDATE_CURRENT",
+        workflow: projection.data.workflow,
+      },
+      records,
+      to: formatDateParam(range.to),
+    },
+  };
+}
+
 function parseReportRange(query: ReportQuery) {
   const today = new Date();
   const defaultDate = formatDateParam(today);
@@ -199,6 +287,13 @@ function parseReportRange(query: ReportQuery) {
 }
 
 function reportRequiredFieldIds(config: ReportAppViewConfig) {
+  if (config.sourceMode === "STATE_UPDATE") {
+    return Array.from(new Set([
+      ...config.table.visibleFieldIds,
+      config.table.defaultSortFieldId,
+    ].filter((fieldId): fieldId is string => Boolean(fieldId))));
+  }
+
   const fieldIds = config.presentationMode === "TABLE"
     ? [config.dateFieldId, ...config.table.visibleFieldIds, config.table.defaultSortFieldId]
     : [
@@ -210,6 +305,39 @@ function reportRequiredFieldIds(config: ReportAppViewConfig) {
       ];
 
   return Array.from(new Set(fieldIds.filter((fieldId): fieldId is string => Boolean(fieldId))));
+}
+
+function sortStateUpdateProjectionRows({
+  config,
+  rows,
+}: {
+  config: Extract<ReportAppViewConfig, { sourceMode: "STATE_UPDATE" }>;
+  rows: StateUpdateCurrentProjectionRow[];
+}) {
+  if (!config.table.defaultSortFieldId) {
+    return rows;
+  }
+
+  const direction = config.table.defaultSortDirection === "asc" ? 1 : -1;
+
+  return [...rows].sort((left, right) => {
+    const leftValue = comparableProjectionValue(left.values[config.table.defaultSortFieldId as string]);
+    const rightValue = comparableProjectionValue(right.values[config.table.defaultSortFieldId as string]);
+    const comparison = leftValue.localeCompare(rightValue, undefined, { numeric: true, sensitivity: "base" });
+
+    return comparison === 0 ? left.subject.displayName.localeCompare(right.subject.displayName) : comparison * direction;
+  });
+}
+
+function comparableProjectionValue(value: unknown) {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "object") {
+    if ("label" in value && typeof value.label === "string") return value.label;
+    if ("optionId" in value && typeof value.optionId === "string") return value.optionId;
+    return JSON.stringify(value);
+  }
+
+  return String(value);
 }
 
 function sortReportRecords({
@@ -275,6 +403,9 @@ function comparableValue(value: {
 function stripConfigType(config: ReportAppViewConfig) {
   const normalized = { ...config } as Record<string, unknown>;
   delete normalized.type;
+  if (normalized.sourceMode === "ENTITY") {
+    delete normalized.sourceMode;
+  }
   return normalized;
 }
 

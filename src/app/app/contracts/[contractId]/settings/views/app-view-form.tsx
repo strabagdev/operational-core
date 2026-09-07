@@ -35,11 +35,26 @@ type AppViewEntityTypeOption = {
   name: string;
 };
 
+type AppViewOption = {
+  active: boolean;
+  config: AppViewConfig;
+  id: string;
+  name: string;
+  type: AppViewType;
+};
+
+type ReportVirtualFieldOption = {
+  id: string;
+  name: string;
+  type: string;
+};
+
 type AppViewFormProps = {
   action: (
     state: AppViewActionState,
     formData: FormData,
   ) => Promise<AppViewActionState>;
+  appViews?: AppViewOption[];
   entityTypes: AppViewEntityTypeOption[];
   initialActionState?: AppViewActionState;
   initialValues?: {
@@ -58,6 +73,7 @@ const stateUpdateStateFieldTypes = new Set(["SELECT", "TEXT", "INTEGER", "DECIMA
 
 export function AppViewForm({
   action,
+  appViews = [],
   entityTypes,
   initialActionState,
   initialValues,
@@ -75,7 +91,8 @@ export function AppViewForm({
   );
   const [entityTypeId, setEntityTypeId] = useState(
     valueFromState(state, "entityTypeId") ||
-    (initialValues?.config.type === "RECORDS" || initialValues?.config.type === "REPORT" || initialValues?.config.type === "BOARD"
+    (initialValues?.config.type === "RECORDS" || initialValues?.config.type === "BOARD" ||
+      (initialValues?.config.type === "REPORT" && initialValues.config.sourceMode !== "STATE_UPDATE")
       ? initialValues.config.entityTypeId
       : entityTypes[0]?.id ?? ""),
   );
@@ -111,7 +128,9 @@ export function AppViewForm({
   );
   const [dateFieldId, setDateFieldId] = useState(
     valueFromState(state, "dateFieldId") ||
-    ((initialValues?.config.type === "WORKFLOW" || initialValues?.config.type === "REPORT") && "dateFieldId" in initialValues.config
+    ((initialValues?.config.type === "WORKFLOW" ||
+      (initialValues?.config.type === "REPORT" && initialValues.config.sourceMode !== "STATE_UPDATE")) &&
+      "dateFieldId" in initialValues.config
       ? initialValues.config.dateFieldId ?? ""
       : firstActiveFieldId(targetEntityType, "DATE") || firstActiveFieldId(reportEntityType, "DATE")),
   );
@@ -189,6 +208,28 @@ export function AppViewForm({
     valueFromState(state, "presentationMode") ||
     (initialValues?.config.type === "REPORT" ? initialValues.config.presentationMode : "TABLE"),
   );
+  const stateUpdateReportOptions = appViews.filter((appView) =>
+    appView.active &&
+    appView.type === "WORKFLOW" &&
+    appView.config.type === "WORKFLOW" &&
+    appView.config.workflowKey === "state-update",
+  );
+  const [reportSourceMode, setReportSourceMode] = useState(
+    valueFromState(state, "reportSourceMode") ||
+    (initialValues?.config.type === "REPORT" && initialValues.config.sourceMode === "STATE_UPDATE"
+      ? "STATE_UPDATE"
+      : "ENTITY"),
+  );
+  const [stateUpdateAppViewId, setStateUpdateAppViewId] = useState(
+    valueFromState(state, "stateUpdateAppViewId") ||
+    (initialValues?.config.type === "REPORT" && initialValues.config.sourceMode === "STATE_UPDATE"
+      ? initialValues.config.stateUpdateAppViewId
+      : stateUpdateReportOptions[0]?.id ?? ""),
+  );
+  const selectedStateUpdateReportView = stateUpdateReportOptions.find((appView) => appView.id === stateUpdateAppViewId);
+  const stateUpdateReportFields = selectedStateUpdateReportView?.config.type === "WORKFLOW"
+    ? stateUpdateCurrentReportFields(selectedStateUpdateReportView.config, entityTypes)
+    : [];
   const [reportTimeMode, setReportTimeMode] = useState(
     valueFromState(state, "reportTimeMode") ||
     (initialValues?.config.type === "REPORT" ? initialValues.config.timeFilter?.mode ?? "RANGE" : "RANGE"),
@@ -206,13 +247,15 @@ export function AppViewForm({
     valuesFromState(state, "visibleFieldIds") ??
       (initialValues?.config.type === "REPORT" && initialValues.config.presentationMode === "TABLE"
         ? initialValues.config.table.visibleFieldIds
-        : []),
+        : reportSourceMode === "STATE_UPDATE"
+          ? stateUpdateReportFields.map((field) => field.id).filter((fieldId) => fieldId !== "current.updatedAt")
+          : []),
   );
   const [defaultSortFieldId, setDefaultSortFieldId] = useState(
     valueFromState(state, "defaultSortFieldId") ||
     (initialValues?.config.type === "REPORT" && initialValues.config.presentationMode === "TABLE"
       ? initialValues.config.table.defaultSortFieldId ?? ""
-      : ""),
+      : reportSourceMode === "STATE_UPDATE" ? "subject.displayName" : ""),
   );
   const [defaultSortDirection, setDefaultSortDirection] = useState(
     valueFromState(state, "defaultSortDirection") ||
@@ -352,6 +395,7 @@ export function AppViewForm({
         groupByFieldKey={groupByFieldKey}
         dateFieldId={dateFieldId}
         extraFieldIds={extraFieldIds}
+        appViews={appViews}
         setEntityTypeId={setEntityTypeId}
         observationFieldId={observationFieldId}
         personFieldId={personFieldId}
@@ -366,6 +410,7 @@ export function AppViewForm({
         reportTimeMode={reportTimeMode}
         reportColumnFieldId={reportColumnFieldId}
         reportRowFieldId={reportRowFieldId}
+        reportSourceMode={reportSourceMode}
         reportSummaryFieldId={reportSummaryFieldId}
         reportValueFieldId={reportValueFieldId}
         reportValueDisplay={reportValueDisplay}
@@ -385,18 +430,21 @@ export function AppViewForm({
         setReportTimeMode={setReportTimeMode}
         setReportColumnFieldId={setReportColumnFieldId}
         setReportRowFieldId={setReportRowFieldId}
+        setReportSourceMode={setReportSourceMode}
         setReportSummaryFieldId={setReportSummaryFieldId}
         setReportValueFieldId={setReportValueFieldId}
         setDefaultCheckInOptionId={setDefaultCheckInOptionId}
         setSourceEntityTypeId={setSourceEntityTypeId}
         setStateFieldIds={setStateFieldIds}
         setStatusFieldId={setStatusFieldId}
+        setStateUpdateAppViewId={setStateUpdateAppViewId}
         setSubjectFieldId={setSubjectFieldId}
         setTargetEntityTypeId={setTargetEntityTypeId}
         setUniquenessMode={setUniquenessMode}
         setWorkflowKey={setWorkflowKey}
         sourceEntityTypeId={sourceEntityTypeId}
         stateFieldIds={stateFieldIds}
+        stateUpdateAppViewId={stateUpdateAppViewId}
         statusFieldId={statusFieldId}
         targetEntityTypeId={targetEntityTypeId}
         toggleDashboardEntity={toggleDashboardEntity}
@@ -438,6 +486,7 @@ export function AppViewForm({
 
 function ConfigFields({
   activeBoardFields,
+  appViews,
   contextFieldIds,
   dashboardEntityTypeIds,
   dateFieldId,
@@ -460,6 +509,7 @@ function ConfigFields({
   reportTimeMode,
   reportColumnFieldId,
   reportRowFieldId,
+  reportSourceMode,
   reportSummaryFieldId,
   reportValueFieldId,
   reportValueDisplay,
@@ -481,10 +531,12 @@ function ConfigFields({
   setReportTimeMode,
   setReportColumnFieldId,
   setReportRowFieldId,
+  setReportSourceMode,
   setReportSummaryFieldId,
   setReportValueFieldId,
   setSourceEntityTypeId,
   setStateFieldIds,
+  setStateUpdateAppViewId,
   setStatusFieldId,
   setSubjectFieldId,
   setTargetEntityTypeId,
@@ -492,6 +544,7 @@ function ConfigFields({
   setWorkflowKey,
   sourceEntityTypeId,
   stateFieldIds,
+  stateUpdateAppViewId,
   statusFieldId,
   subjectFieldId,
   targetEntityTypeId,
@@ -503,6 +556,7 @@ function ConfigFields({
   workflowKey,
 }: {
   activeBoardFields: AppViewEntityTypeOption["fields"];
+  appViews: AppViewOption[];
   contextFieldIds: string[];
   dashboardEntityTypeIds: Set<string>;
   dateFieldId: string;
@@ -525,6 +579,7 @@ function ConfigFields({
   reportTimeMode: string;
   reportColumnFieldId: string;
   reportRowFieldId: string;
+  reportSourceMode: string;
   reportSummaryFieldId: string;
   reportValueFieldId: string;
   reportValueDisplay: Record<string, "LABEL" | "INTERNAL_VALUE">;
@@ -546,10 +601,12 @@ function ConfigFields({
   setReportTimeMode: (value: string) => void;
   setReportColumnFieldId: (value: string) => void;
   setReportRowFieldId: (value: string) => void;
+  setReportSourceMode: (value: string) => void;
   setReportSummaryFieldId: (value: string) => void;
   setReportValueFieldId: (value: string) => void;
   setSourceEntityTypeId: (value: string) => void;
   setStateFieldIds: (value: Set<string>) => void;
+  setStateUpdateAppViewId: (value: string) => void;
   setStatusFieldId: (value: string) => void;
   setSubjectFieldId: (value: string) => void;
   setTargetEntityTypeId: (value: string) => void;
@@ -557,6 +614,7 @@ function ConfigFields({
   setWorkflowKey: (value: string) => void;
   sourceEntityTypeId: string;
   stateFieldIds: Set<string>;
+  stateUpdateAppViewId: string;
   statusFieldId: string;
   subjectFieldId: string;
   targetEntityTypeId: string;
@@ -790,51 +848,118 @@ function ConfigFields({
     const reportEntityType = entityTypes.find((entityType) => entityType.id === entityTypeId);
     const activeReportFields = reportEntityType?.fields.filter((field) => field.isActive) ?? [];
     const sortableFields = activeReportFields.filter((field) => reportSortableFieldTypes.has(field.type));
+    const stateUpdateReportOptions = appViews.filter((appView) =>
+      appView.active &&
+      appView.type === "WORKFLOW" &&
+      appView.config.type === "WORKFLOW" &&
+      appView.config.workflowKey === "state-update",
+    );
+    const selectedStateUpdateReportView = stateUpdateReportOptions.find((appView) => appView.id === stateUpdateAppViewId);
+    const stateUpdateReportFields = selectedStateUpdateReportView?.config.type === "WORKFLOW"
+      ? stateUpdateCurrentReportFields(selectedStateUpdateReportView.config, entityTypes)
+      : [];
+    const isStateUpdateReport = reportSourceMode === "STATE_UPDATE";
+    const stateUpdateSortableFields = stateUpdateReportFields.filter((field) => reportSortableFieldTypes.has(field.type));
 
     return (
       <fieldset className="grid gap-3 rounded-md border border-border p-3">
         <legend className="px-1 text-sm font-medium">Configuración del reporte</legend>
-        <EntitySelect
-          label="Entidad"
-          name="entityTypeId"
+        <SelectControl
+          label="Fuente del reporte"
+          name="reportSourceMode"
           onChange={(value) => {
-            const nextEntityType = entityTypes.find((entityType) => entityType.id === value);
-            const nextDateFieldId = firstActiveFieldId(nextEntityType, "DATE");
-
-            setEntityTypeId(value);
-            setDateFieldId(nextDateFieldId);
-            setVisibleFieldIds([]);
-            setDefaultSortFieldId(nextDateFieldId);
-            setReportRowFieldId(firstActiveFieldId(nextEntityType, "RELATION") || firstActiveFieldId(nextEntityType, "TEXT"));
-            setReportColumnFieldId(nextDateFieldId);
-            setReportValueFieldId(firstActiveFieldId(nextEntityType, "SELECT"));
-            setReportSummaryFieldId("");
+            setReportSourceMode(value);
+            if (value === "STATE_UPDATE") {
+              setPresentationMode("TABLE");
+              setDefaultSortFieldId("subject.displayName");
+              setVisibleFieldIds(stateUpdateReportFields.map((field) => field.id).filter((fieldId) => fieldId !== "current.updatedAt"));
+            }
           }}
-          options={entityTypes}
-          value={entityTypeId}
-          errors={fieldErrors?.entityTypeId}
+          options={[
+            { label: "Entidad", value: "ENTITY" },
+            { label: "Actualización de estado", value: "STATE_UPDATE" },
+          ]}
+          value={reportSourceMode}
         />
-        <div className="grid gap-3 sm:grid-cols-2">
-          <FieldSelect
-            fields={activeReportFields}
-            label="Campo de fecha"
-            name="dateFieldId"
-            onChange={setDateFieldId}
-            preferredType="DATE"
-            value={dateFieldId}
-            errors={fieldErrors?.dateFieldId}
-          />
-          <SelectControl
-            label="Presentación"
-            name="presentationMode"
-            onChange={setPresentationMode}
-            options={[
-              { label: "Tabla", value: "TABLE" },
-              { label: "Matriz", value: "MATRIX" },
-            ]}
-            value={presentationMode}
-          />
-        </div>
+        {isStateUpdateReport ? (
+          <div className="grid gap-3 sm:grid-cols-2">
+            <AppViewSelect
+              errors={fieldErrors?.stateUpdateAppViewId}
+              label="Experiencia"
+              name="stateUpdateAppViewId"
+              onChange={(value) => {
+                setStateUpdateAppViewId(value);
+                const nextView = stateUpdateReportOptions.find((appView) => appView.id === value);
+                const nextFields = nextView?.config.type === "WORKFLOW"
+                  ? stateUpdateCurrentReportFields(nextView.config, entityTypes)
+                  : [];
+
+                setVisibleFieldIds(nextFields.map((field) => field.id).filter((fieldId) => fieldId !== "current.updatedAt"));
+                setDefaultSortFieldId("subject.displayName");
+              }}
+              options={stateUpdateReportOptions}
+              value={stateUpdateAppViewId}
+            />
+            <SelectControl
+              label="Proyección"
+              name="reportProjection"
+              onChange={() => undefined}
+              options={[{ label: "Estado actual", value: "CURRENT" }]}
+              value="CURRENT"
+            />
+            <SelectControl
+              label="Presentación"
+              name="presentationMode"
+              onChange={() => undefined}
+              options={[{ label: "Tabla", value: "TABLE" }]}
+              value="TABLE"
+            />
+          </div>
+        ) : (
+          <>
+            <EntitySelect
+              label="Entidad"
+              name="entityTypeId"
+              onChange={(value) => {
+                const nextEntityType = entityTypes.find((entityType) => entityType.id === value);
+                const nextDateFieldId = firstActiveFieldId(nextEntityType, "DATE");
+
+                setEntityTypeId(value);
+                setDateFieldId(nextDateFieldId);
+                setVisibleFieldIds([]);
+                setDefaultSortFieldId(nextDateFieldId);
+                setReportRowFieldId(firstActiveFieldId(nextEntityType, "RELATION") || firstActiveFieldId(nextEntityType, "TEXT"));
+                setReportColumnFieldId(nextDateFieldId);
+                setReportValueFieldId(firstActiveFieldId(nextEntityType, "SELECT"));
+                setReportSummaryFieldId("");
+              }}
+              options={entityTypes}
+              value={entityTypeId}
+              errors={fieldErrors?.entityTypeId}
+            />
+            <div className="grid gap-3 sm:grid-cols-2">
+              <FieldSelect
+                fields={activeReportFields}
+                label="Campo de fecha"
+                name="dateFieldId"
+                onChange={setDateFieldId}
+                preferredType="DATE"
+                value={dateFieldId}
+                errors={fieldErrors?.dateFieldId}
+              />
+              <SelectControl
+                label="Presentación"
+                name="presentationMode"
+                onChange={setPresentationMode}
+                options={[
+                  { label: "Tabla", value: "TABLE" },
+                  { label: "Matriz", value: "MATRIX" },
+                ]}
+                value={presentationMode}
+              />
+            </div>
+          </>
+        )}
         <fieldset className="grid gap-3 rounded-md border border-border p-3">
           <legend className="px-1 text-sm font-medium">Filtro temporal</legend>
           <div className="grid gap-3 sm:grid-cols-2">
@@ -869,7 +994,39 @@ function ConfigFields({
             Permitir cambiar período
           </label>
         </fieldset>
-        {presentationMode === "MATRIX" ? (
+        {isStateUpdateReport ? (
+          <div className="grid gap-3">
+            <OrderedVirtualFieldChecklist
+              fields={stateUpdateReportFields}
+              label="Columnas disponibles"
+              name="visibleFieldIds"
+              selected={visibleFieldIds}
+              setSelected={setVisibleFieldIds}
+            />
+            <FieldError errors={fieldErrors?.visibleFieldIds} />
+            <div className="grid gap-3 sm:grid-cols-2">
+              <VirtualFieldSelect
+                errors={fieldErrors?.defaultSortFieldId}
+                fields={stateUpdateSortableFields}
+                includeEmpty
+                label="Orden"
+                name="defaultSortFieldId"
+                onChange={setDefaultSortFieldId}
+                value={defaultSortFieldId}
+              />
+              <SelectControl
+                label="Dirección"
+                name="defaultSortDirection"
+                onChange={setDefaultSortDirection}
+                options={[
+                  { label: "Ascendente", value: "asc" },
+                  { label: "Descendente", value: "desc" },
+                ]}
+                value={defaultSortDirection}
+              />
+            </div>
+          </div>
+        ) : presentationMode === "MATRIX" ? (
           <div className="grid gap-3">
             <div className="grid gap-3 sm:grid-cols-2">
               <FieldSelect
@@ -1276,6 +1433,61 @@ function OrderedFieldChecklist({
   );
 }
 
+function OrderedVirtualFieldChecklist({
+  fields,
+  label,
+  name,
+  selected,
+  setSelected,
+}: {
+  fields: ReportVirtualFieldOption[];
+  label: string;
+  name: string;
+  selected: string[];
+  setSelected: (value: string[]) => void;
+}) {
+  const fieldsById = new Map(fields.map((field) => [field.id, field]));
+  const selectedIds = selected.filter((fieldId, index) =>
+    selected.indexOf(fieldId) === index && fieldsById.has(fieldId),
+  );
+  const selectedSet = new Set(selectedIds);
+  const orderedFields = [
+    ...selectedIds.map((fieldId) => fieldsById.get(fieldId)!),
+    ...fields.filter((field) => !selectedSet.has(field.id)),
+  ];
+
+  return (
+    <fieldset className="grid gap-2 rounded-md border border-border p-3">
+      <legend className="px-1 text-sm font-medium">{label}</legend>
+      {orderedFields.length === 0 ? (
+        <p className="text-sm text-muted-foreground">No hay campos STATE_UPDATE compatibles.</p>
+      ) : (
+        <div className="grid gap-2 sm:grid-cols-2">
+          {orderedFields.map((field) => (
+            <label className="flex items-center gap-2 text-sm" key={field.id}>
+              <input
+                checked={selectedSet.has(field.id)}
+                className="h-4 w-4"
+                name={name}
+                onChange={(event) => {
+                  if (event.target.checked) {
+                    setSelected([...selectedIds, field.id]);
+                  } else {
+                    setSelected(selectedIds.filter((fieldId) => fieldId !== field.id));
+                  }
+                }}
+                type="checkbox"
+                value={field.id}
+              />
+              {field.name}
+            </label>
+          ))}
+        </div>
+      )}
+    </fieldset>
+  );
+}
+
 function ReportValueDisplayFields({
   fields,
   valueDisplay,
@@ -1319,6 +1531,40 @@ function reportSelectDisplayFields(
     selected.has(field.id) &&
     (field.type === "SELECT" || field.type === "MULTISELECT"),
   );
+}
+
+function stateUpdateCurrentReportFields(
+  config: AppViewConfig,
+  entityTypes: AppViewEntityTypeOption[],
+): ReportVirtualFieldOption[] {
+  if (config.type !== "WORKFLOW" || config.workflowKey !== "state-update") {
+    return [];
+  }
+
+  const sourceEntity = entityTypes.find((entityType) => entityType.id === config.sourceEntityTypeId);
+  const targetEntity = entityTypes.find((entityType) => entityType.id === config.targetEntityTypeId);
+
+  return [
+    {
+      id: "subject.displayName",
+      name: sourceEntity?.name ?? "Sujeto",
+      type: "TEXT",
+    },
+    ...config.stateFields.map((stateField) => {
+      const field = targetEntity?.fields.find((candidate) => candidate.id === stateField.fieldId);
+
+      return {
+        id: `state:${stateField.fieldId}`,
+        name: stateField.label ?? field?.name ?? stateField.fieldId,
+        type: field?.type ?? "TEXT",
+      };
+    }),
+    {
+      id: "current.updatedAt",
+      name: "Actualizado",
+      type: "DATETIME",
+    },
+  ];
 }
 
 function firstActiveFieldId(
@@ -1391,6 +1637,81 @@ function EntitySelect({
         {options.map((entityType) => (
           <option key={entityType.id} value={entityType.id}>
             {entityType.name}
+          </option>
+        ))}
+      </select>
+      <FieldError errors={errors} />
+    </label>
+  );
+}
+
+function AppViewSelect({
+  errors,
+  label,
+  name,
+  onChange,
+  options,
+  value,
+}: {
+  errors?: string[];
+  label: string;
+  name: string;
+  onChange: (value: string) => void;
+  options: AppViewOption[];
+  value: string;
+}) {
+  return (
+    <label className="grid gap-2 text-sm font-medium">
+      {label}
+      <select
+        className="h-10 rounded-md border border-input bg-background px-3 text-sm font-normal outline-none ring-ring focus-visible:ring-2"
+        name={name}
+        onChange={(event) => onChange(event.target.value)}
+        required
+        value={value}
+      >
+        <option value="">Selecciona una experiencia</option>
+        {options.map((appView) => (
+          <option key={appView.id} value={appView.id}>
+            {appView.name}
+          </option>
+        ))}
+      </select>
+      <FieldError errors={errors} />
+    </label>
+  );
+}
+
+function VirtualFieldSelect({
+  errors,
+  fields,
+  includeEmpty = false,
+  label,
+  name,
+  onChange,
+  value,
+}: {
+  errors?: string[];
+  fields: ReportVirtualFieldOption[];
+  includeEmpty?: boolean;
+  label: string;
+  name: string;
+  onChange: (value: string) => void;
+  value: string;
+}) {
+  return (
+    <label className="grid gap-2 text-sm font-medium">
+      {label}
+      <select
+        className="h-10 rounded-md border border-input bg-background px-3 text-sm font-normal outline-none ring-ring focus-visible:ring-2"
+        name={name}
+        onChange={(event) => onChange(event.target.value)}
+        value={value}
+      >
+        {includeEmpty ? <option value="">Sin orden</option> : null}
+        {fields.map((field) => (
+          <option key={field.id} value={field.id}>
+            {field.name}
           </option>
         ))}
       </select>

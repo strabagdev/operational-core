@@ -141,6 +141,132 @@ describe("getApiReport", () => {
     if (result.ok) return;
     expect(result.response.status).toBe(400);
   });
+
+  it("returns STATE_UPDATE CURRENT report rows for every subject", async () => {
+    appViewFindFirst
+      .mockResolvedValueOnce({
+        active: true,
+        config: {
+          sourceMode: "STATE_UPDATE",
+          stateUpdateAppViewId: "view_versionado",
+          projection: "CURRENT",
+          presentationMode: "TABLE",
+          table: {
+            visibleFieldIds: ["subject.displayName", "state:status_field", "state:revision_field", "state:approved_field"],
+            defaultSortFieldId: "state:revision_field",
+            defaultSortDirection: "desc",
+          },
+        },
+        contractId: "contract_1",
+        icon: null,
+        id: "view_report",
+        name: "Estado actual",
+        slug: "estado-actual",
+        sortOrder: 1,
+        type: "REPORT",
+      } as never)
+      .mockResolvedValueOnce(stateUpdateWorkflowAppView() as never);
+    entityTypeFindFirst
+      .mockResolvedValueOnce({
+        fields: [],
+        id: "procedures",
+        name: "Procedimientos",
+        slug: "procedimientos",
+      } as never)
+      .mockResolvedValueOnce(stateUpdateTargetEntity() as never);
+    entityRecordFindMany
+      .mockResolvedValueOnce([
+        { displayName: "PET-001", id: "procedure_1" },
+        { displayName: "PET-002", id: "procedure_2" },
+      ] as never)
+      .mockResolvedValueOnce([
+        {
+          displayName: "Versionado PET-001",
+          id: "version_3",
+          outgoingRelations: [
+            { sourceFieldId: "subject_field", targetRecordId: "procedure_1" },
+          ],
+          updatedAt: new Date("2026-08-03T12:00:00.000Z"),
+          values: [
+            { entityFieldId: "status_field", textValue: "vigente" },
+            { entityFieldId: "revision_field", integerValue: 3 },
+            { booleanValue: true, entityFieldId: "approved_field" },
+          ],
+        },
+      ] as never);
+
+    const result = await getApiReport({
+      appViewId: "view_report",
+      contractId: "contract_1",
+      query: { from: "2026-08-01", to: "2026-08-31" },
+      userId: "user_1",
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    expect(entityRecordFindMany).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      where: { entityTypeId: "procedures" },
+    }));
+    expect(entityRecordFindMany).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      where: expect.objectContaining({
+        entityTypeId: "versions",
+        outgoingRelations: {
+          some: {
+            sourceFieldId: "subject_field",
+            targetRecordId: { in: ["procedure_1", "procedure_2"] },
+          },
+        },
+      }),
+    }));
+    expect(result.data.config).toMatchObject({
+      sourceMode: "STATE_UPDATE",
+      projection: "CURRENT",
+      presentationMode: "TABLE",
+    });
+    expect(result.data.entity).toEqual({
+      id: "procedures",
+      name: "Procedimientos",
+      slug: "procedimientos",
+    });
+    expect(result.data.fields.map((field) => field.key)).toEqual([
+      "subject.displayName",
+      "state:status_field",
+      "state:revision_field",
+      "state:approved_field",
+    ]);
+    expect(result.data.records).toHaveLength(2);
+    expect(result.data.records[0]).toMatchObject({
+      currentRecordId: "version_3",
+      currentUpdatedAt: "2026-08-03T12:00:00.000Z",
+      id: "procedure_1",
+      states: {
+        status_field: { optionId: "status_current", label: "Vigente" },
+        revision_field: 3,
+        approved_field: true,
+      },
+      subject: { displayName: "PET-001", id: "procedure_1" },
+      values: {
+        "subject.displayName": "PET-001",
+        "state:status_field": { optionId: "status_current", label: "Vigente" },
+        "state:revision_field": 3,
+        "state:approved_field": true,
+      },
+    });
+    expect(result.data.records[1]).toMatchObject({
+      currentRecordId: null,
+      currentUpdatedAt: null,
+      id: "procedure_2",
+      states: {},
+      subject: { displayName: "PET-002", id: "procedure_2" },
+      values: {
+        "subject.displayName": "PET-002",
+        "state:status_field": null,
+        "state:revision_field": null,
+        "state:approved_field": null,
+      },
+    });
+  });
 });
 
 function reportEntity() {
@@ -185,5 +311,52 @@ function field(
     sortOrder: id === "date_field" ? 1 : id === "person_field" ? 2 : 3,
     type,
     ...overrides,
+  };
+}
+
+function stateUpdateWorkflowAppView() {
+  return {
+    active: true,
+    config: {
+      workflowKey: "state-update",
+      sourceEntityTypeId: "procedures",
+      targetEntityTypeId: "versions",
+      subjectFieldId: "subject_field",
+      stateFields: [
+        { fieldId: "status_field", required: true },
+        { fieldId: "revision_field", required: true },
+        { fieldId: "approved_field", required: false },
+      ],
+      extraFieldIds: [],
+      uniqueness: { mode: "subject" },
+      historyMode: "append",
+    },
+    contractId: "contract_1",
+    id: "view_versionado",
+    name: "Versionado",
+    slug: "versionado",
+    sortOrder: 1,
+    type: "WORKFLOW",
+  };
+}
+
+function stateUpdateTargetEntity() {
+  return {
+    fields: [
+      field("subject_field", "procedimiento", "Procedimiento", "RELATION", {
+        config: { relationKind: "ONE", targetEntityTypeId: "procedures" },
+      }),
+      field("status_field", "estatus", "Estatus", "SELECT", {
+        options: [
+          { id: "status_current", isActive: true, label: "Vigente", sortOrder: 1, value: "vigente" },
+          { id: "status_review", isActive: true, label: "En revisión", sortOrder: 2, value: "en_revision" },
+        ],
+      }),
+      field("revision_field", "revision", "Revisión", "INTEGER"),
+      field("approved_field", "aprobado", "Aprobado", "BOOLEAN"),
+    ],
+    id: "versions",
+    name: "Versionado",
+    slug: "versionado",
   };
 }

@@ -885,6 +885,90 @@ describe("AppView config validation", () => {
     }));
   });
 
+  it("creates a valid STATE_UPDATE CURRENT REPORT table view", async () => {
+    appViewFindFirst.mockResolvedValueOnce(stateUpdateWorkflowAppView({
+      uniqueness: { mode: "subject" },
+    }) as never);
+
+    await createAppView(
+      "contract_1",
+      "user_1",
+      getAppViewInput(formData({
+        defaultSortDirection: "asc",
+        defaultSortFieldId: "subject.displayName",
+        presentationMode: "TABLE",
+        reportProjection: "CURRENT",
+        reportTimeAllowChange: true,
+        reportSourceMode: "STATE_UPDATE",
+        stateUpdateAppViewId: "versionado_view",
+        type: "REPORT",
+        visibleFieldIds: ["subject.displayName", "state:status_field", "state:cost_field", "state:status_field"],
+      })),
+    );
+
+    expect(appViewCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        config: {
+          sourceMode: "STATE_UPDATE",
+          stateUpdateAppViewId: "versionado_view",
+          projection: "CURRENT",
+          presentationMode: "TABLE",
+          timeFilter: {
+            allowChange: true,
+            defaultPeriod: "CURRENT_MONTH",
+            mode: "RANGE",
+          },
+          valueDisplay: {},
+          table: {
+            visibleFieldIds: ["subject.displayName", "state:status_field", "state:cost_field"],
+            defaultSortFieldId: "subject.displayName",
+            defaultSortDirection: "asc",
+          },
+        },
+        type: "REPORT",
+      }),
+    }));
+  });
+
+  it("rejects STATE_UPDATE REPORT matrix presentation", async () => {
+    await expect(
+      createAppView(
+        "contract_1",
+        "user_1",
+        getAppViewInput(formData({
+          presentationMode: "MATRIX",
+          reportProjection: "CURRENT",
+          reportSourceMode: "STATE_UPDATE",
+          stateUpdateAppViewId: "versionado_view",
+          type: "REPORT",
+          visibleFieldIds: ["subject.displayName"],
+        })),
+      ),
+    ).rejects.toThrow("Los reportes STATE_UPDATE solo soportan tabla en esta versión.");
+  });
+
+  it("rejects STATE_UPDATE CURRENT REPORT when workflow uniqueness is not subject", async () => {
+    appViewFindFirst.mockResolvedValueOnce(stateUpdateWorkflowAppView({
+      uniqueness: { mode: "subject-date" },
+    }) as never);
+
+    await expect(
+      createAppView(
+        "contract_1",
+        "user_1",
+        getAppViewInput(formData({
+          defaultSortFieldId: "subject.displayName",
+          presentationMode: "TABLE",
+          reportProjection: "CURRENT",
+          reportSourceMode: "STATE_UPDATE",
+          stateUpdateAppViewId: "versionado_view",
+          type: "REPORT",
+          visibleFieldIds: ["subject.displayName", "state:status_field"],
+        })),
+      ),
+    ).rejects.toThrow("Los reportes de estado actual STATE_UPDATE solo soportan unicidad por sujeto en esta versión.");
+  });
+
   it("creates a valid REPORT MATRIX view with optional summary", async () => {
     entityTypeFindFirst.mockResolvedValueOnce(attendanceEntityType() as never);
 
@@ -1097,6 +1181,31 @@ function stateUpdateEntityType(overrides: Record<string, unknown> = {}) {
   });
 }
 
+function stateUpdateWorkflowAppView(configOverrides: Record<string, unknown> = {}) {
+  return {
+    active: true,
+    config: {
+      workflowKey: "state-update",
+      sourceEntityTypeId: "equipment",
+      targetEntityTypeId: "attendance",
+      subjectFieldId: "person_field",
+      stateFields: [
+        { fieldId: "status_field", required: true },
+        { fieldId: "cost_field", required: false },
+      ],
+      extraFieldIds: [],
+      uniqueness: { mode: "subject" },
+      historyMode: "append",
+      ...configOverrides,
+    },
+    contractId: "contract_1",
+    id: "versionado_view",
+    name: "Versionado",
+    slug: "versionado",
+    type: "WORKFLOW",
+  };
+}
+
 function attendanceField(
   id: string,
   type: string,
@@ -1234,6 +1343,30 @@ describe("AppView administration", () => {
         columnFieldId: "date_field",
         rowFieldId: "person_field",
         valueFieldId: "status_field",
+      },
+      type: "REPORT",
+    });
+
+    expect(parseAppViewConfig({
+      config: {
+        sourceMode: "STATE_UPDATE",
+        stateUpdateAppViewId: "versionado_view",
+        projection: "CURRENT",
+        presentationMode: "TABLE",
+        table: {
+          visibleFieldIds: ["subject.displayName", "state:status_field"],
+          defaultSortDirection: "asc",
+        },
+      },
+      type: "REPORT",
+    } as never)).toMatchObject({
+      sourceMode: "STATE_UPDATE",
+      stateUpdateAppViewId: "versionado_view",
+      projection: "CURRENT",
+      presentationMode: "TABLE",
+      table: {
+        visibleFieldIds: ["subject.displayName", "state:status_field"],
+        defaultSortDirection: "asc",
       },
       type: "REPORT",
     });
