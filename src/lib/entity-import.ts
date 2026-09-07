@@ -13,11 +13,13 @@ import {
 import {
   FieldValidationError,
   fieldInputName,
+  getPrimaryDisplayField,
   getRelationConfig,
-  getRecordDisplayName,
+  getRecordDisplayNameWithRelations,
   isEmptySerializedValue,
   validateRelationInputs,
   validateRecordValues,
+  type RecordDisplayRelation,
   type RelationInput,
   type SerializedFieldValue,
 } from "./field-validation";
@@ -789,7 +791,12 @@ export async function validateImportRows({
         recordId,
         values,
         relations,
-        displayName: getRecordDisplayName(fields, values),
+        displayName: getImportRowDisplayName({
+          fieldTargets: relationTargets,
+          fields,
+          relations,
+          values,
+        }),
       });
     }
   }
@@ -887,6 +894,45 @@ function normalizeExistingUniqueValues(values: Map<string, string> | Set<string>
 }
 
 type ResolvedRelationTargetsByField = Map<string, Map<string, RelationTargetMatch[]>>;
+
+function getImportRowDisplayName({
+  fieldTargets,
+  fields,
+  relations,
+  values,
+}: {
+  fieldTargets: ResolvedRelationTargetsByField;
+  fields: ImportField[];
+  relations: RelationInput[];
+  values: SerializedFieldValue[];
+}) {
+  const primaryField = getPrimaryDisplayField(fields);
+  const displayRelations: RecordDisplayRelation[] = [];
+
+  if (primaryField?.type === "RELATION") {
+    const targetRecordId = relations.find((relation) => relation.fieldId === primaryField.id)
+      ?.targetRecordIds[0];
+    const target = targetRecordId
+      ? Array.from(fieldTargets.get(primaryField.id)?.values() ?? [])
+        .flat()
+        .find((match) => match.id === targetRecordId)
+      : undefined;
+
+    if (target) {
+      displayRelations.push({
+        displayName: target.displayName,
+        fieldId: primaryField.id,
+        targetRecordId: target.id,
+      });
+    }
+  }
+
+  return getRecordDisplayNameWithRelations({
+    fields,
+    relations: displayRelations,
+    values,
+  });
+}
 
 async function resolveImportRelationTargets({
   errors,

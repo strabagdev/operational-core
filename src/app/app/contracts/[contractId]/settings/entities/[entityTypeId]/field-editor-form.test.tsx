@@ -109,6 +109,33 @@ describe("field editor controls", () => {
     ).toContain("Moneda / unidad");
   });
 
+  it("allows RELATION ONE fields with a target to be configured as primary", () => {
+    const html = renderControls({
+      defaultValues: {
+        relationKind: "ONE",
+        targetEntityTypeId: "empresas",
+        type: "RELATION",
+      },
+    });
+
+    expect(html).toContain("Campo principal");
+    expect(html).toContain('name="displayPrimary"');
+    expect(html).not.toContain("no puede identificar el registro");
+  });
+
+  it("keeps RELATION MANY fields out of primary identity", () => {
+    const html = renderControls({
+      defaultValues: {
+        relationKind: "MANY",
+        targetEntityTypeId: "empresas",
+        type: "RELATION",
+      },
+    });
+
+    expect(html).not.toContain('name="displayPrimary"');
+    expect(html).toContain("Este tipo puede mostrarse como columna, pero no puede identificar el registro.");
+  });
+
   it("shows MONEY currency controls only for MONEY fields", () => {
     expect(renderControls({ defaultValues: { type: "INTEGER" } })).not.toContain("Moneda / unidad");
     expect(renderControls({ defaultValues: { type: "DECIMAL" } })).not.toContain("Moneda / unidad");

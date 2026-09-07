@@ -4,6 +4,11 @@ import { z } from "zod";
 import { dateOnlyToUtcDate } from "./date-only";
 import { orderEntityFields } from "./entity-field-order";
 import {
+  scalarPrimaryDisplayFieldTypes,
+  supportsPrimaryDisplayField,
+  type PrimaryDisplayFieldCandidate,
+} from "./field-display";
+import {
   DEFAULT_MONEY_CURRENCY,
   getMoneyConfig,
   parseMoneyCurrency,
@@ -54,6 +59,12 @@ export type RelationInput = {
 export type RelationConfig = {
   targetEntityTypeId?: string;
   relationKind?: "ONE" | "MANY";
+};
+
+export type RecordDisplayRelation = {
+  displayName?: string | null;
+  fieldId: string;
+  targetRecordId: string;
 };
 
 export type FieldValidationRules = {
@@ -113,14 +124,7 @@ const defaultValueTypes = new Set<EntityFieldType>([
   "URL",
 ]);
 
-export const primaryFieldTypes = new Set<EntityFieldType>([
-  "TEXT",
-  "EMAIL",
-  "PHONE",
-  "URL",
-  "INTEGER",
-  "SELECT",
-]);
+export const primaryFieldTypes = scalarPrimaryDisplayFieldTypes;
 
 export const configurableValidationMatrix: Record<
   EntityFieldType,
@@ -232,12 +236,25 @@ export function getRecordListFields<T extends DisplayField>(fields: T[]) {
 }
 
 export function getRecordDisplayName(fields: DisplayField[], values: SerializedFieldValue[]) {
+  return getRecordDisplayNameWithRelations({ fields, relations: [], values });
+}
+
+export function getRecordDisplayNameWithRelations({
+  fields,
+  relations = [],
+  values,
+}: {
+  fields: DisplayField[];
+  relations?: RecordDisplayRelation[];
+  values: SerializedFieldValue[];
+}) {
   const configuredPrimary = getPrimaryDisplayField(fields);
   const configuredValue = configuredPrimary
-    ? formatDisplayValue(
-        configuredPrimary,
-        values.find((value) => value.fieldId === configuredPrimary.id),
-      )
+    ? formatPrimaryDisplayValue({
+        field: configuredPrimary,
+        relations,
+        value: values.find((value) => value.fieldId === configuredPrimary.id),
+      })
     : "";
 
   if (configuredValue) {
@@ -255,6 +272,27 @@ export function getRecordDisplayName(fields: DisplayField[], values: SerializedF
   const primaryValue = values.find((value) => value.fieldId === primaryField.id);
 
   return primaryValue?.textValue?.trim() || "Registro sin nombre";
+}
+
+function formatPrimaryDisplayValue({
+  field,
+  relations,
+  value,
+}: {
+  field: DisplayField;
+  relations: RecordDisplayRelation[];
+  value?: SerializedFieldValue;
+}) {
+  if (field.type === "RELATION") {
+    return (
+      relations
+        .find((relation) => relation.fieldId === field.id)
+        ?.displayName
+        ?.trim() ?? ""
+    );
+  }
+
+  return formatDisplayValue(field, value);
 }
 
 export function getRelationConfig(config: unknown): RelationConfig {
@@ -341,7 +379,7 @@ export function buildMergedFieldConfig({
     delete nextConfig.defaultValue;
   }
 
-  const cleanDisplay = validateFieldDisplayConfiguration({ type, display });
+  const cleanDisplay = validateFieldDisplayConfiguration({ type, relation, display });
   if (Object.keys(cleanDisplay).length > 0) {
     nextConfig.display = cleanDisplay;
   } else {
@@ -380,7 +418,11 @@ export function buildMergedFieldDisplayConfig({
     existingConfig && typeof existingConfig === "object" && !Array.isArray(existingConfig)
       ? { ...(existingConfig as Record<string, unknown>) }
       : {};
-  const cleanDisplay = validateFieldDisplayConfiguration({ type, display });
+  const cleanDisplay = validateFieldDisplayConfiguration({
+    type,
+    relation: type === "RELATION" ? getRelationConfig(existingConfig) : undefined,
+    display,
+  });
 
   if (Object.keys(cleanDisplay).length > 0) {
     base.display = cleanDisplay;
@@ -396,9 +438,11 @@ export function buildMergedFieldDisplayConfig({
 }
 
 export function validateFieldDisplayConfiguration({
+  relation,
   type,
   display,
 }: {
+  relation?: RelationConfig;
   type: EntityFieldType;
   display?: FieldDisplayConfig;
 }) {
@@ -409,7 +453,13 @@ export function validateFieldDisplayConfiguration({
   }
 
   if (display.primary) {
-    if (!primaryFieldTypes.has(type)) {
+    const field: PrimaryDisplayFieldCandidate = {
+      type,
+      relationKind: relation?.relationKind,
+      targetEntityTypeId: relation?.targetEntityTypeId,
+    };
+
+    if (!supportsPrimaryDisplayField(field)) {
       throw userError(`${type} no puede ser campo principal.`);
     }
     clean.primary = true;

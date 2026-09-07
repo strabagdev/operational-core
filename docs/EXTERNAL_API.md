@@ -1065,6 +1065,8 @@ Relation values are serialized as:
 
 All relation target ids are validated server-side. The target record must belong to the configured target entity type inside the same contract.
 
+When an entity uses a `RELATION ONE` field as its primary display field, record create and patch requests still submit the relation value as the target record id. Operational Core resolves that id server-side and persists `EntityRecord.displayName` from the target record's `displayName`; raw target record ids are not used as visible identity.
+
 `TIME` values represent a local time of day without date or timezone. API clients must send canonical `HH:mm`, for example:
 
 ```json

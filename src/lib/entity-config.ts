@@ -5,11 +5,13 @@ import { getAuthorizedContractAdmin } from "./contracts";
 import {
   buildMergedFieldConfig,
   buildMergedFieldDisplayConfig,
-  getRecordDisplayName,
+  getRecordDisplayNameWithRelations,
   parseFieldConfig,
+  type DisplayField,
   type FieldDisplayConfig,
   type FieldErrorMap,
   type FieldValidationRules,
+  type RecordDisplayRelation,
   type SerializedFieldValue,
 } from "./field-validation";
 import {
@@ -1338,7 +1340,7 @@ async function unsetPrimaryFields(
   }
 }
 
-type DisplayNameField = Parameters<typeof getRecordDisplayName>[0][number] & {
+type DisplayNameField = DisplayField & {
   createdAt?: Date | string | null;
   isActive: boolean;
 };
@@ -1453,6 +1455,17 @@ async function recalculateEntityTypeDisplayNames(
       select: {
         id: true,
         displayName: true,
+        outgoingRelations: {
+          include: {
+            targetRecord: {
+              select: {
+                displayName: true,
+                id: true,
+              },
+            },
+          },
+          where: { sourceFieldId: { in: fieldIds } },
+        },
         values: {
           where: { entityFieldId: { in: fieldIds } },
           select: {
@@ -1475,9 +1488,14 @@ async function recalculateEntityTypeDisplayNames(
     const changedRecords = records
       .map((record) => ({
         id: record.id,
-        displayName: getRecordDisplayName(
-          activeFields,
-          record.values.map((value): SerializedFieldValue => ({
+        displayName: getRecordDisplayNameWithRelations({
+          fields: activeFields,
+          relations: (record.outgoingRelations ?? []).map((relation): RecordDisplayRelation => ({
+            displayName: relation.targetRecord.displayName,
+            fieldId: relation.sourceFieldId,
+            targetRecordId: relation.targetRecord.id,
+          })),
+          values: record.values.map((value): SerializedFieldValue => ({
             booleanValue: value.booleanValue,
             dateValue: value.dateValue,
             decimalValue: value.decimalValue,
@@ -1486,7 +1504,7 @@ async function recalculateEntityTypeDisplayNames(
             jsonValue: value.jsonValue ?? Prisma.JsonNull,
             textValue: value.textValue,
           })),
-        ),
+        }),
         previousDisplayName: record.displayName,
       }))
       .filter((record) => record.displayName !== record.previousDisplayName);

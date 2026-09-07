@@ -6,6 +6,7 @@ import {
   buildMergedFieldConfig,
   getPrimaryDisplayField,
   getRecordDisplayName,
+  getRecordDisplayNameWithRelations,
   getRelationConfig,
   getRecordListFields,
   normalizeRawFieldValue,
@@ -312,6 +313,34 @@ describe("field display configuration", () => {
     })).toThrow("TEXTAREA no puede ser campo principal.");
   });
 
+  it("accepts RELATION ONE primary fields with a target and rejects unsupported relations", () => {
+    expect(() => buildMergedFieldConfig({
+      type: "RELATION",
+      relation: {
+        relationKind: "ONE",
+        targetEntityTypeId: "entity_target",
+      },
+      validation: {},
+      display: { primary: true },
+    })).not.toThrow();
+
+    expect(() => buildMergedFieldConfig({
+      type: "RELATION",
+      relation: {
+        relationKind: "MANY",
+        targetEntityTypeId: "entity_target",
+      },
+      validation: {},
+      display: { primary: true },
+    })).toThrow("RELATION no puede ser campo principal.");
+
+    expect(() => buildMergedFieldConfig({
+      type: "RELATION",
+      validation: {},
+      display: { primary: true },
+    })).toThrow("RELATION no puede ser campo principal.");
+  });
+
   it("preserves validation when merging display settings", () => {
     const config = buildMergedFieldConfig({
       existingConfig: { validation: { required: true }, custom: { keep: true } },
@@ -470,6 +499,43 @@ describe("field display configuration", () => {
       ],
       [{ fieldId: "state", textValue: "activo" }],
     )).toBe("Activo laboral");
+  });
+
+  it("uses target displayName for RELATION ONE primary displayName", () => {
+    const fields = [
+      recordField({
+        id: "procedure",
+        type: "RELATION",
+        config: {
+          display: { primary: true },
+          relationKind: "ONE",
+          targetEntityTypeId: "procedures",
+        },
+      }),
+    ];
+
+    expect(getRecordDisplayNameWithRelations({
+      fields,
+      relations: [
+        {
+          displayName: "Plan de emergencias",
+          fieldId: "procedure",
+          targetRecordId: "record_procedure",
+        },
+      ],
+      values: [],
+    })).toBe("Plan de emergencias");
+    expect(getRecordDisplayNameWithRelations({
+      fields,
+      relations: [
+        {
+          displayName: null,
+          fieldId: "procedure",
+          targetRecordId: "record_procedure",
+        },
+      ],
+      values: [],
+    })).toBe("Registro sin nombre");
   });
 
   it("falls back when no primary is configured", () => {

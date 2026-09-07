@@ -31,8 +31,9 @@ Supported primary types:
 - `URL`
 - `INTEGER`
 - `SELECT`
+- `RELATION` only when `relationKind = ONE` and `targetEntityTypeId` is configured
 
-Unsupported primary types include `TEXTAREA`, `DECIMAL`, `MONEY`, `BOOLEAN`, `DATE`, `DATETIME`, `TIME`, `MULTISELECT`, `RELATION`, `JSON`, `FILE`, and `IMAGE`.
+Unsupported primary types include `TEXTAREA`, `DECIMAL`, `MONEY`, `BOOLEAN`, `DATE`, `DATETIME`, `TIME`, `MULTISELECT`, `RELATION MANY`, `RELATION` without a target entity type, `JSON`, `FILE`, and `IMAGE`.
 
 If no primary is configured, the legacy fallback is used: first required `TEXT`, then first `TEXT`, then `Registro sin nombre`.
 
@@ -46,7 +47,9 @@ If no primary is configured, the legacy fallback is used: first required `TEXT`,
 - activity;
 - audit summaries.
 
-For `SELECT` primary fields, the option label is used instead of the stored option value. Existing records are not recalculated in bulk; they refresh on the next edit.
+For `SELECT` primary fields, the option label is used instead of the stored option value. For `RELATION ONE` primary fields, `EntityRecord.displayName` is derived from the target record's persisted `displayName`; raw target record ids are never used as visible identity. Existing records are recalculated when the primary display field configuration changes.
+
+Automatic propagation is intentionally not implemented yet: if a source record display name derives from a relation target and the target record is renamed later, the source record keeps its previous derived display name until it is edited or recalculated by a later configuration change (`STALE_DERIVED_DISPLAY_NAME`). Composite identities are also not implemented yet.
 
 ## Visible Columns
 

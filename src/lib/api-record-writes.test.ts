@@ -92,6 +92,15 @@ const relationField = {
   type: "RELATION",
 } as const;
 
+const relationPrimaryField = {
+  ...relationField,
+  config: {
+    display: { primary: true },
+    targetEntityTypeId: "reference_entity",
+    relationKind: "ONE",
+  },
+} as const;
+
 const timeField = {
   ...textField,
   id: "field_hora",
@@ -212,6 +221,42 @@ describe("api record writes", () => {
         },
       ],
       skipDuplicates: true,
+    });
+  });
+
+  it("creates API records with displayName from a RELATION ONE primary target", async () => {
+    vi.mocked(prisma.entityRecord.count).mockResolvedValueOnce(1);
+    vi.mocked(prisma.entityRecord.findFirst).mockResolvedValueOnce({
+      displayName: "Plan de emergencias",
+      id: "target_record_1",
+    } as never);
+
+    const result = await createApiEntityRecord({
+      appId: "app_1",
+      body: {
+        clientRequestId: "client-request-relation-primary",
+        values: {
+          departamento: "target_record_1",
+        },
+      },
+      contractId: "contract_1",
+      entity: {
+        contractId: "contract_1",
+        fields: [relationPrimaryField],
+        id: "entity_1",
+        isActive: true,
+        name: "Versionado",
+        slug: "versionado",
+      } as never,
+      userId: "user_1",
+    });
+
+    expect(result).toEqual({ ok: true, recordId: "record_1", replay: false });
+    expect(prisma.entityRecord.create).toHaveBeenCalledWith({
+      data: {
+        displayName: "Plan de emergencias",
+        entityTypeId: "entity_1",
+      },
     });
   });
 
@@ -474,6 +519,50 @@ describe("api record writes", () => {
     expect(result).toEqual({ ok: true, recordId: "record_1" });
     expect(prisma.entityRecord.update).toHaveBeenCalledWith({
       data: { displayName: "EQ-002" },
+      where: { id: "record_1" },
+    });
+  });
+
+  it("updates API record displayName when a RELATION ONE primary target changes", async () => {
+    vi.mocked(prisma.entityRecord.findFirst)
+      .mockResolvedValueOnce({
+        displayName: "Plan antiguo",
+        id: "record_1",
+        outgoingRelations: [
+          {
+            sourceFieldId: "field_departamento",
+            targetRecordId: "target_record_1",
+          },
+        ],
+        values: [],
+      } as never)
+      .mockResolvedValueOnce({
+        displayName: "Plan de emergencias",
+        id: "target_record_2",
+      } as never);
+    vi.mocked(prisma.entityRecord.count).mockResolvedValueOnce(1);
+
+    const result = await patchApiEntityRecord({
+      appId: "app_1",
+      body: {
+        values: { departamento: "target_record_2" },
+      },
+      contractId: "contract_1",
+      entity: {
+        contractId: "contract_1",
+        fields: [relationPrimaryField],
+        id: "entity_1",
+        isActive: true,
+        name: "Versionado",
+        slug: "versionado",
+      } as never,
+      recordId: "record_1",
+      userId: "user_1",
+    });
+
+    expect(result).toEqual({ ok: true, recordId: "record_1" });
+    expect(prisma.entityRecord.update).toHaveBeenCalledWith({
+      data: { displayName: "Plan de emergencias" },
       where: { id: "record_1" },
     });
   });

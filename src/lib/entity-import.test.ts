@@ -378,6 +378,37 @@ describe("entity import structure and values", () => {
     ]);
   });
 
+  it("uses a RELATION ONE primary target displayName as imported record displayName", async () => {
+    const fields = [
+      relationField({
+        config: {
+          display: { primary: true },
+          targetEntityTypeId: "departments",
+          relationKind: "ONE",
+        },
+      }),
+    ];
+    const rows = await parseExcelRows({
+      fields,
+      file: await workbookFile(["Departamento"], [["Plan de emergencias"]]),
+    });
+    const result = await validateImportRows({
+      fields,
+      rows,
+      relationTargetLookup: relationLookup({
+        "Plan de emergencias": [{ id: "target_procedure_1" }],
+      }),
+    });
+
+    expect(result.errors).toEqual([]);
+    expect(result.validRows[0]).toMatchObject({
+      displayName: "Plan de emergencias",
+      relations: [
+        { fieldId: "department", targetRecordIds: ["target_procedure_1"] },
+      ],
+    });
+  });
+
   it("rejects missing relation targets by displayName", async () => {
     const fields = [relationField()];
     const rows = await parseExcelRows({

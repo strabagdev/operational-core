@@ -65,6 +65,29 @@ describe("entity record server-side search", () => {
     });
   });
 
+  it("searches relation-derived identities through persisted displayName", () => {
+    expect(searchWhere([
+      textField("procedure", {
+        type: "RELATION",
+        config: {
+          display: { primary: true },
+          relationKind: "ONE",
+          targetEntityTypeId: "procedures",
+        },
+      }),
+    ], "Plan de emergencias")).toMatchObject({
+      entityTypeId: "entity_1",
+      OR: expect.arrayContaining([
+        {
+          displayName: {
+            contains: "Plan de emergencias",
+            mode: "insensitive",
+          },
+        },
+      ]),
+    });
+  });
+
   it("searches only searchable text-like EntityValue fields", () => {
     expect(
       searchWhere([

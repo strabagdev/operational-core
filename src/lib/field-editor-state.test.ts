@@ -9,6 +9,7 @@ import {
   getCreateFieldDefaults,
   normalizeFieldKey,
   shouldSuggestPrimaryDefault,
+  supportsPrimaryDisplayField,
   supportedEntityFieldTypes,
   validateOptionDrafts,
 } from "./field-editor-state";
@@ -117,6 +118,33 @@ describe("field editor state helpers", () => {
         type: "TEXT",
       }),
     ).toBe(false);
+  });
+
+  it("allows primary display only for RELATION ONE fields with a target", () => {
+    expect(supportsPrimaryDisplayField({
+      type: "RELATION",
+      relationKind: "ONE",
+      targetEntityTypeId: "procedures",
+    })).toBe(true);
+    expect(supportsPrimaryDisplayField({
+      type: "RELATION",
+      relationKind: "MANY",
+      targetEntityTypeId: "procedures",
+    })).toBe(false);
+    expect(supportsPrimaryDisplayField({
+      type: "RELATION",
+      relationKind: "ONE",
+    })).toBe(false);
+  });
+
+  it("reads RELATION ONE primary eligibility from stored field config", () => {
+    expect(supportsPrimaryDisplayField({
+      type: "RELATION",
+      config: {
+        relationKind: "ONE",
+        targetEntityTypeId: "procedures",
+      },
+    })).toBe(true);
   });
 
   it("reflects primary defaults into search and list display", () => {

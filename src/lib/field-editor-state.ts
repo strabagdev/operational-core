@@ -1,5 +1,10 @@
 import { type EntityFieldType } from "@prisma/client";
 
+import {
+  scalarPrimaryDisplayFieldTypes,
+  supportsPrimaryDisplayField,
+} from "./field-display";
+
 export const supportedEntityFieldTypes = [
   "TEXT",
   "TEXTAREA",
@@ -171,14 +176,8 @@ export const multipleFieldTypes = new Set<EntityFieldType>([
   "RELATION",
 ]);
 
-export const primaryCompatibleFieldTypes = new Set<EntityFieldType>([
-  "TEXT",
-  "EMAIL",
-  "PHONE",
-  "URL",
-  "INTEGER",
-  "SELECT",
-]);
+export const primaryCompatibleFieldTypes = scalarPrimaryDisplayFieldTypes;
+export { supportsPrimaryDisplayField };
 
 export function normalizeFieldKey(value: string) {
   const normalized = value
@@ -203,7 +202,7 @@ export function shouldSuggestPrimaryDefault({
   hasPrimary: boolean;
   type: EntityFieldType;
 }) {
-  return fieldCount === 0 && !hasPrimary && primaryCompatibleFieldTypes.has(type);
+  return fieldCount === 0 && !hasPrimary && supportsPrimaryDisplayField({ type });
 }
 
 export function getCreateFieldDefaults({

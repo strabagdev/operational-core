@@ -355,6 +355,85 @@ describe("entity field primary displayName recalculation", () => {
       }),
     );
   });
+
+  it("recalculates existing record displayName from a RELATION ONE primary field", async () => {
+    entityTypeFindFirst.mockResolvedValue({
+      id: "entity_1",
+      contractId: "contract_1",
+      fields: [
+        field({ id: "field_code", config: { display: { primary: true } } }),
+        field({
+          id: "field_procedure",
+          key: "procedimiento",
+          name: "Procedimiento",
+          sortOrder: 2,
+          type: "RELATION",
+          config: {
+            targetEntityTypeId: "procedures",
+            relationKind: "ONE",
+          },
+        }),
+      ],
+    } as never);
+    const currentTx = tx();
+
+    currentTx.entityRecord.findMany.mockResolvedValueOnce([
+      {
+        id: "record_1",
+        displayName: "Anterior",
+        outgoingRelations: [
+          {
+            sourceFieldId: "field_procedure",
+            targetRecord: {
+              displayName: "Plan de emergencias",
+              id: "target_record_1",
+            },
+          },
+        ],
+        values: [],
+      },
+    ] as never);
+    transaction.mockImplementation(async (callback) => callback(currentTx as never));
+
+    await updateEntityFieldWithOptions(
+      "contract_1",
+      "entity_1",
+      "field_procedure",
+      "user_1",
+      input(false, {
+        display: { primary: true, showInList: true },
+        key: "procedimiento",
+        name: "Procedimiento",
+        type: "RELATION",
+        targetEntityTypeId: "procedures",
+        relationKind: "ONE",
+      }),
+      [],
+    );
+
+    expect(currentTx.entityRecord.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({
+          outgoingRelations: expect.objectContaining({
+            include: {
+              targetRecord: {
+                select: {
+                  displayName: true,
+                  id: true,
+                },
+              },
+            },
+            where: { sourceFieldId: { in: ["field_code", "field_procedure"] } },
+          }),
+        }),
+      }),
+    );
+    expect(currentTx.$executeRaw).toHaveBeenCalledWith(
+      expect.objectContaining({
+        values: expect.arrayContaining(["record_1", "Plan de emergencias"]),
+      }),
+    );
+  });
 });
 
 describe("entity field type persistence", () => {

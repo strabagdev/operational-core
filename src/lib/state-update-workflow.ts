@@ -15,10 +15,10 @@ import {
 import { stableRecordRequestHash } from "@/lib/api-record-writes";
 import { badRequest, conflict, forbidden, internalError, notFound } from "@/lib/api-response";
 import { dateOnlyInputValue, dateOnlyToUtcDate } from "@/lib/date-only";
+import { buildEntityRecordDisplayName } from "@/lib/entity-record-display";
 import {
   FieldValidationError,
   fieldInputName,
-  getRecordDisplayName,
   getRelationConfig,
   isEmptySerializedValue,
   type SerializedFieldValue,
@@ -1277,7 +1277,13 @@ async function createStateUpdateRecord({
 
   timing?.mark("create_transaction_begin");
   return prisma.$transaction(async (tx) => {
-    const genericDisplayName = getRecordDisplayName(context.targetEntityType.fields, mutation.values);
+    const genericDisplayName = await buildEntityRecordDisplayName({
+      client: tx,
+      contractId,
+      fields: context.targetEntityType.fields,
+      relations: mutation.relations,
+      values: mutation.values,
+    });
     const displayName = genericDisplayName === "Registro sin nombre"
       ? fallbackDisplayName(subject.displayName, input.date)
       : genericDisplayName;

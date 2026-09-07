@@ -170,11 +170,11 @@ Record-list presentation rules also live in `EntityField.config`, separate from 
 
 `display.primary` identifies the field used to calculate `EntityRecord.displayName`. The persisted `displayName` remains the shared label for list first columns, relation selectors, activity, breadcrumbs, and audit summaries. When a new primary field is saved, the previous primary field for the same entity type is unmarked.
 
-Compatible primary field types are `TEXT`, `EMAIL`, `PHONE`, `URL`, `INTEGER`, and `SELECT`. `SELECT` primary fields use the option label for `displayName`.
+Compatible primary field types are `TEXT`, `EMAIL`, `PHONE`, `URL`, `INTEGER`, `SELECT`, and `RELATION` only when the relation is `ONE` and has a configured target entity type. `SELECT` primary fields use the option label for `displayName`. `RELATION ONE` primary fields use the target record's persisted `displayName`; raw target record ids must never become the visible record identity. `RELATION MANY` is not supported as a primary field, and composite identities are not implemented yet.
 
 `display.showInList` controls dynamic list columns. It is intentionally separate from `searchable`, which only controls text search. `EntityField.sortOrder` is the single official order across configuration, record forms, record-list dynamic columns, Excel templates, and Excel imports. Existing `display.listOrder` values are preserved as legacy compatibility data but are not used for ordering.
 
-Existing records are not recalculated in bulk. They keep their current `displayName` until they are edited or recreated by seed/demo data. If no primary field is configured, the legacy fallback remains: first required `TEXT`, then first `TEXT`, then `Registro sin nombre`.
+Existing records are recalculated when the primary display field configuration changes. If a record's `displayName` derives from a `RELATION ONE` target and that target is renamed later, dependent records are not propagated automatically yet (`STALE_DERIVED_DISPLAY_NAME`). If no primary field is configured, the legacy fallback remains: first required `TEXT`, then first `TEXT`, then `Registro sin nombre`.
 
 `EntityRecord` does not have a technical status. A record exists until it is permanently deleted. Business states such as Vigente, Finiquitado, Operativo, or Vencido must be modeled with dynamic fields, usually `SELECT` fields owned by the `EntityType`.
 

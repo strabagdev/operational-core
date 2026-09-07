@@ -8,6 +8,7 @@ import {
 import { getAuthorizedContract } from "@/lib/contracts";
 import { formatDateOnly } from "@/lib/date-only";
 import { orderEntityFields } from "@/lib/entity-field-order";
+import { buildEntityRecordDisplayName } from "@/lib/entity-record-display";
 import {
   FieldValidationError,
   getRelationConfig,
@@ -762,7 +763,12 @@ export async function createEntityRecord(
     fields: authorized.entityType.fields,
     formData,
   });
-  const displayName = getRecordDisplayName(authorized.entityType.fields, values);
+  const displayName = await buildEntityRecordDisplayName({
+    contractId: authorized.contract.id,
+    fields: authorized.entityType.fields,
+    relations,
+    values,
+  });
   const valueChanges = buildValueChanges({
     fields: authorized.entityType.fields,
     oldValues: [],
@@ -848,7 +854,12 @@ export async function updateEntityRecord(
     formData,
     sourceRecordId: authorized.record.id,
   });
-  const displayName = getRecordDisplayName(authorized.entityType.fields, values);
+  const displayName = await buildEntityRecordDisplayName({
+    contractId: authorized.contract.id,
+    fields: authorized.entityType.fields,
+    relations,
+    values,
+  });
   const valueChanges = buildValueChanges({
     fields: authorized.entityType.fields,
     oldValues: authorized.record.values,

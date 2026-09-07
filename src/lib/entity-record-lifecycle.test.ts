@@ -306,6 +306,41 @@ describe("entity records without technical status", () => {
     },
   );
 
+  it("creates a record with displayName from a RELATION ONE primary target", async () => {
+    const relationField = field("procedure", {
+      type: "RELATION",
+      config: {
+        display: { primary: true },
+        targetEntityTypeId: "target_entity",
+        relationKind: "ONE",
+      },
+    });
+    const formData = new FormData();
+    const currentTx = tx();
+
+    formData.append("field_procedure", "target_record_1");
+    entityTypeFindFirst.mockResolvedValue(entityType([relationField]) as never);
+    entityRecordCount.mockResolvedValueOnce(1);
+    entityRecordFindFirst.mockResolvedValueOnce({
+      id: "target_record_1",
+      displayName: "Plan de emergencias",
+    } as never);
+    currentTx.entityRecord.create.mockResolvedValue({
+      id: "source_record_1",
+      displayName: "Plan de emergencias",
+    });
+    transaction.mockImplementation(async (callback) => callback(currentTx as never));
+
+    await createEntityRecord("contract_1", "entity_1", "user_1", formData);
+
+    expect(currentTx.entityRecord.create).toHaveBeenCalledWith({
+      data: {
+        entityTypeId: "entity_1",
+        displayName: "Plan de emergencias",
+      },
+    });
+  });
+
   it("updates a single relation to a REFERENCE target", async () => {
     const relationField = field("department", {
       type: "RELATION",
@@ -352,6 +387,53 @@ describe("entity records without technical status", () => {
         },
       ],
       skipDuplicates: true,
+    });
+  });
+
+  it("updates displayName when the RELATION ONE primary target changes", async () => {
+    const relationField = field("procedure", {
+      type: "RELATION",
+      config: {
+        display: { primary: true },
+        targetEntityTypeId: "target_entity",
+        relationKind: "ONE",
+      },
+    });
+    const formData = new FormData();
+    const currentTx = tx();
+
+    formData.append("field_procedure", "target_record_2");
+    entityTypeFindFirst.mockResolvedValue(entityType([relationField]) as never);
+    entityRecordFindFirst
+      .mockResolvedValueOnce({
+        id: "source_record_1",
+        displayName: "Plan antiguo",
+        values: [],
+        outgoingRelations: [
+          {
+            sourceFieldId: "procedure",
+            targetRecordId: "target_record_1",
+          },
+        ],
+      } as never)
+      .mockResolvedValueOnce({
+        id: "target_record_2",
+        displayName: "Plan de emergencias",
+      } as never);
+    entityRecordCount.mockResolvedValueOnce(1);
+    currentTx.entityRecord.update.mockResolvedValue({
+      id: "source_record_1",
+      displayName: "Plan de emergencias",
+    });
+    transaction.mockImplementation(async (callback) => callback(currentTx as never));
+
+    await updateEntityRecord("contract_1", "entity_1", "source_record_1", "user_1", formData);
+
+    expect(currentTx.entityRecord.update).toHaveBeenCalledWith({
+      data: {
+        displayName: "Plan de emergencias",
+      },
+      where: { id: "source_record_1" },
     });
   });
 

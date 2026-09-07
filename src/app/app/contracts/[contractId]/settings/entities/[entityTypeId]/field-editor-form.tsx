@@ -33,7 +33,7 @@ import {
   normalizeFieldKey,
   optionFieldTypes,
   parseFieldOptionsPayload,
-  primaryCompatibleFieldTypes,
+  supportsPrimaryDisplayField,
   type FieldEditorActionState,
   type FieldOptionDraft,
 } from "@/lib/field-editor-state";
@@ -347,7 +347,11 @@ export function FieldEditorControls({
       (mode === "edit" && defaultValues?.hasValues),
   );
   const typeLocked = mode === "edit" && hasFieldData;
-  const supportsPrimary = primaryCompatibleFieldTypes.has(type);
+  const supportsPrimary = supportsPrimaryDisplayField({
+    type,
+    relationKind,
+    targetEntityTypeId,
+  });
   const supportsMultiple = multipleFieldTypes.has(type);
   const validationControls = fieldValidationControls[type];
   const relationTarget = entityTypes.find((entityType) => entityType.id === targetEntityTypeId);
@@ -476,7 +480,14 @@ export function FieldEditorControls({
               <select
                 className="h-10 rounded-md border border-input bg-background px-3 text-sm"
                 name="relationKind"
-                onChange={(event) => setRelationKind(event.target.value as "ONE" | "MANY")}
+                onChange={(event) => {
+                  const nextRelationKind = event.target.value as "ONE" | "MANY";
+
+                  setRelationKind(nextRelationKind);
+                  if (nextRelationKind === "MANY") {
+                    setDisplayPrimary(false);
+                  }
+                }}
                 value={relationKind}
               >
                 <option value="ONE">Una relación</option>

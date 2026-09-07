@@ -13,8 +13,8 @@ import {
   buildValueChanges,
   createAuditEvent,
 } from "@/lib/audit";
+import { buildEntityRecordDisplayName } from "@/lib/entity-record-display";
 import {
-  getRecordDisplayName,
   isEmptySerializedValue,
   type RelationInput,
   type SerializedFieldValue,
@@ -550,7 +550,13 @@ async function createRecordInTransaction({
   tx: Prisma.TransactionClient;
   userId: string;
 }) {
-  const displayName = displayNameOverride || getRecordDisplayName(entity.fields, mutation.values);
+  const displayName = displayNameOverride || await buildEntityRecordDisplayName({
+    client: tx,
+    contractId: entity.contractId,
+    fields: entity.fields,
+    relations: mutation.relations,
+    values: mutation.values,
+  });
   const valueChanges = buildValueChanges({
     fields: entity.fields,
     oldValues: [],
@@ -606,7 +612,13 @@ async function updateRecordInTransaction({
   txClient: typeof prisma;
   userId: string;
 }) {
-  const nextDisplayName = displayNameOverride || getRecordDisplayName(entity.fields, mutation.values);
+  const nextDisplayName = displayNameOverride || await buildEntityRecordDisplayName({
+    client: txClient,
+    contractId: entity.contractId,
+    fields: entity.fields,
+    relations: mutation.relations,
+    values: mutation.values,
+  });
   const valueChanges = buildValueChanges({
     fields: entity.fields,
     oldValues: existingRecord.values,
