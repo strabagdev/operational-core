@@ -1088,10 +1088,10 @@ function validateReportAppViewFields({
     }
 
     if (config.currentStatus.subjectFieldId) {
-      const subjectField = requireActiveTargetField(fields, config.currentStatus.subjectFieldId, "Procedimiento");
+      const subjectField = requireActiveTargetField(fields, config.currentStatus.subjectFieldId, "Registro relacionado");
 
       if (subjectField.type !== "RELATION") {
-        throw new AppViewConfigError("El campo de procedimiento debe ser de tipo relación.", "currentStatusSubjectFieldId");
+        throw new AppViewConfigError("El campo de registro relacionado debe ser de tipo relación.", "currentStatusSubjectFieldId");
       }
     }
 

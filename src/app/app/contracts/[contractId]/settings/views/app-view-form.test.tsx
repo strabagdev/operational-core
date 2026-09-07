@@ -311,6 +311,8 @@ describe("AppViewForm", () => {
     );
 
     expect(html).toContain("Estado actual");
+    expect(html).toContain("Registro relacionado");
+    expect(html).toContain("Campo que identifica el registro cuyo estado se mostrará");
     expect(html).toContain('name="currentStatusSubjectFieldId"');
     expect(html).toContain('name="currentStatusStateFieldId"');
     expect(html).toContain('name="currentStatusDateFieldId"');

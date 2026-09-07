@@ -288,7 +288,9 @@ describe("getApiReport", () => {
       sortOrder: 1,
       type: "REPORT",
     } as never);
-    entityTypeFindFirst.mockResolvedValueOnce(currentStatusEntity() as never);
+    entityTypeFindFirst
+      .mockResolvedValueOnce(currentStatusEntity() as never)
+      .mockResolvedValueOnce(relatedEntity("procedures", "Procedimientos", "procedimientos") as never);
     entityRecordFindMany.mockResolvedValueOnce([
       versionRecord({
         date: "2026-08-01",
@@ -353,11 +355,75 @@ describe("getApiReport", () => {
       },
     });
     expect(result.data.fields.map((field) => field.key)).toEqual(["procedimiento", "estatus", "fecha"]);
+    expect(result.data).toMatchObject({
+      subjectEntity: { id: "procedures", name: "Procedimientos", slug: "procedimientos" },
+    });
     expect(result.data.records.map((record) => record.id)).toEqual(["version_new", "version_other"]);
     expect(result.data.records[0].values).toMatchObject({
       procedimiento: { displayName: "PET-001", entityTypeId: "procedures", id: "procedure_1" },
       estatus: "vigente",
       fecha: "2026-08-05",
+    });
+  });
+
+  it("returns current status metadata for a different related entity", async () => {
+    appViewFindFirst.mockResolvedValueOnce({
+      active: true,
+      config: {
+        entityTypeId: "equipment_versions",
+        presentationMode: "CURRENT_STATUS",
+        currentStatus: {
+          subjectFieldId: "equipment_field",
+          stateFieldId: "status_field",
+          dateFieldId: "date_field",
+        },
+      },
+      contractId: "contract_1",
+      icon: null,
+      id: "view_equipment_report",
+      name: "Estado de Equipos",
+      slug: "estado-equipos",
+      sortOrder: 1,
+      type: "REPORT",
+    } as never);
+    entityTypeFindFirst
+      .mockResolvedValueOnce(currentStatusEntity({
+        entityId: "equipment_versions",
+        subjectFieldId: "equipment_field",
+        subjectFieldKey: "equipo",
+        subjectFieldName: "Equipo",
+        targetEntityTypeId: "equipment",
+      }) as never)
+      .mockResolvedValueOnce(relatedEntity("equipment", "Equipos", "equipos") as never);
+    entityRecordFindMany.mockResolvedValueOnce([
+      versionRecord({
+        date: "2026-08-09",
+        id: "equipment_version",
+        procedureId: "equipment_1",
+        procedureName: "Excavadora 12",
+        sourceFieldId: "equipment_field",
+        targetEntityTypeId: "equipment",
+        status: "operativo",
+      }),
+    ] as never);
+
+    const result = await getApiReport({
+      appViewId: "view_equipment_report",
+      contractId: "contract_1",
+      query: {},
+      userId: "user_1",
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    expect(result.data).toMatchObject({
+      subjectEntity: { id: "equipment", name: "Equipos", slug: "equipos" },
+    });
+    expect(result.data.fields.map((field) => field.key)).toEqual(["equipo", "estatus", "fecha"]);
+    expect(result.data.records[0].values).toMatchObject({
+      equipo: { displayName: "Excavadora 12", entityTypeId: "equipment", id: "equipment_1" },
+      estatus: "operativo",
     });
   });
 
@@ -380,7 +446,9 @@ describe("getApiReport", () => {
       sortOrder: 1,
       type: "REPORT",
     } as never);
-    entityTypeFindFirst.mockResolvedValueOnce(currentStatusEntity() as never);
+    entityTypeFindFirst
+      .mockResolvedValueOnce(currentStatusEntity() as never)
+      .mockResolvedValueOnce(relatedEntity("procedures", "Procedimientos", "procedimientos") as never);
     entityRecordFindMany.mockResolvedValueOnce([
       versionRecord({
         date: "2026-08-05",
@@ -508,11 +576,23 @@ function stateUpdateTargetEntity() {
   };
 }
 
-function currentStatusEntity() {
+function currentStatusEntity({
+  entityId = "versions",
+  subjectFieldId = "subject_field",
+  subjectFieldKey = "procedimiento",
+  subjectFieldName = "Procedimiento",
+  targetEntityTypeId = "procedures",
+}: {
+  entityId?: string;
+  subjectFieldId?: string;
+  subjectFieldKey?: string;
+  subjectFieldName?: string;
+  targetEntityTypeId?: string;
+} = {}) {
   return {
     fields: [
-      field("subject_field", "procedimiento", "Procedimiento", "RELATION", {
-        config: { relationKind: "ONE", targetEntityTypeId: "procedures" },
+      field(subjectFieldId, subjectFieldKey, subjectFieldName, "RELATION", {
+        config: { relationKind: "ONE", targetEntityTypeId },
       }),
       field("status_field", "estatus", "Estatus", "SELECT", {
         options: [
@@ -522,9 +602,18 @@ function currentStatusEntity() {
       }),
       field("date_field", "fecha", "Fecha", "DATE"),
     ],
-    id: "versions",
+    contractId: "contract_1",
+    id: entityId,
     name: "Versionado",
     slug: "versionado",
+  };
+}
+
+function relatedEntity(id: string, name: string, slug: string) {
+  return {
+    id,
+    name,
+    slug,
   };
 }
 
@@ -533,14 +622,18 @@ function versionRecord({
   id,
   procedureId,
   procedureName,
+  sourceFieldId = "subject_field",
   status,
+  targetEntityTypeId = "procedures",
   updatedAt = "2026-08-01T12:00:00.000Z",
 }: {
   date: string;
   id: string;
   procedureId: string;
   procedureName: string;
+  sourceFieldId?: string;
   status: string;
+  targetEntityTypeId?: string;
   updatedAt?: string;
 }) {
   return {
@@ -548,10 +641,10 @@ function versionRecord({
     id,
     outgoingRelations: [
       {
-        sourceFieldId: "subject_field",
+        sourceFieldId,
         targetRecord: {
           displayName: procedureName,
-          entityTypeId: "procedures",
+          entityTypeId: targetEntityTypeId,
           id: procedureId,
         },
         targetRecordId: procedureId,

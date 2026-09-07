@@ -487,7 +487,7 @@ Config shapes by `type`:
     "entityTypeId": "version_records_entity_type_id",
     "presentationMode": "CURRENT_STATUS",
     "currentStatus": {
-      "subjectFieldId": "optional_relation_to_procedure_field_id",
+      "subjectFieldId": "optional_relation_to_related_record_field_id",
       "stateFieldId": "state_field_id",
       "dateFieldId": "optional_date_field_id"
     }
@@ -542,10 +542,10 @@ Important: AppView access controls which experience appears to the user. It is n
 Returns data for a configured `REPORT` AppView assigned to the authenticated user. Query parameters:
 
 - `from`: optional `YYYY-MM-DD`.
-- `search`: optional text search. For `CURRENT_STATUS`, this searches the report record name and, when configured, the related subject/procedure display name.
+- `search`: optional text search. For `CURRENT_STATUS`, this searches the report record name and, when configured, the related record display name.
 - `to`: optional `YYYY-MM-DD`.
 
-For entity-backed reports, missing `sourceMode` means `ENTITY`. `TABLE` and `MATRIX` date ranges filter records using the report's configured top-level `dateFieldId`; display names such as "Fecha" are not used as identifiers. `CURRENT_STATUS` does not require a top-level report date field: it uses `currentStatus.stateFieldId` as the required state source, optional `currentStatus.subjectFieldId` to group rows by procedure, and optional `currentStatus.dateFieldId` to choose the latest historical version per procedure and sort descending. If no current-status date field is configured, Opco does not substitute `createdAt`, `updatedAt`, or audit dates. The response includes the REPORT config, including `timeFilter` and `valueDisplay`, entity metadata, selected field definitions including option `id`, visible `label`, and internal `value`, and serialized records with relation display names. Record values keep the stored value; clients apply `valueDisplay[fieldId] = LABEL | INTERNAL_VALUE` only when rendering REPORT output. Entity-backed presentation modes are `TABLE`, `MATRIX`, and `CURRENT_STATUS`. Reports stored before `timeFilter` are serialized with `mode = RANGE`, `defaultPeriod = CURRENT_MONTH`, and `allowChange = true`.
+For entity-backed reports, missing `sourceMode` means `ENTITY`. `TABLE` and `MATRIX` date ranges filter records using the report's configured top-level `dateFieldId`; display names such as "Fecha" are not used as identifiers. `CURRENT_STATUS` does not require a top-level report date field: it uses `currentStatus.stateFieldId` as the required state source, optional `currentStatus.subjectFieldId` to group rows by related record, and optional `currentStatus.dateFieldId` to choose the latest historical version per related record and sort descending. If no current-status date field is configured, Opco does not substitute `createdAt`, `updatedAt`, or audit dates. The response includes the REPORT config, including `timeFilter` and `valueDisplay`, entity metadata, optional `subjectEntity` metadata when `currentStatus.subjectFieldId` resolves to a relation target, selected field definitions including option `id`, visible `label`, and internal `value`, and serialized records with relation display names. Record values keep the stored value; clients apply `valueDisplay[fieldId] = LABEL | INTERNAL_VALUE` only when rendering REPORT output. Entity-backed presentation modes are `TABLE`, `MATRIX`, and `CURRENT_STATUS`. Reports stored before `timeFilter` are serialized with `mode = RANGE`, `defaultPeriod = CURRENT_MONTH`, and `allowChange = true`.
 
 Reports can also use a STATE_UPDATE source in this first shape:
 

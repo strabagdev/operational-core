@@ -4,6 +4,7 @@ import { userCanAccessAppView } from "@/lib/app-view-access";
 import { parseAppViewConfig, type ReportAppViewConfig } from "@/lib/app-views";
 import { serializeApiEntityField, serializeApiEntityRecord } from "@/lib/api-entity-serializer";
 import { badRequest, forbidden, notFound } from "@/lib/api-response";
+import { getRelationConfig } from "@/lib/field-validation";
 import { prisma } from "@/lib/prisma";
 import {
   getStateUpdateCurrentProjection,
@@ -209,7 +210,9 @@ async function getApiCurrentStatusReport({
   appView: { id: string; name: string; slug: string };
   config: Extract<ReportAppViewConfig, { presentationMode: "CURRENT_STATUS" }>;
   entity: {
+    contractId: string;
     fields: Array<{
+      config: unknown;
       id: string;
       key: string;
     }>;
@@ -224,6 +227,22 @@ async function getApiCurrentStatusReport({
   const search = query.search?.trim();
   const dateFieldId = config.currentStatus.dateFieldId;
   const subjectFieldId = config.currentStatus.subjectFieldId;
+  const subjectField = subjectFieldId ? fields.find((field) => field.id === subjectFieldId) : null;
+  const subjectTargetEntityTypeId = subjectField ? getRelationConfig(subjectField.config).targetEntityTypeId : undefined;
+  const subjectEntity = subjectTargetEntityTypeId
+    ? await prisma.entityType.findFirst({
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+        },
+        where: {
+          contractId: entity.contractId,
+          id: subjectTargetEntityTypeId,
+          isActive: true,
+        },
+      })
+    : null;
 
   const records = await prisma.entityRecord.findMany({
     include: {
@@ -316,6 +335,7 @@ async function getApiCurrentStatusReport({
       fields: fields.map(serializeApiEntityField),
       from: "",
       records: currentRecords.map((record) => serializeApiEntityRecord({ fields, record })),
+      ...(subjectEntity ? { subjectEntity } : {}),
       to: "",
     },
   };

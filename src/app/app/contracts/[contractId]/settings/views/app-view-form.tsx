@@ -1073,9 +1073,11 @@ function ConfigFields({
           <div className="grid gap-3">
             <div className="grid gap-3 sm:grid-cols-3">
               <FieldSelect
+                allowedTypes={["RELATION"]}
                 fields={activeReportFields}
+                helpText="Campo que identifica el registro cuyo estado se mostrará"
                 includeEmpty
-                label="Procedimiento"
+                label="Registro relacionado"
                 name="currentStatusSubjectFieldId"
                 onChange={setCurrentStatusSubjectFieldId}
                 preferredType="RELATION"
@@ -1272,8 +1274,10 @@ function ConfigFields({
 }
 
 function FieldSelect({
+  allowedTypes,
   errors,
   fields,
+  helpText,
   includeEmpty = false,
   label,
   name,
@@ -1281,8 +1285,10 @@ function FieldSelect({
   preferredType,
   value,
 }: {
+  allowedTypes?: string[];
   errors?: string[];
   fields: AppViewEntityTypeOption["fields"];
+  helpText?: string;
   includeEmpty?: boolean;
   label: string;
   name: string;
@@ -1290,8 +1296,9 @@ function FieldSelect({
   preferredType: string;
   value: string;
 }) {
-  const preferredFields = fields.filter((field) => field.type === preferredType);
-  const otherFields = fields.filter((field) => field.type !== preferredType);
+  const selectableFields = allowedTypes ? fields.filter((field) => allowedTypes.includes(field.type)) : fields;
+  const preferredFields = selectableFields.filter((field) => field.type === preferredType);
+  const otherFields = selectableFields.filter((field) => field.type !== preferredType);
 
   return (
     <label className="grid gap-2 text-sm font-medium">
@@ -1310,6 +1317,7 @@ function FieldSelect({
           </option>
         ))}
       </select>
+      {helpText ? <span className="text-xs font-normal text-muted-foreground">{helpText}</span> : null}
       <FieldError errors={errors} />
     </label>
   );

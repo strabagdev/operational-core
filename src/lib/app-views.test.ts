@@ -985,6 +985,24 @@ describe("AppView config validation", () => {
     ).rejects.toThrow("Selecciona el campo de estado.");
   });
 
+  it("rejects REPORT current status when related record field is not a relation", async () => {
+    entityTypeFindFirst.mockResolvedValueOnce(attendanceEntityType() as never);
+
+    await expect(
+      createAppView(
+        "contract_1",
+        "user_1",
+        getAppViewInput(formData({
+          currentStatusStateFieldId: "status_field",
+          currentStatusSubjectFieldId: "shift_field",
+          entityTypeId: "attendance",
+          presentationMode: "CURRENT_STATUS",
+          type: "REPORT",
+        })),
+      ),
+    ).rejects.toThrow("El campo de registro relacionado debe ser de tipo relación.");
+  });
+
   it("rejects STATE_UPDATE REPORT matrix presentation", async () => {
     await expect(
       createAppView(
