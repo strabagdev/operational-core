@@ -88,6 +88,126 @@ describe("entity record server-side search", () => {
     });
   });
 
+  it("searches RELATION ONE searchable fields by target displayName", () => {
+    const where = searchWhere([
+      textField("procedure", {
+        type: "RELATION",
+        config: {
+          relationKind: "ONE",
+          targetEntityTypeId: "procedures",
+        },
+      }),
+    ], "emergencias");
+
+    expect(where).toMatchObject({
+      entityTypeId: "entity_1",
+      OR: expect.arrayContaining([
+        {
+          outgoingRelations: {
+            some: {
+              sourceFieldId: { in: ["procedure"] },
+              targetRecord: {
+                displayName: {
+                  contains: "emergencias",
+                  mode: "insensitive",
+                },
+              },
+            },
+          },
+        },
+      ]),
+    });
+    expect(JSON.stringify(where)).not.toContain("targetRecordId");
+  });
+
+  it("searches RELATION MANY searchable fields if any target displayName matches", () => {
+    expect(searchWhere([
+      textField("procedures", {
+        type: "RELATION",
+        multiple: true,
+        config: {
+          relationKind: "MANY",
+          targetEntityTypeId: "procedures",
+        },
+      }),
+    ], "seguridad")).toMatchObject({
+      OR: expect.arrayContaining([
+        {
+          outgoingRelations: {
+            some: {
+              sourceFieldId: { in: ["procedures"] },
+              targetRecord: {
+                displayName: {
+                  contains: "seguridad",
+                  mode: "insensitive",
+                },
+              },
+            },
+          },
+        },
+      ]),
+    });
+  });
+
+  it("ignores RELATION fields that are not searchable or have no target entity", () => {
+    const where = searchWhere([
+      textField("hidden_procedure", {
+        type: "RELATION",
+        searchable: false,
+        config: {
+          relationKind: "ONE",
+          targetEntityTypeId: "procedures",
+        },
+      }),
+      textField("incomplete_relation", {
+        type: "RELATION",
+        config: {
+          relationKind: "ONE",
+        },
+      }),
+    ], "emergencias");
+
+    expect(
+      (where.OR as unknown[]).some((condition) =>
+        Boolean((condition as Record<string, unknown>).outgoingRelations)),
+    ).toBe(false);
+  });
+
+  it("combines multiple searchable RELATION fields in one relation filter", () => {
+    expect(searchWhere([
+      textField("procedure", {
+        type: "RELATION",
+        config: {
+          relationKind: "ONE",
+          targetEntityTypeId: "procedures",
+        },
+      }),
+      textField("area", {
+        type: "RELATION",
+        config: {
+          relationKind: "ONE",
+          targetEntityTypeId: "areas",
+        },
+      }),
+    ], "mantencion")).toMatchObject({
+      OR: expect.arrayContaining([
+        {
+          outgoingRelations: {
+            some: {
+              sourceFieldId: { in: ["procedure", "area"] },
+              targetRecord: {
+                displayName: {
+                  contains: "mantencion",
+                  mode: "insensitive",
+                },
+              },
+            },
+          },
+        },
+      ]),
+    });
+  });
+
   it("searches only searchable text-like EntityValue fields", () => {
     expect(
       searchWhere([
@@ -519,6 +639,45 @@ describe("entity record server-side sorting", () => {
     const sql = queryRaw.mock.calls[0]?.[0] as { strings?: string[] };
     expect(sql.strings?.join(" ")).toContain("IS NULL");
     expect(sql.strings?.join(" ")).toContain(expression);
+  });
+
+  it("keeps RELATION searchable semantics in SQL search when sorting by field", async () => {
+    entityTypeFindFirst.mockResolvedValue(entityType([
+      textField("name", { config: { display: { primary: true } }, sortOrder: 0 }),
+      textField("revision", {
+        type: "INTEGER",
+        config: { display: { showInList: true } },
+        sortOrder: 1,
+      }),
+      textField("procedure", {
+        type: "RELATION",
+        config: {
+          relationKind: "ONE",
+          targetEntityTypeId: "procedures",
+        },
+        sortOrder: 2,
+      }),
+    ]) as never);
+    queryRaw.mockResolvedValueOnce([{ id: "record_1" }]);
+    entityRecordFindMany.mockResolvedValueOnce([record("record_1")] as never);
+
+    await getEntityRecords({
+      contractId: "contract_1",
+      entityTypeId: "entity_1",
+      page: 1,
+      pageSize: 25,
+      query: "emergencias",
+      sort: { key: "field:revision", direction: "asc" },
+      userId: "user_1",
+    });
+
+    const sql = queryRaw.mock.calls[0]?.[0] as { strings?: string[] };
+    const sqlText = sql.strings?.join(" ") ?? "";
+    expect(sqlText).toContain('FROM "EntityRelation" sr');
+    expect(sqlText).toContain('JOIN "EntityRecord" target');
+    expect(sqlText).toContain('sr."sourceFieldId" IN');
+    expect(sqlText).toContain('target."displayName" ILIKE');
+    expect(sqlText).not.toContain('target."id" ILIKE');
   });
 
   it.each([

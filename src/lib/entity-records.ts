@@ -564,6 +564,7 @@ function entityRecordSearchSql({
         .map((option) => option.value),
     }))
     .filter((item) => item.values.length > 0);
+  const relationFieldIds = searchableRelationFieldIds(fields, entityTypeId);
 
   if (textFieldIds.length > 0) {
     conditions.push(Prisma.sql`
@@ -585,6 +586,20 @@ function entityRecordSearchSql({
         WHERE sv."entityRecordId" = r."id"
           AND sv."entityFieldId" = ${search.fieldId}
           AND sv."textValue" IN (${Prisma.join(search.values)})
+      )
+    `);
+  }
+
+  if (relationFieldIds.length > 0) {
+    conditions.push(Prisma.sql`
+      EXISTS (
+        SELECT 1
+        FROM "EntityRelation" sr
+        JOIN "EntityRecord" target
+          ON target."id" = sr."targetRecordId"
+        WHERE sr."sourceRecordId" = r."id"
+          AND sr."sourceFieldId" IN (${Prisma.join(relationFieldIds)})
+          AND target."displayName" ILIKE ${pattern}
       )
     `);
   }
@@ -641,6 +656,7 @@ export function buildEntityRecordSearchWhere({
         .map((option) => option.value),
     }))
     .filter((item) => item.values.length > 0);
+  const relationFieldIds = searchableRelationFieldIds(fields, entityTypeId);
   const orConditions: Prisma.EntityRecordWhereInput[] = [
     {
       displayName: {
@@ -675,10 +691,42 @@ export function buildEntityRecordSearchWhere({
     });
   }
 
+  if (relationFieldIds.length > 0) {
+    orConditions.push({
+      outgoingRelations: {
+        some: {
+          sourceFieldId: { in: relationFieldIds },
+          targetRecord: {
+            displayName: {
+              contains: normalizedQuery,
+              mode: "insensitive",
+            },
+          },
+        },
+      },
+    });
+  }
+
   return {
     ...baseWhere,
     OR: orConditions,
   };
+}
+
+function searchableRelationFieldIds(fields: FieldWithOptions[], entityTypeId: string) {
+  return fields
+    .filter((field) => {
+      if (
+        field.entityTypeId !== entityTypeId ||
+        !field.searchable ||
+        field.type !== "RELATION"
+      ) {
+        return false;
+      }
+
+      return Boolean(getRelationConfig(field.config).targetEntityTypeId);
+    })
+    .map((field) => field.id);
 }
 
 export async function getAuthorizedEntityRecord(

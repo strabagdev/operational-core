@@ -137,6 +137,54 @@ describe("state-update workflow runtime", () => {
     });
   });
 
+  it("searches subjects through RELATION searchable target display names", async () => {
+    entityTypeFindFirst.mockImplementation((async (args: { where?: { id?: string } }) => {
+      if (args.where?.id === "equipment") {
+        return {
+          ...sourceEntityType(),
+          fields: [
+            field("procedure_field", "procedimiento", "Procedimiento", "RELATION", {
+              config: {
+                relationKind: "ONE",
+                targetEntityTypeId: "procedures",
+              },
+              entityTypeId: "equipment",
+              searchable: true,
+            }),
+          ],
+        } as never;
+      }
+      if (args.where?.id === "equipment_state") return targetEntityType() as never;
+      return null;
+    }) as never);
+
+    await getStateUpdateWorkflow(query({ search: "emergencias" }));
+
+    const subjectSearchCall = entityRecordFindMany.mock.calls.find(([args]) =>
+      (args as { where?: { entityTypeId?: string } }).where?.entityTypeId === "equipment",
+    );
+    expect(subjectSearchCall?.[0]).toMatchObject({
+      where: {
+        OR: expect.arrayContaining([
+          {
+            outgoingRelations: {
+              some: {
+                sourceFieldId: { in: ["procedure_field"] },
+                targetRecord: {
+                  displayName: {
+                    contains: "emergencias",
+                    mode: "insensitive",
+                  },
+                },
+              },
+            },
+          },
+        ]),
+      },
+    });
+    expect(JSON.stringify(subjectSearchCall?.[0])).not.toContain("targetRecordId");
+  });
+
   it("creates append history without looking for an existing record", async () => {
     appViewFindFirst.mockResolvedValue(appView({
       config: {

@@ -566,7 +566,7 @@ Query:
 ?date=YYYY-MM-DD&search=excavadora&subjectRecordId=optional_source_record_id
 ```
 
-`search` returns a limited set of matching source records, currently 20. It searches `displayName` and searchable fields of the source EntityType. `subjectRecordId` returns one selected source record. Without `search` or `subjectRecordId`, `subjects` is empty so clients do not accidentally fetch a full roster/catalog.
+`search` returns a limited set of matching source records, currently 20. It searches `displayName` and searchable fields of the source EntityType. Searchable `RELATION` fields match related records by `targetRecord.displayName`, not by raw record id. `subjectRecordId` returns one selected source record. Without `search` or `subjectRecordId`, `subjects` is empty so clients do not accidentally fetch a full roster/catalog.
 
 The response includes workflow metadata, source/target entity metadata, configured state fields, active options, extra field definitions, current state per returned subject when uniqueness applies, latest events, and summary counts.
 
@@ -881,7 +881,7 @@ Query params:
 | --- | --- | --- |
 | `page` | `1` | Positive page number. |
 | `pageSize` | `50` | Positive page size, maximum `100`. |
-| `search` | none | Text search using the current Opco searchable-field rules. |
+| `search` | none | Text search using the current Opco searchable-field rules. Searchable `RELATION` fields match related records by `targetRecord.displayName`, not by raw record id. |
 | `sort` | `createdAt DESC, id DESC` | `displayName`, `updatedAt`, or `field:<fieldKey>`. |
 | `direction` | `desc` | `asc` or `desc`. Used only with explicit `sort`. |
 

@@ -63,6 +63,12 @@ The primary field is excluded from dynamic columns to avoid duplication. If no f
 
 `EntityField.sortOrder` controls visible-column order. Existing `display.listOrder` values are legacy compatibility data only and must not create a second order.
 
+## Searchable Fields
+
+`searchable` is independent from `display.primary` and `display.showInList`. Text-like fields continue to match their stored text values, and `SELECT` fields match visible option labels to their stored option values. `RELATION ONE` and `RELATION MANY` fields marked searchable match related records by `targetRecord.displayName`; raw target record ids are never searched.
+
+This means a relation can participate in search even when it is not the primary display field, and a relation-derived primary display name can still be found through the persisted `EntityRecord.displayName`.
+
 ## Record Status
 
 `EntityRecord` has no technical status. A record exists until it is permanently deleted. Business states must be represented with dynamic fields owned by the `EntityType`, so a dynamic field named `Estado` appears as a normal domain column when configured with `showInList`.
