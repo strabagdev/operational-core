@@ -279,7 +279,7 @@ describe("getApiReport", () => {
           relationFieldId: "subject_field",
           requiredValueFieldId: "status_field",
           orderFieldId: "date_field",
-          displayFieldIds: ["subject_field", "version_field", "status_field", "date_field"],
+          displayFieldIds: ["version_field", "status_field", "date_field", "subject_field"],
         },
       },
       contractId: "contract_1",
@@ -358,10 +358,10 @@ describe("getApiReport", () => {
         relationFieldId: "subject_field",
         requiredValueFieldId: "status_field",
         orderFieldId: "date_field",
-        displayFieldIds: ["subject_field", "version_field", "status_field", "date_field"],
+        displayFieldIds: ["version_field", "status_field", "date_field", "subject_field"],
       },
     });
-    expect(result.data.fields.map((field) => field.key)).toEqual(["procedimiento", "version", "estatus", "fecha"]);
+    expect(result.data.fields.map((field) => field.key)).toEqual(["version", "estatus", "fecha", "procedimiento"]);
     expect(result.data).toMatchObject({
       subjectEntity: { id: "procedures", name: "Procedimientos", slug: "procedimientos" },
     });

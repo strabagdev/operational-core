@@ -1575,6 +1575,21 @@ function OrderedFieldChecklist({
     ...selectedIds.map((fieldId) => fieldsById.get(fieldId)!),
     ...fields.filter((field) => !selectedSet.has(field.id)),
   ];
+  const moveSelectedField = (fieldId: string, direction: -1 | 1) => {
+    const index = selectedIds.indexOf(fieldId);
+
+    if (index === -1) return;
+
+    const nextIndex = index + direction;
+
+    if (nextIndex < 0 || nextIndex >= selectedIds.length) return;
+
+    const nextSelected = [...selectedIds];
+    const [field] = nextSelected.splice(index, 1);
+
+    nextSelected.splice(nextIndex, 0, field);
+    setSelected(nextSelected);
+  };
 
   return (
     <fieldset className="grid gap-2 rounded-md border border-border p-3">
@@ -1582,26 +1597,55 @@ function OrderedFieldChecklist({
       {orderedFields.length === 0 ? (
         <p className="text-sm text-muted-foreground">No hay campos SELECT adicionales compatibles.</p>
       ) : (
-        <div className="grid gap-2 sm:grid-cols-2">
-          {orderedFields.map((field) => (
-            <label className="flex items-center gap-2 text-sm" key={field.id}>
-              <input
-                checked={selectedSet.has(field.id)}
-                className="h-4 w-4"
-                name={name}
-                onChange={(event) => {
-                  if (event.target.checked) {
-                    setSelected([...selectedIds, field.id]);
-                  } else {
-                    setSelected(selectedIds.filter((fieldId) => fieldId !== field.id));
-                  }
-                }}
-                type="checkbox"
-                value={field.id}
-              />
-              {field.name}
-            </label>
-          ))}
+        <div className="grid gap-2">
+          {orderedFields.map((field) => {
+            const selectedIndex = selectedIds.indexOf(field.id);
+            const isSelected = selectedIndex !== -1;
+
+            return (
+              <div className="flex items-center justify-between gap-2 rounded-md border border-border px-2 py-1" key={field.id}>
+                <label className="flex min-w-0 items-center gap-2 text-sm">
+                  <input
+                    checked={isSelected}
+                    className="h-4 w-4"
+                    name={name}
+                    onChange={(event) => {
+                      if (event.target.checked) {
+                        setSelected([...selectedIds, field.id]);
+                      } else {
+                        setSelected(selectedIds.filter((fieldId) => fieldId !== field.id));
+                      }
+                    }}
+                    type="checkbox"
+                    value={field.id}
+                  />
+                  <span className="truncate">{field.name}</span>
+                </label>
+                {isSelected ? (
+                  <div className="flex shrink-0 gap-1">
+                    <button
+                      aria-label={`Subir ${field.name}`}
+                      className="rounded border border-input px-2 py-1 text-xs disabled:opacity-40"
+                      disabled={selectedIndex === 0}
+                      onClick={() => moveSelectedField(field.id, -1)}
+                      type="button"
+                    >
+                      Subir
+                    </button>
+                    <button
+                      aria-label={`Bajar ${field.name}`}
+                      className="rounded border border-input px-2 py-1 text-xs disabled:opacity-40"
+                      disabled={selectedIndex === selectedIds.length - 1}
+                      onClick={() => moveSelectedField(field.id, 1)}
+                      type="button"
+                    >
+                      Bajar
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
         </div>
       )}
     </fieldset>

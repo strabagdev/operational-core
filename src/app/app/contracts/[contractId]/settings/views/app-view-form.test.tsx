@@ -332,6 +332,8 @@ describe("AppViewForm", () => {
     expect(html).toContain('name="latestByRelationRequiredValueFieldId"');
     expect(html).toContain('name="latestByRelationOrderFieldId"');
     expect(html).toContain('name="displayFieldIds"');
+    expect(html).toContain('aria-label="Subir Estado"');
+    expect(html).toContain('aria-label="Bajar Estado"');
     expect(html).not.toContain("Subvista Estados");
   });
 
