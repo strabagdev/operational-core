@@ -28,6 +28,8 @@ export async function GET(
     appViewId,
     contractId: access.context.contract.id,
     date: searchParams.get("date"),
+    page: searchParams.get("page"),
+    pageSize: searchParams.get("pageSize"),
     search: searchParams.get("search"),
     subjectRecordId: searchParams.get("subjectRecordId"),
     userId: access.context.user.id,

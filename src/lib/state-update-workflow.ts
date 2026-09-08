@@ -117,7 +117,8 @@ export type StateUpdateWorkflowTiming = {
 };
 
 const subjectSearchLimit = 20;
-const latestStateUpdateLimit = 10;
+const latestStateUpdatePageSize = 20;
+const latestStateUpdateMaxPageSize = 100;
 
 export function attendanceStateUpdateConfig(config: {
   sourceEntityTypeId: string;
@@ -156,6 +157,8 @@ export async function getStateUpdateWorkflow({
   appViewId,
   contractId,
   date,
+  page,
+  pageSize,
   search,
   subjectRecordId,
   userId,
@@ -163,6 +166,8 @@ export async function getStateUpdateWorkflow({
   appViewId: string;
   contractId: string;
   date?: string | null;
+  page?: string | null;
+  pageSize?: string | null;
   search?: string | null;
   subjectRecordId?: string | null;
   userId: string;
@@ -177,6 +182,11 @@ export async function getStateUpdateWorkflow({
 
   if (!parsedDate.ok) {
     return parsedDate;
+  }
+  const pagination = parseLatestPagination({ page, pageSize });
+
+  if (!pagination.ok) {
+    return pagination;
   }
 
   const subjects = await findSubjects({
@@ -199,6 +209,9 @@ export async function getStateUpdateWorkflow({
       appView: context.context.appView,
       workflow: workflowMetadata(context.context),
       date: parsedDate.value,
+      dateField: context.context.config.dateFieldId
+        ? serializeField(requireField(context.context, context.context.config.dateFieldId))
+        : null,
       stateFields: serializeStateFields(context.context),
       extraFields: serializeFields(context.context.targetEntityType.fields.filter((field) =>
         context.context.config.extraFieldIds.includes(field.id),
@@ -217,8 +230,9 @@ export async function getStateUpdateWorkflow({
       })),
       latest: await getLatestStateUpdates({
         context: context.context,
-        date: parsedDate.date,
-        limit: latestStateUpdateLimit,
+        page: pagination.page,
+        pageSize: pagination.pageSize,
+        search,
       }),
       summary: await getStateUpdateSummary({
         context: context.context,
@@ -804,6 +818,34 @@ function parseOptionalDate(
   }
 
   return { ok: true as const, date: parsed, value };
+}
+
+function parseLatestPagination({
+  page,
+  pageSize,
+}: {
+  page?: string | null;
+  pageSize?: string | null;
+}):
+  | { ok: true; page: number; pageSize: number }
+  | { ok: false; response: Response } {
+  const parsedPage = page ? Number(page) : 1;
+  const parsedPageSize = pageSize ? Number(pageSize) : latestStateUpdatePageSize;
+
+  if (
+    !Number.isInteger(parsedPage) ||
+    parsedPage < 1 ||
+    !Number.isInteger(parsedPageSize) ||
+    parsedPageSize < 1 ||
+    parsedPageSize > latestStateUpdateMaxPageSize
+  ) {
+    return {
+      ok: false as const,
+      response: badRequest(`page debe ser mayor a 0 y pageSize debe estar entre 1 y ${latestStateUpdateMaxPageSize}.`, "INVALID_PAGINATION"),
+    };
+  }
+
+  return { ok: true as const, page: parsedPage, pageSize: parsedPageSize };
 }
 
 function parseStateUpdateBody(body: unknown, config: StateUpdateWorkflowConfig) {
@@ -1667,20 +1709,52 @@ async function findSubjects({
 
 async function getLatestStateUpdates({
   context,
-  date,
-  limit,
+  page,
+  pageSize,
+  search,
 }: {
   context: StateUpdateContext;
-  date?: Date;
-  limit: number;
+  page: number;
+  pageSize: number;
+  search?: string | null;
 }) {
-  const where: Prisma.EntityRecordWhereInput = {
-    entityTypeId: context.targetEntityType.id,
-    outgoingRelations: { some: { sourceFieldId: context.config.subjectFieldId } },
-  };
+  if (!context.config.dateFieldId) {
+    return {
+      items: [],
+      pagination: {
+        hasMore: false,
+        page,
+        pageSize,
+        total: 0,
+      },
+    };
+  }
 
-  if (context.config.dateFieldId && date) {
-    where.values = { some: { dateValue: date, entityFieldId: context.config.dateFieldId } };
+  const normalizedSearch = search?.trim();
+  const skip = (page - 1) * pageSize;
+  const [total, ids] = await Promise.all([
+    countLatestStateUpdates({
+      context,
+      search: normalizedSearch,
+    }),
+    latestStateUpdateIds({
+      context,
+      pageSize,
+      search: normalizedSearch,
+      skip,
+    }),
+  ]);
+
+  if (ids.length === 0) {
+    return {
+      items: [],
+      pagination: {
+        hasMore: false,
+        page,
+        pageSize,
+        total,
+      },
+    };
   }
 
   const records = await prisma.entityRecord.findMany({
@@ -1702,17 +1776,31 @@ async function getLatestStateUpdates({
         where: { entityFieldId: { in: workflowValueFieldIds(context.config) } },
       },
     },
-    orderBy: [{ updatedAt: "desc" }, { id: "asc" }],
-    take: limit,
-    where,
+    where: {
+      entityTypeId: context.targetEntityType.id,
+      id: { in: ids },
+    },
   });
+  const order = new Map(ids.map((id, index) => [id, index]));
 
-  return records.map((record) => ({
-    recordId: record.id,
-    subject: record.outgoingRelations[0]?.targetRecord ?? null,
-    states: serializeRecordStates(record.values, context),
-    updatedAt: record.updatedAt.toISOString(),
-  }));
+  return {
+    items: records
+      .sort((left, right) => (order.get(left.id) ?? 0) - (order.get(right.id) ?? 0))
+      .map((record) => ({
+        recordId: record.id,
+        extraValues: serializeRecordExtraValues(record.values, context),
+        subject: record.outgoingRelations[0]?.targetRecord ?? null,
+        date: serializeRecordDate(record.values, context),
+        states: serializeRecordStates(record.values, context),
+        updatedAt: record.updatedAt.toISOString(),
+      })),
+    pagination: {
+      hasMore: skip + ids.length < total,
+      page,
+      pageSize,
+      total,
+    },
+  };
 }
 
 async function getStateUpdateSummary({
@@ -1731,6 +1819,79 @@ async function getStateUpdateSummary({
   return {
     totalRegistered: await prisma.entityRecord.count({ where }),
   };
+}
+
+async function countLatestStateUpdates({
+  context,
+  search,
+}: {
+  context: StateUpdateContext;
+  search?: string;
+}) {
+  if (!context.config.dateFieldId) {
+    return 0;
+  }
+
+  const rows = await prisma.$queryRaw<Array<{ total: bigint }>>(Prisma.sql`
+    SELECT COUNT(*)::bigint AS total
+    FROM "EntityRecord" record
+    INNER JOIN "EntityRelation" subject_relation
+      ON subject_relation."sourceRecordId" = record."id"
+      AND subject_relation."sourceFieldId" = ${context.config.subjectFieldId}
+    INNER JOIN "EntityRecord" subject_record
+      ON subject_record."id" = subject_relation."targetRecordId"
+    INNER JOIN "EntityValue" order_value
+      ON order_value."entityRecordId" = record."id"
+      AND order_value."entityFieldId" = ${context.config.dateFieldId}
+    WHERE record."entityTypeId" = ${context.targetEntityType.id}
+      AND order_value."dateValue" IS NOT NULL
+      ${latestStateUpdateSearchSql(search)}
+  `);
+
+  return Number(rows[0]?.total ?? 0);
+}
+
+async function latestStateUpdateIds({
+  context,
+  pageSize,
+  search,
+  skip,
+}: {
+  context: StateUpdateContext;
+  pageSize: number;
+  search?: string;
+  skip: number;
+}) {
+  if (!context.config.dateFieldId) {
+    return [];
+  }
+
+  const rows = await prisma.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+    SELECT record."id"
+    FROM "EntityRecord" record
+    INNER JOIN "EntityRelation" subject_relation
+      ON subject_relation."sourceRecordId" = record."id"
+      AND subject_relation."sourceFieldId" = ${context.config.subjectFieldId}
+    INNER JOIN "EntityRecord" subject_record
+      ON subject_record."id" = subject_relation."targetRecordId"
+    INNER JOIN "EntityValue" order_value
+      ON order_value."entityRecordId" = record."id"
+      AND order_value."entityFieldId" = ${context.config.dateFieldId}
+    WHERE record."entityTypeId" = ${context.targetEntityType.id}
+      AND order_value."dateValue" IS NOT NULL
+      ${latestStateUpdateSearchSql(search)}
+    ORDER BY order_value."dateValue" DESC, record."id" ASC
+    OFFSET ${skip}
+    LIMIT ${pageSize}
+  `);
+
+  return rows.map((row) => row.id);
+}
+
+function latestStateUpdateSearchSql(search?: string) {
+  return search
+    ? Prisma.sql`AND subject_record."displayName" ILIKE ${`%${search}%`}`
+    : Prisma.empty;
 }
 
 function serializeExisting(existing: ExistingStateUpdate | undefined, context: StateUpdateContext) {
@@ -1769,6 +1930,38 @@ export function serializeRecordStates(values: Array<{
 
     return [stateField.fieldId, option ? { optionId: option.id, label: option.label } : null];
   }));
+}
+
+function serializeRecordExtraValues(values: Array<{
+  booleanValue?: boolean | null;
+  dateValue?: Date | null;
+  decimalValue?: Prisma.Decimal | null;
+  entityFieldId: string;
+  integerValue?: number | null;
+  jsonValue?: Prisma.JsonValue;
+  textValue?: string | null;
+}>, context: StateUpdateContext) {
+  return Object.fromEntries(context.config.extraFieldIds.map((fieldId) => {
+    const field = requireField(context, fieldId);
+    const value = values.find((item) => item.entityFieldId === fieldId);
+
+    return [fieldId, normalizedSerializedValue(value, field)];
+  }));
+}
+
+function serializeRecordDate(values: Array<{
+  dateValue?: Date | null;
+  entityFieldId: string;
+}>, context: StateUpdateContext) {
+  if (!context.config.dateFieldId) {
+    return null;
+  }
+
+  const dateField = requireField(context, context.config.dateFieldId);
+  const value = values.find((item) => item.entityFieldId === context.config.dateFieldId);
+  const normalized = normalizedSerializedValue(value, dateField);
+
+  return typeof normalized === "string" ? normalized : null;
 }
 
 export function serializeStateFields(context: StateUpdateContext) {

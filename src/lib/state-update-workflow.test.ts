@@ -31,6 +31,7 @@ vi.mock("@/lib/prisma", () => ({
     entityType: {
       findFirst: vi.fn(),
     },
+    $queryRaw: vi.fn(),
     $transaction: vi.fn(),
   },
 }));
@@ -40,6 +41,7 @@ const appViewFindFirst = vi.mocked(prisma.appView.findFirst);
 const entityRecordCount = vi.mocked(prisma.entityRecord.count);
 const entityRecordFindMany = vi.mocked(prisma.entityRecord.findMany);
 const entityTypeFindFirst = vi.mocked(prisma.entityType.findFirst);
+const queryRaw = vi.mocked(prisma.$queryRaw);
 const transaction = vi.mocked(prisma.$transaction);
 
 const tx = {
@@ -95,6 +97,7 @@ beforeEach(() => {
   }) as never);
   entityRecordCount.mockResolvedValue(0 as never);
   entityRecordFindMany.mockImplementation(defaultRecordFindMany());
+  queryRaw.mockResolvedValue([] as never);
   tx.entityRecord.create.mockResolvedValue({
     displayName: "Excavadora · 22-08-2026",
     id: "state_new",
@@ -133,6 +136,123 @@ describe("state-update workflow runtime", () => {
             field: { id: "availability_field", name: "Disponibilidad" },
           },
         ],
+      },
+    });
+  });
+
+  it("returns the first 20 latest updates with server pagination metadata", async () => {
+    const ids = Array.from({ length: 20 }, (_, index) => `state_${String(index + 1).padStart(2, "0")}`);
+    queryRaw
+      .mockResolvedValueOnce([{ total: BigInt(25) }] as never)
+      .mockResolvedValueOnce(ids.map((id) => ({ id })) as never);
+    mockExistingState(ids.map((id, index) => latestStateRecord({
+      id,
+      subjectDisplayName: `Equipo ${index + 1}`,
+      subjectRecordId: `equipment_${index + 1}`,
+    })));
+
+    const result = await getStateUpdateWorkflow(query());
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: {
+        latest: {
+          items: expect.arrayContaining([
+            expect.objectContaining({ recordId: "state_01" }),
+            expect.objectContaining({ recordId: "state_20" }),
+          ]),
+          pagination: {
+            hasMore: true,
+            page: 1,
+            pageSize: 20,
+            total: 25,
+          },
+        },
+      },
+    });
+    expect(result.ok ? result.data.latest.items : []).toHaveLength(20);
+  });
+
+  it("paginates latest updates and keeps SQL ordering by configured date with id as tiebreaker", async () => {
+    queryRaw
+      .mockResolvedValueOnce([{ total: BigInt(45) }] as never)
+      .mockResolvedValueOnce([{ id: "state_21" }, { id: "state_22" }] as never);
+    mockExistingState([
+      latestStateRecord({ id: "state_22", subjectDisplayName: "Equipo 22", subjectRecordId: "equipment_22" }),
+      latestStateRecord({ id: "state_21", subjectDisplayName: "Equipo 21", subjectRecordId: "equipment_21" }),
+    ]);
+
+    const result = await getStateUpdateWorkflow(query({ page: "2", pageSize: "20" }));
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: {
+        latest: {
+          items: [
+            expect.objectContaining({ recordId: "state_21" }),
+            expect.objectContaining({ recordId: "state_22" }),
+          ],
+          pagination: {
+            hasMore: true,
+            page: 2,
+            pageSize: 20,
+            total: 45,
+          },
+        },
+      },
+    });
+    const latestIdsQuery = queryRaw.mock.calls[1]?.[0] as { strings?: string[] };
+    expect(latestIdsQuery.strings?.join(" ")).toContain('ORDER BY order_value."dateValue" DESC, record."id" ASC');
+    expect(latestIdsQuery.strings?.join(" ")).toContain("OFFSET");
+    expect(latestIdsQuery.strings?.join(" ")).toContain("LIMIT");
+  });
+
+  it("applies latest search by related record before pagination", async () => {
+    queryRaw
+      .mockResolvedValueOnce([{ total: BigInt(1) }] as never)
+      .mockResolvedValueOnce([{ id: "state_excavadora" }] as never);
+    mockExistingState([
+      latestStateRecord({
+        id: "state_excavadora",
+        subjectDisplayName: "Excavadora",
+        subjectRecordId: "equipment_1",
+      }),
+    ]);
+
+    const result = await getStateUpdateWorkflow(query({ page: "1", pageSize: "20", search: "excavadora" }));
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: {
+        latest: {
+          items: [expect.objectContaining({ subject: { displayName: "Excavadora", id: "equipment_1" } })],
+          pagination: { total: 1 },
+        },
+      },
+    });
+    const queryValues = queryRaw.mock.calls.flatMap(([sql]) => (sql as { values?: unknown[] }).values ?? []);
+    expect(queryValues).toContain("%excavadora%");
+  });
+
+  it("returns an empty latest page without results", async () => {
+    queryRaw
+      .mockResolvedValueOnce([{ total: BigInt(0) }] as never)
+      .mockResolvedValueOnce([] as never);
+
+    const result = await getStateUpdateWorkflow(query());
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: {
+        latest: {
+          items: [],
+          pagination: {
+            hasMore: false,
+            page: 1,
+            pageSize: 20,
+            total: 0,
+          },
+        },
       },
     });
   });
@@ -1499,6 +1619,25 @@ function existingState(overrides: Record<string, unknown> = {}) {
     ],
     ...overrides,
   };
+}
+
+function latestStateRecord({
+  id,
+  subjectDisplayName,
+  subjectRecordId,
+}: {
+  id: string;
+  subjectDisplayName: string;
+  subjectRecordId: string;
+}) {
+  return existingState({
+    id,
+    outgoingRelations: [{
+      sourceFieldId: "subject_field",
+      targetRecord: { displayName: subjectDisplayName, id: subjectRecordId },
+      targetRecordId: subjectRecordId,
+    }],
+  });
 }
 
 function existingAttendanceState() {
