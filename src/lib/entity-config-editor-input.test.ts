@@ -74,6 +74,17 @@ describe("entity field editor input", () => {
     });
   });
 
+  it("parses unchecked display switches as explicit false values", () => {
+    const formData = baseFieldForm("TEXT");
+
+    formData.set("displayShowInList", "false");
+    formData.set("displayShowInClient", "false");
+
+    expect(getEntityFieldEditorInput(formData).field).toMatchObject({
+      display: { showInClient: false, showInList: false },
+    });
+  });
+
   it("does not let other switches overwrite required", () => {
     const formData = baseFieldForm("TEXT");
 

@@ -133,6 +133,44 @@ describe("API entity serializers", () => {
     });
   });
 
+  it("serializes explicit false display flags for external clients", () => {
+    expect(
+      serializeApiEntityDefinition({
+        ...entity(),
+        fields: [
+          field({
+            config: { display: { showInClient: false, showInList: true }, validation: {} },
+            id: "client_hidden",
+            key: "client_hidden",
+            name: "Client hidden",
+          }),
+          field({
+            config: { display: { showInClient: true, showInList: false }, validation: {} },
+            id: "client_visible",
+            key: "client_visible",
+            name: "Client visible",
+            sortOrder: 2,
+          }),
+        ],
+      } as never),
+    ).toMatchObject({
+      fields: [
+        {
+          config: {
+            display: { showInClient: false, showInList: true },
+          },
+          id: "client_hidden",
+        },
+        {
+          config: {
+            display: { showInClient: true, showInList: false },
+          },
+          id: "client_visible",
+        },
+      ],
+    });
+  });
+
   it("serializes record values by field key and preserves JSON-safe types", () => {
     const fields = [
       field({ id: "text", key: "texto", type: "TEXT" }),

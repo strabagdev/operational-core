@@ -367,6 +367,17 @@ describe("field display configuration", () => {
     });
   });
 
+  it("preserves explicit false display flags", () => {
+    expect(buildMergedFieldConfig({
+      type: "TEXT",
+      validation: {},
+      display: { showInClient: false, showInList: false },
+    })).toMatchObject({
+      validation: {},
+      display: { showInClient: false, showInList: false },
+    });
+  });
+
   it("merges required without dropping other validation, display, or custom config", () => {
     const config = buildMergedFieldConfig({
       existingConfig: {
@@ -620,6 +631,25 @@ describe("field display configuration", () => {
     ];
 
     expect(getRecordListFields(fields).map((item) => item.name)).toEqual(["Web list"]);
+  });
+
+  it.each([
+    [true, true, true],
+    [true, false, true],
+    [false, true, false],
+    [false, false, false],
+    [true, undefined, true],
+    [false, undefined, false],
+  ])("uses only showInList for web list visibility when showInList=%s and showInClient=%s", (showInList, showInClient, visible) => {
+    const display = {
+      ...(typeof showInList === "boolean" ? { showInList } : {}),
+      ...(typeof showInClient === "boolean" ? { showInClient } : {}),
+    };
+    const fields = [
+      recordField({ id: "target", name: "Target", config: { display } }),
+    ];
+
+    expect(getRecordListFields(fields).map((item) => item.id)).toEqual(visible ? ["target"] : []);
   });
 });
 

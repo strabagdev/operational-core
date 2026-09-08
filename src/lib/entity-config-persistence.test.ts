@@ -159,7 +159,33 @@ describe("entity field required persistence", () => {
       expect.objectContaining({
         data: expect.objectContaining({
           config: expect.objectContaining({
-            display: { showInClient: true },
+            display: { showInClient: true, showInList: false },
+          }),
+        }),
+      }),
+    );
+  });
+
+  it("persists explicit false display settings when editing", async () => {
+    const currentTx = tx();
+    transaction.mockImplementation(async (callback) => callback(currentTx as never));
+
+    await updateEntityFieldWithOptions(
+      "contract_1",
+      "entity_1",
+      "field_1",
+      "user_1",
+      input(false, {
+        display: { showInClient: false, showInList: false },
+      }),
+      [],
+    );
+
+    expect(currentTx.entityField.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          config: expect.objectContaining({
+            display: { showInClient: false, showInList: false },
           }),
         }),
       }),

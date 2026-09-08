@@ -452,7 +452,7 @@ export function validateFieldDisplayConfiguration({
     return clean;
   }
 
-  if (display.primary) {
+  if (display.primary === true) {
     const field: PrimaryDisplayFieldCandidate = {
       type,
       relationKind: relation?.relationKind,
@@ -464,12 +464,12 @@ export function validateFieldDisplayConfiguration({
     }
     clean.primary = true;
     clean.showInList = true;
-  } else if (display.showInList) {
-    clean.showInList = true;
+  } else if (typeof display.showInList === "boolean") {
+    clean.showInList = display.showInList;
   }
 
-  if (display.showInClient) {
-    clean.showInClient = true;
+  if (typeof display.showInClient === "boolean") {
+    clean.showInClient = display.showInClient;
   }
 
   if (display.listOrder !== undefined) {
