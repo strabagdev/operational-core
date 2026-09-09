@@ -4,7 +4,7 @@
 
 | Area | Estado | Evidencia | Pendiente |
 | --- | --- | --- | --- |
-| Railway config | MISSING | No hay `railway.json`, `railway.toml` ni config Railway versionada en el repo. | Verificar servicios, variables, deploys y backups en dashboard Railway. |
+| Railway config | VERIFIED | `railway.json` versiona `deploy.preDeployCommand = ["npm run db:migrate:deploy"]`; el comando efectivo es `prisma migrate deploy`. | Verificar servicios, variables, deploys y backups en dashboard Railway. |
 | PostgreSQL | VERIFIED | Prisma usa `env("DATABASE_URL")`; docs de desarrollo indican PostgreSQL/Railway por `DATABASE_URL`. | Confirmar base production/staging real fuera del repo sin imprimir credenciales. |
 | Scripts DB | DOCUMENTED | `scripts/db-backup.sh`, `scripts/db-restore.sh`, `scripts/db-verify-restore.sh`. | Ejecutar solo contra development/staging seguro. |
 | Prisma migrations | VERIFIED | `prisma/migrations` contiene historial SQL y `migration_lock.toml`. | Revisar cada migration antes de production deploy. |
