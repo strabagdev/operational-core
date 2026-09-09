@@ -87,6 +87,12 @@ export async function getContractAdministration({
   return { organizations, contracts };
 }
 
+export async function userCanManageContracts(userId: string) {
+  const organizations = await getAdminOrganizations(userId);
+
+  return organizations.length > 0;
+}
+
 export async function createContractForAdmin(userId: string, input: ContractFormInput) {
   const organization = await resolveAdminOrganization(userId, input.organizationId);
   const code = input.code.trim();

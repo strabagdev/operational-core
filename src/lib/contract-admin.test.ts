@@ -8,6 +8,7 @@ import {
   getContractAdministration,
   restoreContractForAdmin,
   updateContractForAdmin,
+  userCanManageContracts,
 } from "./contract-admin";
 import { deleteContractConfirmationText } from "./contract-deletion";
 import { prisma } from "./prisma";
@@ -131,6 +132,35 @@ describe("contract administration", () => {
     );
   });
 
+  it("creates the first contract for an organization admin with zero existing contracts", async () => {
+    organizationFindMany.mockResolvedValueOnce([organization()] as never);
+    contractFindFirst.mockResolvedValueOnce(null);
+    const currentTx = tx();
+    transaction.mockImplementation(async (callback) => callback(currentTx as never));
+
+    const result = await createContractForAdmin("admin_1", {
+      name: "Primer contrato",
+      code: "FIRST-001",
+      status: "ACTIVE",
+    });
+
+    expect(result).toMatchObject({
+      code: "FIRST-001",
+      name: "Primer contrato",
+      organizationId: "org_1",
+      status: "ACTIVE",
+    });
+    expect(currentTx.contract.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          organizationId: "org_1",
+          status: "ACTIVE",
+        }),
+        include: { organization: true },
+      }),
+    );
+  });
+
   it("rejects duplicate code in the same organization", async () => {
     contractFindFirst.mockResolvedValueOnce({ id: "existing" } as never);
 
@@ -164,6 +194,31 @@ describe("contract administration", () => {
       }),
     );
     expect(currentTx.contract.create).toHaveBeenCalled();
+  });
+
+  it("reports contract management permission from ADMIN memberships without requiring contracts", async () => {
+    organizationFindMany.mockResolvedValueOnce([organization()] as never);
+
+    await expect(userCanManageContracts("admin_1")).resolves.toBe(true);
+
+    expect(organizationFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          memberships: {
+            some: {
+              role: "ADMIN",
+              userId: "admin_1",
+            },
+          },
+        },
+      }),
+    );
+  });
+
+  it("does not grant contract management permission without an ADMIN membership", async () => {
+    organizationFindMany.mockResolvedValueOnce([] as never);
+
+    await expect(userCanManageContracts("member_1")).resolves.toBe(false);
   });
 
   it("updates a contract without moving it between organizations", async () => {

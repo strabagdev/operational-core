@@ -16,8 +16,11 @@ import {
   canManageExternalApps,
   canManageUsers,
 } from "@/lib/capabilities";
+import { userCanManageContracts } from "@/lib/contract-admin";
 import { getInactiveUserOrganizations, getUserContracts } from "@/lib/contracts";
 import { getPlatformNavigationItems } from "@/lib/platform-navigation";
+
+import { AuthenticatedAppShell } from "./app-shell";
 
 export default async function AppPage() {
   const session = await auth();
@@ -26,9 +29,10 @@ export default async function AppPage() {
     redirect("/login");
   }
 
-  const [contracts, inactiveOrganizations] = await Promise.all([
+  const [contracts, inactiveOrganizations, canCreateContracts] = await Promise.all([
     getUserContracts(session.user.id),
     getInactiveUserOrganizations(session.user.id),
+    userCanManageContracts(session.user.id),
   ]);
   const platformNavigation = getPlatformNavigationItems(session.user.platformRole);
   const adminContract = contracts.find((contract) =>
@@ -37,64 +41,69 @@ export default async function AppPage() {
   const adminContext = { membershipRole: adminContract?.membershipRole };
 
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-4xl flex-col gap-8 px-6 py-10">
-      <header className="space-y-2">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div>
-            <h1 className="text-2xl font-semibold">Operational Core</h1>
-            <p className="text-sm text-muted-foreground">
-              Selecciona un contrato para continuar.
-            </p>
+    <AuthenticatedAppShell
+      userEmail={session.user.email}
+      userImage={session.user.image}
+      userName={session.user.name}
+    >
+      <div className="mx-auto flex w-full max-w-4xl flex-col gap-8">
+        <header className="space-y-2">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h1 className="text-2xl font-semibold">Operational Core</h1>
+              <p className="text-sm text-muted-foreground">
+                Selecciona un contrato para continuar.
+              </p>
+            </div>
+            {adminContract ? (
+              <div className="flex flex-wrap gap-2 sm:justify-end">
+                {canManageUsers(adminContext) ? (
+                  <Button asChild variant="outline">
+                    <Link href="/app/settings/users">Usuarios</Link>
+                  </Button>
+                ) : null}
+                <Button asChild variant="outline">
+                  <Link href="/app/settings/contracts">Administrar contratos</Link>
+                </Button>
+                {canManageExternalApps(adminContext) ? (
+                  <Button asChild variant="outline">
+                    <Link href="/app/settings/apps">Aplicaciones externas</Link>
+                  </Button>
+                ) : null}
+              </div>
+            ) : null}
           </div>
-          {adminContract ? (
-            <div className="flex flex-wrap gap-2 sm:justify-end">
-              {canManageUsers(adminContext) ? (
-                <Button asChild variant="outline">
-                  <Link href="/app/settings/users">Usuarios</Link>
-                </Button>
-              ) : null}
-              <Button asChild variant="outline">
-                <Link href="/app/settings/contracts">Administrar contratos</Link>
-              </Button>
-              {canManageExternalApps(adminContext) ? (
-                <Button asChild variant="outline">
-                  <Link href="/app/settings/apps">Aplicaciones externas</Link>
-                </Button>
-              ) : null}
+        </header>
+
+        <section className="grid gap-3">
+          {platformNavigation.length > 0 ? (
+            <div className="grid gap-3 rounded-md border border-border p-4">
+              <div>
+                <h2 className="text-base font-semibold">Plataforma</h2>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {platformNavigation.map((item) => (
+                  <Button asChild key={item.href} variant="outline">
+                    <Link href={item.href}>{item.label}</Link>
+                  </Button>
+                ))}
+              </div>
             </div>
           ) : null}
-        </div>
-      </header>
 
-      <section className="grid gap-3">
-        {platformNavigation.length > 0 ? (
-          <div className="grid gap-3 rounded-md border border-border p-4">
-            <div>
-              <h2 className="text-base font-semibold">Plataforma</h2>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {platformNavigation.map((item) => (
-                <Button asChild key={item.href} variant="outline">
-                  <Link href={item.href}>{item.label}</Link>
-                </Button>
-              ))}
-            </div>
-          </div>
-        ) : null}
+          {inactiveOrganizations.length > 0 ? (
+            <Card>
+              <CardContent className="pt-6">
+                <p className="text-sm font-medium">Esta organización se encuentra inactiva.</p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {inactiveOrganizations.map((organization) => organization.name).join(", ")}
+                </p>
+              </CardContent>
+            </Card>
+          ) : null}
 
-        {inactiveOrganizations.length > 0 ? (
-          <Card>
-            <CardContent className="pt-6">
-              <p className="text-sm font-medium">Esta organización se encuentra inactiva.</p>
-              <p className="mt-1 text-sm text-muted-foreground">
-                {inactiveOrganizations.map((organization) => organization.name).join(", ")}
-              </p>
-            </CardContent>
-          </Card>
-        ) : null}
-
-        {contracts.length > 0 ? (
-          contracts.map((contract) => (
+          {contracts.length > 0 ? (
+            contracts.map((contract) => (
               <Card key={contract.id}>
                 <CardHeader className="pb-4">
                   <div className="flex items-start justify-between gap-4">
@@ -122,18 +131,26 @@ export default async function AppPage() {
                 </CardContent>
               </Card>
             ))
-        ) : (
-          <Card>
-            <CardContent className="pt-6">
-              <p className="text-sm text-muted-foreground">
-                No hay contratos disponibles para tu usuario.
-              </p>
-            </CardContent>
-          </Card>
-        )}
-      </section>
+          ) : (
+            <Card>
+              <CardContent className="flex flex-col gap-4 pt-6 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-sm text-muted-foreground">
+                  No hay contratos disponibles para tu usuario.
+                </p>
+                {canCreateContracts ? (
+                  <Button asChild>
+                    <Link href="/app/settings/contracts?createContract=1">
+                      Crear contrato
+                    </Link>
+                  </Button>
+                ) : null}
+              </CardContent>
+            </Card>
+          )}
+        </section>
 
-      <Separator />
-    </main>
+        <Separator />
+      </div>
+    </AuthenticatedAppShell>
   );
 }

@@ -36,6 +36,8 @@ import {
   getActiveContractAdminModal,
 } from "@/lib/contract-admin-navigation";
 
+import { AuthenticatedAppShell } from "../../app-shell";
+
 type SearchParams = {
   q?: string;
   status?: string;
@@ -99,7 +101,12 @@ export default async function ContractAdministrationPage({
     : undefined;
 
   return (
-    <main className="mx-auto grid min-h-screen w-full max-w-6xl gap-6 px-6 py-10">
+    <AuthenticatedAppShell
+      userEmail={session.user.email}
+      userImage={session.user.image}
+      userName={session.user.name}
+    >
+      <div className="mx-auto grid w-full max-w-6xl gap-6">
       <header className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h1 className="text-2xl font-semibold">Contratos</h1>
@@ -338,7 +345,8 @@ export default async function ContractAdministrationPage({
           })}
         />
       ) : null}
-    </main>
+      </div>
+    </AuthenticatedAppShell>
   );
 }
 

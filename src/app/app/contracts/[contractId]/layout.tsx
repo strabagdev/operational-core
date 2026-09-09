@@ -1,12 +1,14 @@
 import Link from "next/link";
-import { notFound, redirect } from "next/navigation";
+import { redirect } from "next/navigation";
 
 import { auth } from "@/auth";
 import { ThemeToggleButton } from "@/components/theme-toggle-button";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getContractNavigationItems } from "@/lib/contract-layout-navigation";
 import { getAuthorizedContract } from "@/lib/contracts";
 
+import { AuthenticatedAppShell } from "../../app-shell";
 import { ContractContextHeader } from "./contract-context-header";
 import { ContractNavigationRail } from "./contract-navigation-rail";
 import { UserMenu } from "./user-menu";
@@ -28,7 +30,31 @@ export default async function ContractLayout({
   const contract = await getAuthorizedContract(contractId, session.user.id);
 
   if (!contract) {
-    notFound();
+    return (
+      <AuthenticatedAppShell
+        userEmail={session.user.email}
+        userImage={session.user.image}
+        userName={session.user.name}
+      >
+        <div className="mx-auto grid w-full max-w-3xl gap-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>Contrato no disponible</CardTitle>
+            </CardHeader>
+            <CardContent className="grid gap-4">
+              <p className="text-sm text-muted-foreground">
+                El contrato solicitado no existe, no está activo o ya no está disponible para tu usuario.
+              </p>
+              <div>
+                <Button asChild variant="outline">
+                  <Link href="/app">Volver a contratos</Link>
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      </AuthenticatedAppShell>
+    );
   }
 
   const navigation = getContractNavigationItems({

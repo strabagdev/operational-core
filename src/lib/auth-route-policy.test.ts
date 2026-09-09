@@ -39,6 +39,14 @@ describe("auth route policy", () => {
     expect(getAuthRouteDecision({ hasSession: true, pathname: "/app" })).toEqual({
       kind: "next",
     });
+    expect(
+      getAuthRouteDecision({
+        hasSession: true,
+        pathname: "/app/contracts/stale_contract/records",
+      }),
+    ).toEqual({
+      kind: "next",
+    });
   });
 
   it("redirects authenticated login to the app once", () => {
