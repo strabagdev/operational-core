@@ -210,6 +210,11 @@ describe("GET /api/v1/contracts/[contractId]/views", () => {
         id: "dashboard",
         type: "DASHBOARD",
       }),
+      appView({
+        config: panelConfig(),
+        id: "panel",
+        type: "PANEL",
+      }),
     ] as never);
 
     const response = await GET(
@@ -267,6 +272,7 @@ describe("GET /api/v1/contracts/[contractId]/views", () => {
           },
           { config: { entityTypeId: "board_entity", groupByFieldKey: "estado" }, type: "BOARD" },
           { config: { entityTypeIds: ["a", "b"] }, type: "DASHBOARD" },
+          { config: panelConfig(), type: "PANEL" },
         ],
       },
       ok: true,
@@ -334,3 +340,40 @@ describe("GET /api/v1/contracts/[contractId]/views", () => {
     });
   });
 });
+
+function panelConfig() {
+  return {
+    schemaVersion: 1,
+    layout: { columns: 12 },
+    filters: [],
+    datasets: [
+      {
+        id: "records",
+        source: { type: "ENTITY", entityTypeId: "entity_1" },
+        transformation: {
+          type: "RECORDS",
+          fieldIds: ["status_field", "date_field"],
+          pagination: { pageSize: 25 },
+        },
+      },
+    ],
+    metrics: [],
+    calculatedFields: [],
+    modules: [
+      {
+        id: "table",
+        datasetId: "records",
+        visualization: {
+          type: "TABLE",
+          config: {
+            columns: [
+              { fieldId: "status_field" },
+              { fieldId: "date_field", format: "DD-MM-YYYY" },
+            ],
+          },
+        },
+        layout: { x: 0, y: 0, w: 12, h: 6 },
+      },
+    ],
+  };
+}

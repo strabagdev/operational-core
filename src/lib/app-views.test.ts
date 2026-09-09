@@ -1612,3 +1612,250 @@ describe("AppView administration", () => {
     });
   });
 });
+
+describe("PANEL AppView config", () => {
+  it("parses TABLE panel configs and preserves dataset and column order by field id", () => {
+    const config = parseAppViewConfig({
+      config: panelConfig(),
+      type: "PANEL",
+    } as never);
+
+    expect(config).toMatchObject({ schemaVersion: 1, type: "PANEL" });
+    if (config.type !== "PANEL") return;
+    expect(config.datasets[0]?.transformation.type).toBe("LATEST_BY_RELATION");
+    expect(config.datasets[0]?.transformation.fieldIds).toEqual([
+      "procedure_field",
+      "status_field",
+      "revision_field",
+      "date_field",
+    ]);
+    expect(config.modules[0]?.visualization.config.columns.map((column) => column.fieldId)).toEqual([
+      "procedure_field",
+      "status_field",
+      "revision_field",
+      "date_field",
+    ]);
+  });
+
+  it("rejects unsupported PANEL visualization and reserved formula surfaces in v1", () => {
+    expect(() => parseAppViewConfig({
+      config: {
+        ...panelConfig(),
+        modules: [
+          {
+            ...panelConfig().modules[0],
+            visualization: { type: "KPI", config: {} },
+          },
+        ],
+      },
+      type: "PANEL",
+    } as never)).toThrow();
+
+    expect(() => parseAppViewConfig({
+      config: {
+        ...panelConfig(),
+        metrics: [{ id: "metric_1" }],
+      },
+      type: "PANEL",
+    } as never)).toThrow();
+  });
+
+  it("rejects duplicate dataset fields and module columns", () => {
+    expect(() => parseAppViewConfig({
+      config: {
+        ...panelConfig(),
+        datasets: [
+          {
+            ...panelConfig().datasets[0],
+            transformation: {
+              ...panelConfig().datasets[0].transformation,
+              fieldIds: ["status_field", "status_field"],
+            },
+          },
+        ],
+      },
+      type: "PANEL",
+    } as never)).toThrow();
+
+    expect(() => parseAppViewConfig({
+      config: {
+        ...panelConfig(),
+        modules: [
+          {
+            ...panelConfig().modules[0],
+            visualization: {
+              type: "TABLE",
+              config: {
+                columns: [
+                  { fieldId: "status_field" },
+                  { fieldId: "status_field" },
+                ],
+              },
+            },
+          },
+        ],
+      },
+      type: "PANEL",
+    } as never)).toThrow();
+  });
+
+  it("validates PANEL field ids, relation targets, and same-contract entities before persisting", async () => {
+    entityTypeFindFirst
+      .mockResolvedValueOnce(panelEntityType() as never)
+      .mockResolvedValueOnce(entityType({ fields: [], id: "procedures", name: "Procedimientos" }) as never);
+
+    await createAppView("contract_1", "user_1", panelInput());
+
+    expect(entityTypeFindFirst).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      where: expect.objectContaining({ contractId: "contract_1", id: "versions" }),
+    }));
+    expect(entityTypeFindFirst).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      where: expect.objectContaining({ contractId: "contract_1", id: "procedures" }),
+    }));
+    expect(appViewCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        config: expect.objectContaining({
+          schemaVersion: 1,
+          datasets: expect.arrayContaining([
+            expect.objectContaining({
+              transformation: expect.objectContaining({ type: "LATEST_BY_RELATION" }),
+            }),
+          ]),
+        }),
+        type: "PANEL",
+      }),
+    }));
+  });
+
+  it("rejects PANEL relation fields that do not point to relatedEntityTypeId", async () => {
+    entityTypeFindFirst
+      .mockResolvedValueOnce(panelEntityType({
+        fields: panelFields({
+          procedureConfig: { targetEntityTypeId: "foreign", relationKind: "ONE" },
+        }),
+      }) as never)
+      .mockResolvedValueOnce(entityType({ fields: [], id: "procedures", name: "Procedimientos" }) as never);
+
+    await expect(
+      createAppView("contract_1", "user_1", panelInput()),
+    ).rejects.toThrow("relationFieldId debe apuntar a relatedEntityTypeId.");
+  });
+});
+
+function panelInput(config = panelConfig()) {
+  return {
+    common: {
+      active: true,
+      name: "Dashboard Procedimientos",
+      slug: "dashboard-procedimientos",
+      sortOrder: 0,
+      type: "PANEL",
+    },
+    rawConfig: config,
+  } as never;
+}
+
+function panelConfig(overrides: Record<string, unknown> = {}) {
+  return {
+    schemaVersion: 1,
+    layout: { columns: 12, rowHeight: 8 },
+    filters: [
+      { id: "period", label: "Periodo", valueType: "DATE" },
+    ],
+    datasets: [
+      {
+        id: "latest-procedure-status",
+        source: { type: "ENTITY", entityTypeId: "versions" },
+        filters: [
+          { type: "PANEL_FILTER", filterId: "period", fieldId: "date_field", operator: "EQ" },
+        ],
+        transformation: {
+          type: "LATEST_BY_RELATION",
+          relatedEntityTypeId: "procedures",
+          relationFieldId: "procedure_field",
+          orderFieldId: "date_field",
+          requiredValueFieldId: "status_field",
+          fieldIds: ["procedure_field", "status_field", "revision_field", "date_field"],
+          pagination: { pageSize: 25 },
+        },
+      },
+    ],
+    metrics: [],
+    calculatedFields: [],
+    modules: [
+      {
+        id: "procedure-table",
+        datasetId: "latest-procedure-status",
+        visualization: {
+          type: "TABLE",
+          config: {
+            columns: [
+              { fieldId: "procedure_field" },
+              { fieldId: "status_field" },
+              { fieldId: "revision_field" },
+              { fieldId: "date_field", format: "DD-MM-YYYY" },
+            ],
+            searchable: true,
+            paginated: true,
+          },
+        },
+        layout: { x: 0, y: 0, w: 12, h: 8 },
+      },
+    ],
+    ...overrides,
+  };
+}
+
+function panelEntityType(overrides: Record<string, unknown> = {}) {
+  return entityType({
+    fields: panelFields(),
+    id: "versions",
+    name: "Versionado",
+    ...overrides,
+  });
+}
+
+function panelFields({ procedureConfig = { targetEntityTypeId: "procedures", relationKind: "ONE" } } = {}) {
+  return [
+    {
+      config: procedureConfig,
+      id: "procedure_field",
+      isActive: true,
+      key: "procedimiento",
+      multiple: false,
+      name: "Procedimiento",
+      options: [],
+      type: "RELATION",
+    },
+    {
+      config: null,
+      id: "status_field",
+      isActive: true,
+      key: "estatus",
+      multiple: false,
+      name: "Estatus",
+      options: [{ id: "status_ok", isActive: true, value: "vigente" }],
+      type: "SELECT",
+    },
+    {
+      config: null,
+      id: "revision_field",
+      isActive: true,
+      key: "revision",
+      multiple: false,
+      name: "Revisión",
+      options: [],
+      type: "INTEGER",
+    },
+    {
+      config: null,
+      id: "date_field",
+      isActive: true,
+      key: "fecha",
+      multiple: false,
+      name: "Fecha",
+      options: [],
+      type: "DATE",
+    },
+  ];
+}

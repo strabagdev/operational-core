@@ -529,11 +529,44 @@ Config shapes by `type`:
   },
   "DASHBOARD": {
     "entityTypeIds": ["entity_type_id"]
+  },
+  "PANEL": {
+    "schemaVersion": 1,
+    "layout": { "columns": 12 },
+    "filters": [],
+    "datasets": [
+      {
+        "id": "records",
+        "source": { "type": "ENTITY", "entityTypeId": "entity_type_id" },
+        "transformation": {
+          "type": "RECORDS",
+          "fieldIds": ["field_id"],
+          "pagination": { "pageSize": 25 }
+        }
+      }
+    ],
+    "metrics": [],
+    "calculatedFields": [],
+    "modules": [
+      {
+        "id": "table",
+        "datasetId": "records",
+        "visualization": {
+          "type": "TABLE",
+          "config": {
+            "columns": [{ "fieldId": "field_id" }]
+          }
+        },
+        "layout": { "x": 0, "y": 0, "w": 12, "h": 6 }
+      }
+    ]
   }
 }
 ```
 
 The response does not include `createdAt`, `updatedAt`, assignment ids, users, or administrative metadata.
+
+`PANEL` is returned as an assigned active AppView like the legacy types. It is the migration destination for REPORT/BOARD/DASHBOARD, but it does not replace their endpoints yet.
 
 If a stored AppView has invalid config, Opco omits that view from the response and logs a server-side diagnostic with the view id. This prevents one corrupted view from breaking the whole client navigation payload.
 
@@ -548,6 +581,67 @@ Returns data for a configured `REPORT` AppView assigned to the authenticated use
 - `to`: optional `YYYY-MM-DD`.
 
 For entity-backed reports, missing `sourceMode` means `ENTITY`. `TABLE` and `MATRIX` date ranges filter records using the report's configured top-level `dateFieldId`; display names such as "Fecha" are not used as identifiers. `LATEST_BY_RELATION` does not require a top-level report date field: it uses `latestByRelation.relatedEntityTypeId` as the grouped entity, `latestByRelation.relationFieldId` to group source rows, required `latestByRelation.orderFieldId` to select the latest row per group and sort descending, optional `latestByRelation.requiredValueFieldId` to include only rows where that field has value, and ordered `latestByRelation.displayFieldIds` to select response columns. Ties on the order field are resolved by record id only; Opco does not use `displayName`, `createdAt`, `updatedAt`, or audit dates to select the latest row. `CURRENT_STATUS` remains accepted as an alias and maps legacy `currentStatus.subjectFieldId`, `currentStatus.stateFieldId`, and `currentStatus.dateFieldId` to the internal latest-by-relation model. The response includes the REPORT config, including `timeFilter` and `valueDisplay`, entity metadata, optional `subjectEntity` metadata when the relation field resolves to a relation target, selected field definitions including option `id`, visible `label`, and internal `value`, and serialized records with relation display names. Record values keep the stored value; clients apply `valueDisplay[fieldId] = LABEL | INTERNAL_VALUE` only when rendering REPORT output. Entity-backed presentation modes are `TABLE`, `MATRIX`, `LATEST_BY_RELATION`, and the `CURRENT_STATUS` alias. Reports stored before `timeFilter` are serialized with `mode = RANGE`, `defaultPeriod = CURRENT_MONTH`, and `allowChange = true`.
+
+### GET `/api/v1/contracts/:contractId/panels/:appViewId`
+
+Returns executable data for a configured `PANEL` AppView assigned to the authenticated user. Query parameters:
+
+- `datasetId`: optional. If omitted, Core executes only the first configured dataset.
+- `page`: optional positive integer for the selected dataset, default `1`.
+- `pageSize`: optional positive integer capped at `100`; defaults to the dataset pagination page size or `25`.
+- `search`: optional text search over record display name and included relation target display names.
+- `filters`: optional JSON object keyed by panel filter id. Values are validated by the dataset bindings and translated to typed field filters; SELECT and MULTISELECT filters may use stable option ids.
+
+PANEL v1 supports only `source.type = ENTITY`, transformations `RECORDS` and `LATEST_BY_RELATION`, and visualization `TABLE`. `metrics` and `calculatedFields` must be empty arrays until the cross-platform metric engine exists. `Versionado` entities are normal transactional entities; latest-per-related-record behavior is represented by `LATEST_BY_RELATION`, not by a versioning-specific report type.
+
+Response:
+
+```json
+{
+  "ok": true,
+  "data": {
+    "appView": {
+      "id": "panel_id",
+      "name": "Panel Operativo",
+      "slug": "panel-operativo"
+    },
+    "schemaVersion": 1,
+    "configRevision": "sha256_config_hash",
+    "calculatedAt": "2026-09-09T12:00:00.000Z",
+    "filters": [],
+    "datasets": [
+      {
+        "id": "records",
+        "schema": {
+          "fields": [
+            {
+              "id": "field_id",
+              "name": "Campo",
+              "options": [],
+              "type": "TEXT"
+            }
+          ]
+        },
+        "rows": [
+          {
+            "id": "record_id",
+            "values": { "field_id": "valor" }
+          }
+        ],
+        "pagination": {
+          "page": 1,
+          "pageSize": 25,
+          "total": 1,
+          "hasMore": false
+        }
+      }
+    ],
+    "modules": []
+  }
+}
+```
+
+TABLE column order is exactly `modules[].visualization.config.columns`. Core does not prepend `relationFieldId` or infer visible columns from `fieldIds`; duplicate TABLE column field ids are rejected at configuration validation time. Date-only values are serialized as `YYYY-MM-DD`; clients may render a TABLE column with `format = DD-MM-YYYY`.
 
 Reports can also use a STATE_UPDATE source in this first shape:
 

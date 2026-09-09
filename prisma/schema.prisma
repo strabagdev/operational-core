@@ -55,6 +55,7 @@ enum AppViewType {
   REPORT
   BOARD
   DASHBOARD
+  PANEL
 }
 
 enum AuditAction {
@@ -73,22 +74,22 @@ enum AuditAction {
 }
 
 model User {
-  id            String       @id @default(cuid())
-  name          String?
-  email         String       @unique
-  emailVerified DateTime?
-  image         String?
-  passwordHash  String?
-  active        Boolean      @default(true)
-  platformRole  PlatformRole @default(NONE)
-  accounts      Account[]
-  sessions      Session[]
-  memberships   Membership[]
-  auditEvents   AuditEvent[]
-  appViewAccesses UserAppViewAccess[]
+  id               String              @id @default(cuid())
+  name             String?
+  email            String              @unique
+  emailVerified    DateTime?
+  image            String?
+  passwordHash     String?
+  active           Boolean             @default(true)
+  platformRole     PlatformRole        @default(NONE)
+  accounts         Account[]
+  sessions         Session[]
+  memberships      Membership[]
+  auditEvents      AuditEvent[]
+  appViewAccesses  UserAppViewAccess[]
   apiRefreshTokens ApiRefreshToken[]
-  createdAt     DateTime     @default(now())
-  updatedAt     DateTime     @updatedAt
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
 }
 
 model Account {
@@ -151,37 +152,37 @@ model Membership {
 }
 
 model Contract {
-  id             String         @id @default(cuid())
-  organizationId String
-  name           String
-  code           String
-  description    String?
-  status         ContractStatus @default(ACTIVE)
-  slug           String
-  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  entityTypes    EntityType[]
-  appViews       AppView[]
+  id                  String              @id @default(cuid())
+  organizationId      String
+  name                String
+  code                String
+  description         String?
+  status              ContractStatus      @default(ACTIVE)
+  slug                String
+  organization        Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  entityTypes         EntityType[]
+  appViews            AppView[]
   userAppViewAccesses UserAppViewAccess[]
-  auditEvents    AuditEvent[]
-  createdAt      DateTime       @default(now())
-  updatedAt      DateTime       @updatedAt
+  auditEvents         AuditEvent[]
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
 
   @@unique([organizationId, code])
   @@unique([organizationId, slug])
 }
 
 model ExternalApp {
-  id             String       @id @default(cuid())
-  organizationId String
-  clientId       String       @unique
-  name           String
-  slug           String
-  active         Boolean      @default(true)
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  id              String              @id @default(cuid())
+  organizationId  String
+  clientId        String              @unique
+  name            String
+  slug            String
+  active          Boolean             @default(true)
+  organization    Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   idempotencyKeys ApiIdempotencyKey[]
-  refreshTokens  ApiRefreshToken[]
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
+  refreshTokens   ApiRefreshToken[]
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
 
   @@unique([organizationId, slug])
 }
@@ -208,7 +209,7 @@ model ApiRefreshToken {
 }
 
 model ApiIdempotencyKey {
-  id              String   @id @default(cuid())
+  id              String        @id @default(cuid())
   externalAppId   String
   clientRequestId String
   operation       String
@@ -218,10 +219,10 @@ model ApiIdempotencyKey {
   entityRecordId  String?
   responseBody    Json?
   completedAt     DateTime?
-  externalApp     ExternalApp @relation(fields: [externalAppId], references: [id], onDelete: Cascade)
+  externalApp     ExternalApp   @relation(fields: [externalAppId], references: [id], onDelete: Cascade)
   entityRecord    EntityRecord? @relation(fields: [entityRecordId], references: [id], onDelete: SetNull)
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
 
   @@unique([externalAppId, operation, clientRequestId])
   @@index([entityRecordId])
@@ -248,19 +249,19 @@ model EntityType {
 }
 
 model AppView {
-  id         String      @id @default(cuid())
-  contractId String
-  name       String
-  slug       String
-  icon       String?
-  type       AppViewType
-  active     Boolean     @default(true)
-  config     Json
-  sortOrder  Int         @default(0)
-  contract   Contract    @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  id           String              @id @default(cuid())
+  contractId   String
+  name         String
+  slug         String
+  icon         String?
+  type         AppViewType
+  active       Boolean             @default(true)
+  config       Json
+  sortOrder    Int                 @default(0)
+  contract     Contract            @relation(fields: [contractId], references: [id], onDelete: Cascade)
   userAccesses UserAppViewAccess[]
-  createdAt  DateTime    @default(now())
-  updatedAt  DateTime    @updatedAt
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
 
   @@unique([contractId, slug])
   @@unique([contractId, id])
@@ -268,14 +269,14 @@ model AppView {
 }
 
 model UserAppViewAccess {
-  id        String   @id @default(cuid())
-  userId    String
+  id         String   @id @default(cuid())
+  userId     String
   contractId String
-  appViewId String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  contract  Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
-  appView   AppView  @relation(fields: [contractId, appViewId], references: [contractId, id], onDelete: Cascade)
-  createdAt DateTime @default(now())
+  appViewId  String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  contract   Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  appView    AppView  @relation(fields: [contractId, appViewId], references: [contractId, id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
 
   @@unique([userId, contractId, appViewId])
   @@index([contractId, appViewId])
@@ -319,17 +320,17 @@ model FieldOption {
 }
 
 model EntityRecord {
-  id                String           @id @default(cuid())
+  id                String              @id @default(cuid())
   entityTypeId      String
   displayName       String
-  entityType        EntityType       @relation(fields: [entityTypeId], references: [id], onDelete: Cascade)
+  entityType        EntityType          @relation(fields: [entityTypeId], references: [id], onDelete: Cascade)
   values            EntityValue[]
-  outgoingRelations EntityRelation[] @relation("SourceRecordRelations")
-  incomingRelations EntityRelation[] @relation("TargetRecordRelations")
+  outgoingRelations EntityRelation[]    @relation("SourceRecordRelations")
+  incomingRelations EntityRelation[]    @relation("TargetRecordRelations")
   auditEvents       AuditEvent[]
   idempotencyKeys   ApiIdempotencyKey[]
-  createdAt         DateTime         @default(now())
-  updatedAt         DateTime         @updatedAt
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
 }
 
 model EntityValue {

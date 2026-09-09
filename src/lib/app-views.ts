@@ -13,7 +13,7 @@ import {
 } from "./workflow-catalog";
 
 const slugRegex = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
-const appViewTypeValues = ["RECORDS", "WORKFLOW", "REPORT", "BOARD", "DASHBOARD"] as const;
+const appViewTypeValues = ["RECORDS", "WORKFLOW", "REPORT", "BOARD", "DASHBOARD", "PANEL"] as const;
 type PrismaClientLike = typeof prisma | Prisma.TransactionClient;
 
 export const appViewTypeOptions = [
@@ -22,6 +22,7 @@ export const appViewTypeOptions = [
   { label: "Reporte", value: "REPORT" },
   { label: "Tablero", value: "BOARD" },
   { label: "Dashboard", value: "DASHBOARD" },
+  { label: "Panel", value: "PANEL" },
 ] as const satisfies Array<{ label: string; value: AppViewType }>;
 
 export const appViewWorkflowOptions = [
@@ -58,7 +59,104 @@ export type AppViewConfig =
   | StateUpdateWorkflowConfig
   | ReportAppViewConfig
   | { type: "BOARD"; entityTypeId: string; groupByFieldKey: string }
-  | { type: "DASHBOARD"; entityTypeIds: string[] };
+  | { type: "DASHBOARD"; entityTypeIds: string[] }
+  | PanelConfig;
+
+export type PanelConfig = {
+  type: "PANEL";
+  schemaVersion: 1;
+  layout: {
+    columns: number;
+    rowHeight?: number;
+  };
+  filters: PanelFilter[];
+  datasets: DatasetDefinition[];
+  metrics: [];
+  calculatedFields: [];
+  modules: PanelModule[];
+};
+
+export type PanelFilter = {
+  id: string;
+  label?: string;
+  valueType: "TEXT" | "NUMBER" | "DATE" | "BOOLEAN" | "OPTION" | "RECORD";
+  required?: boolean;
+};
+
+export type FilterExpr =
+  | {
+      type: "FIELD_VALUE";
+      fieldId: string;
+      operator: "EQ" | "IN" | "HAS_VALUE";
+      value?: unknown;
+      values?: unknown[];
+    }
+  | {
+      type: "PANEL_FILTER";
+      filterId: string;
+      fieldId: string;
+      operator: "EQ" | "IN";
+    };
+
+export type SortSpec = {
+  fieldId: string;
+  direction: "asc" | "desc";
+};
+
+export type DatasetDefinition = {
+  id: string;
+  name?: string;
+  source: {
+    type: "ENTITY";
+    entityTypeId: string;
+  };
+  filters?: FilterExpr[];
+  sort?: SortSpec[];
+  transformation:
+    | {
+        type: "RECORDS";
+        fieldIds: string[];
+        pagination?: {
+          pageSize: number;
+        };
+      }
+    | {
+        type: "LATEST_BY_RELATION";
+        relatedEntityTypeId: string;
+        relationFieldId: string;
+        orderFieldId: string;
+        requiredValueFieldId?: string;
+        fieldIds: string[];
+        pagination?: {
+          pageSize: number;
+        };
+      };
+};
+
+export type PanelModule = {
+  id: string;
+  title?: string;
+  datasetId: string;
+  visualization: {
+    type: "TABLE";
+    config: {
+      columns: Array<{
+        fieldId: string;
+        label?: string;
+        valueDisplay?: ReportSelectValueDisplay;
+        format?: string;
+      }>;
+      searchable?: boolean;
+      paginated?: boolean;
+    };
+  };
+  layout: {
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+  };
+};
 
 export type ReportAppViewConfig =
   | {
@@ -456,7 +554,11 @@ export function parseAppViewConfig(view: Pick<AppView, "config" | "type">): AppV
     return { type: "BOARD", ...boardConfigInputSchema.parse(raw) };
   }
 
-  return { type: "DASHBOARD", ...dashboardConfigInputSchema.parse(raw) };
+  if (view.type === "DASHBOARD") {
+    return { type: "DASHBOARD", ...dashboardConfigInputSchema.parse(raw) };
+  }
+
+  return { type: "PANEL", ...parsePanelConfigInput(raw) };
 }
 
 export function summarizeAppViewConfig({
@@ -500,6 +602,10 @@ export function summarizeAppViewConfig({
     const field = entityType?.fields.find((item) => item.key === config.groupByFieldKey);
 
     return `${entityName(config.entityTypeId)} · ${field?.name ?? config.groupByFieldKey}`;
+  }
+
+  if (config.type === "PANEL") {
+    return `${config.datasets.length} dataset(s) · ${config.modules.length} módulo(s)`;
   }
 
   return config.entityTypeIds.map(entityName).join(", ");
@@ -769,14 +875,21 @@ async function validateAppViewConfig({
     };
   }
 
-  const config = dashboardConfigInputSchema.parse(rawConfig);
-  const uniqueEntityTypeIds = Array.from(new Set(config.entityTypeIds));
+  if (type === "DASHBOARD") {
+    const config = dashboardConfigInputSchema.parse(rawConfig);
+    const uniqueEntityTypeIds = Array.from(new Set(config.entityTypeIds));
 
-  for (const entityTypeId of uniqueEntityTypeIds) {
-    await requireEntityType(client, contractId, entityTypeId);
+    for (const entityTypeId of uniqueEntityTypeIds) {
+      await requireEntityType(client, contractId, entityTypeId);
+    }
+
+    return { type, entityTypeIds: uniqueEntityTypeIds };
   }
 
-  return { type, entityTypeIds: uniqueEntityTypeIds };
+  const config = parsePanelConfigInput(rawConfig);
+  await validatePanelAppViewConfig({ client, config, contractId });
+
+  return { type, ...config };
 }
 
 const recordsConfigInputSchema = z.object({
@@ -942,8 +1055,157 @@ const dashboardConfigInputSchema = z.object({
   entityTypeIds: z.array(z.string().trim().min(1)).min(1, "Selecciona al menos una entidad."),
 });
 
+const panelIdSchema = z.string().trim().min(1).regex(/^[A-Za-z0-9_-]+$/, "Usa solo letras, números, guiones y guiones bajos.");
+const panelPaginationSchema = z.object({
+  pageSize: z.number().int().min(1).max(100),
+});
+const panelFilterSchema = z.object({
+  id: panelIdSchema,
+  label: z.string().trim().min(1).optional(),
+  valueType: z.enum(["TEXT", "NUMBER", "DATE", "BOOLEAN", "OPTION", "RECORD"]),
+  required: z.boolean().optional(),
+});
+const panelFilterExprSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("FIELD_VALUE"),
+    fieldId: z.string().trim().min(1),
+    operator: z.enum(["EQ", "IN", "HAS_VALUE"]),
+    value: z.unknown().optional(),
+    values: z.array(z.unknown()).optional(),
+  }),
+  z.object({
+    type: z.literal("PANEL_FILTER"),
+    filterId: z.string().trim().min(1),
+    fieldId: z.string().trim().min(1),
+    operator: z.enum(["EQ", "IN"]),
+  }),
+]);
+const panelSortSchema = z.object({
+  fieldId: z.string().trim().min(1),
+  direction: z.enum(["asc", "desc"]),
+});
+const panelDatasetSchema = z.object({
+  id: panelIdSchema,
+  name: z.string().trim().min(1).optional(),
+  source: z.object({
+    type: z.literal("ENTITY"),
+    entityTypeId: z.string().trim().min(1),
+  }),
+  filters: z.array(panelFilterExprSchema).optional(),
+  sort: z.array(panelSortSchema).optional(),
+  transformation: z.discriminatedUnion("type", [
+    z.object({
+      type: z.literal("RECORDS"),
+      fieldIds: z.array(z.string().trim().min(1)).min(1),
+      pagination: panelPaginationSchema.optional(),
+    }),
+    z.object({
+      type: z.literal("LATEST_BY_RELATION"),
+      relatedEntityTypeId: z.string().trim().min(1),
+      relationFieldId: z.string().trim().min(1),
+      orderFieldId: z.string().trim().min(1),
+      requiredValueFieldId: z.string().trim().min(1).optional(),
+      fieldIds: z.array(z.string().trim().min(1)).min(1),
+      pagination: panelPaginationSchema.optional(),
+    }),
+  ]),
+}).superRefine((dataset, ctx) => {
+  if (new Set(dataset.transformation.fieldIds).size !== dataset.transformation.fieldIds.length) {
+    ctx.addIssue({
+      code: "custom",
+      message: "No repitas campos en el dataset.",
+      path: ["transformation", "fieldIds"],
+    });
+  }
+});
+const panelModuleSchema = z.object({
+  id: panelIdSchema,
+  title: z.string().trim().min(1).optional(),
+  datasetId: z.string().trim().min(1),
+  visualization: z.object({
+    type: z.literal("TABLE", {
+      message: "PANEL v1 solo soporta visualización TABLE.",
+    }),
+    config: z.object({
+      columns: z.array(z.object({
+        fieldId: z.string().trim().min(1),
+        label: z.string().trim().min(1).optional(),
+        valueDisplay: z.enum(["LABEL", "INTERNAL_VALUE"]).optional(),
+        format: z.string().trim().min(1).optional(),
+      })).min(1, "Selecciona al menos una columna."),
+      searchable: z.boolean().optional(),
+      paginated: z.boolean().optional(),
+    }),
+  }),
+  layout: z.object({
+    x: z.number().int().min(0),
+    y: z.number().int().min(0),
+    w: z.number().int().min(1),
+    h: z.number().int().min(1),
+  }),
+});
+const panelConfigInputSchema = z.object({
+  schemaVersion: z.literal(1),
+  layout: z.object({
+    columns: z.number().int().min(1).max(24),
+    rowHeight: z.number().int().min(1).optional(),
+  }),
+  filters: z.array(panelFilterSchema),
+  datasets: z.array(panelDatasetSchema).min(1),
+  metrics: z.tuple([]),
+  calculatedFields: z.tuple([]),
+  modules: z.array(panelModuleSchema).min(1),
+}).superRefine((config, ctx) => {
+  addDuplicateIssues(config.filters.map((filter) => filter.id), ctx, "filters");
+  addDuplicateIssues(config.datasets.map((dataset) => dataset.id), ctx, "datasets");
+  addDuplicateIssues(config.modules.map((module) => module.id), ctx, "modules");
+
+  const datasetIds = new Set(config.datasets.map((dataset) => dataset.id));
+  for (const [index, module] of config.modules.entries()) {
+    if (!datasetIds.has(module.datasetId)) {
+      ctx.addIssue({
+        code: "custom",
+        message: "El módulo referencia un dataset inexistente.",
+        path: ["modules", index, "datasetId"],
+      });
+    }
+    addDuplicateIssues(
+      module.visualization.config.columns.map((column) => column.fieldId),
+      ctx,
+      `modules.${index}.visualization.config.columns`,
+    );
+    if (module.layout.x + module.layout.w > config.layout.columns) {
+      ctx.addIssue({
+        code: "custom",
+        message: "El layout del módulo excede las columnas del panel.",
+        path: ["modules", index, "layout"],
+      });
+    }
+  }
+});
+
 function parseRecordsConfigInput(rawConfig: unknown) {
   return recordsConfigInputSchema.parse(rawConfig);
+}
+
+function parsePanelConfigInput(rawConfig: unknown) {
+  return panelConfigInputSchema.parse(rawConfig);
+}
+
+function addDuplicateIssues(ids: string[], ctx: z.RefinementCtx, path: string) {
+  const seen = new Set<string>();
+
+  for (const id of ids) {
+    if (seen.has(id)) {
+      ctx.addIssue({
+        code: "custom",
+        message: "No repitas identificadores en esta configuración.",
+        path: [path],
+      });
+      return;
+    }
+    seen.add(id);
+  }
 }
 
 async function requireEntityType(
@@ -1195,6 +1457,120 @@ function parseReportValueDisplay(raw: Record<string, unknown>) {
   );
 
   return Object.fromEntries(entries);
+}
+
+async function validatePanelAppViewConfig({
+  client,
+  config,
+  contractId,
+}: {
+  client: PrismaClientLike;
+  config: z.infer<typeof panelConfigInputSchema>;
+  contractId: string;
+}) {
+  const filtersById = new Map(config.filters.map((filter) => [filter.id, filter]));
+  const datasetFieldIdsById = new Map<string, Set<string>>();
+
+  for (const dataset of config.datasets) {
+    const entityType = await requireEntityType(client, contractId, dataset.source.entityTypeId);
+    const fields = entityType.fields;
+    const fieldIds = dataset.transformation.fieldIds;
+
+    requireUniqueConfigIds(fieldIds, "No repitas campos en el dataset.", "datasets");
+
+    for (const fieldId of fieldIds) {
+      requireActiveTargetField(fields, fieldId, "campos del dataset");
+    }
+
+    for (const filter of dataset.filters ?? []) {
+      const field = requireActiveTargetField(fields, filter.fieldId, "filtros del dataset");
+
+      if (filter.type === "PANEL_FILTER") {
+        const panelFilter = filtersById.get(filter.filterId);
+
+        if (!panelFilter) {
+          throw new AppViewConfigError("El dataset referencia un filtro de panel inexistente.", "filters");
+        }
+
+        if (!panelFilterValueTargetsField(panelFilter.valueType, field.type)) {
+          throw new AppViewConfigError("El filtro de panel no es compatible con el campo enlazado.", "filters");
+        }
+      }
+    }
+
+    for (const sort of dataset.sort ?? []) {
+      const sortField = requireActiveTargetField(fields, sort.fieldId, "orden del dataset");
+
+      if (!reportSortableFieldTypes.has(sortField.type)) {
+        throw new AppViewConfigError("El campo de orden del dataset no es compatible.", "datasets");
+      }
+    }
+
+    if (dataset.transformation.type === "LATEST_BY_RELATION") {
+      await requireEntityType(client, contractId, dataset.transformation.relatedEntityTypeId);
+      const relationField = requireActiveTargetField(fields, dataset.transformation.relationFieldId, "relación del dataset");
+
+      if (relationField.type !== "RELATION") {
+        throw new AppViewConfigError("relationFieldId debe ser un campo RELATION.", "datasets");
+      }
+
+      if (getRelationConfig(relationField.config).targetEntityTypeId !== dataset.transformation.relatedEntityTypeId) {
+        throw new AppViewConfigError("relationFieldId debe apuntar a relatedEntityTypeId.", "datasets");
+      }
+
+      const orderField = requireActiveTargetField(fields, dataset.transformation.orderFieldId, "orden del dataset");
+
+      if (!reportSortableFieldTypes.has(orderField.type)) {
+        throw new AppViewConfigError("orderFieldId no es compatible para ordenar.", "datasets");
+      }
+
+      if (dataset.transformation.requiredValueFieldId) {
+        requireActiveTargetField(fields, dataset.transformation.requiredValueFieldId, "campo requerido del dataset");
+      }
+    }
+
+    datasetFieldIdsById.set(dataset.id, new Set(fieldIds));
+  }
+
+  for (const panelModule of config.modules) {
+    const datasetFieldIds = datasetFieldIdsById.get(panelModule.datasetId);
+
+    if (!datasetFieldIds) {
+      throw new AppViewConfigError("El módulo referencia un dataset inexistente.", "modules");
+    }
+
+    for (const column of panelModule.visualization.config.columns) {
+      if (!datasetFieldIds.has(column.fieldId)) {
+        throw new AppViewConfigError("Cada columna TABLE debe existir en el schema del dataset.", "modules");
+      }
+    }
+  }
+}
+
+function requireUniqueConfigIds(ids: string[], message: string, fieldName?: string) {
+  if (new Set(ids).size !== ids.length) {
+    throw new AppViewConfigError(message, fieldName);
+  }
+}
+
+function panelFilterValueTargetsField(valueType: PanelFilter["valueType"], fieldType: string) {
+  if (valueType === "TEXT") {
+    return ["TEXT", "TEXTAREA", "EMAIL", "PHONE", "URL", "TIME"].includes(fieldType);
+  }
+  if (valueType === "NUMBER") {
+    return ["INTEGER", "DECIMAL", "MONEY"].includes(fieldType);
+  }
+  if (valueType === "DATE") {
+    return ["DATE", "DATETIME"].includes(fieldType);
+  }
+  if (valueType === "BOOLEAN") {
+    return fieldType === "BOOLEAN";
+  }
+  if (valueType === "OPTION") {
+    return ["SELECT", "MULTISELECT"].includes(fieldType);
+  }
+
+  return fieldType === "RELATION";
 }
 
 function validateReportAppViewFields({
