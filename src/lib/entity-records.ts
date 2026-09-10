@@ -37,6 +37,36 @@ type FieldWithOptions = EntityField & {
 };
 
 type ValueInput = SerializedFieldValue;
+export type RelationValidationIssueCause =
+  | "REFERENCE_NOT_FOUND_OR_DELETED"
+  | "WRONG_ENTITY"
+  | "OUTSIDE_CONTRACT"
+  | "NOT_ACCESS_CHECKED"
+  | "UNDETERMINED";
+
+export type RelationValidationIssue = {
+  cause: RelationValidationIssueCause;
+  actualEntityTypeId?: string | null;
+  actualEntityTypeName?: string | null;
+  fieldId: string;
+  fieldName: string;
+  relatedEntityTypeId: string | null;
+  relatedEntityTypeName?: string | null;
+  targetRecordId: string;
+};
+
+export type RelationValidationErrorDetails = {
+  relationDiagnostics: {
+    fields: Array<{
+      fieldId: string;
+      fieldName: string;
+      issues: RelationValidationIssue[];
+      relatedEntityTypeId: string | null;
+      relatedEntityTypeName?: string | null;
+      submittedRecordIds: string[];
+    }>;
+  };
+};
 export type EntityRecordSortDirection = "asc" | "desc";
 export type EntityRecordSortKey = "createdAt" | "displayName" | "updatedAt" | `field:${string}`;
 export type EntityRecordSort = {
@@ -1297,24 +1327,117 @@ export async function validateRelationValues({
     }
 
     if (targetRecordIds.length > 0) {
-      const targetCount = await prisma.entityRecord.count({
+      const targetRecords = await prisma.entityRecord.findMany({
+        select: {
+          displayName: true,
+          entityType: {
+            select: {
+              contractId: true,
+              id: true,
+              name: true,
+            },
+          },
+          entityTypeId: true,
+          id: true,
+        },
         where: {
           id: { in: targetRecordIds },
           entityType: {
-            id: config.targetEntityTypeId,
             contractId,
           },
         },
       });
 
-      if (targetCount !== targetRecordIds.length) {
-        throw userError(`${field.name} contiene registros relacionados no válidos.`);
+      const issues = relationValidationIssues({
+        contractId,
+        field,
+        relatedEntityTypeId: config.targetEntityTypeId,
+        records: targetRecords,
+        targetRecordIds,
+      });
+
+      if (issues.length > 0) {
+        throw relationUserError(`${field.name} contiene registros relacionados no válidos.`, {
+          relationDiagnostics: {
+            fields: [{
+              fieldId: field.id,
+              fieldName: field.name,
+              issues,
+              relatedEntityTypeId: config.targetEntityTypeId,
+              relatedEntityTypeName: null,
+              submittedRecordIds: targetRecordIds,
+            }],
+          },
+        });
       }
     }
 
   }
 
   return relationInputs;
+}
+
+function relationValidationIssues({
+  contractId,
+  field,
+  records,
+  relatedEntityTypeId,
+  targetRecordIds,
+}: {
+  contractId: string;
+  field: FieldWithOptions;
+  records: Array<{
+    displayName: string;
+    entityType: {
+      contractId: string;
+      id: string;
+      name: string;
+    };
+    entityTypeId: string;
+    id: string;
+  }>;
+  relatedEntityTypeId: string;
+  targetRecordIds: string[];
+}): RelationValidationIssue[] {
+  const recordsById = new Map(records.map((record) => [record.id, record]));
+
+  return targetRecordIds.flatMap<RelationValidationIssue>((targetRecordId) => {
+    const record = recordsById.get(targetRecordId);
+
+    if (!record) {
+      return [{
+        cause: "UNDETERMINED" as const,
+        fieldId: field.id,
+        fieldName: field.name,
+        relatedEntityTypeId,
+        targetRecordId,
+      }];
+    }
+
+    if (record.entityType.contractId !== contractId) {
+      return [{
+        cause: "OUTSIDE_CONTRACT" as const,
+        fieldId: field.id,
+        fieldName: field.name,
+        relatedEntityTypeId,
+        targetRecordId,
+      }];
+    }
+
+    if (record.entityTypeId !== relatedEntityTypeId) {
+      return [{
+        cause: "WRONG_ENTITY" as const,
+        fieldId: field.id,
+        fieldName: field.name,
+        relatedEntityTypeId,
+        actualEntityTypeId: record.entityType.id,
+        actualEntityTypeName: record.entityType.name,
+        targetRecordId,
+      }];
+    }
+
+    return [];
+  });
 }
 
 export async function syncEntityRelations(
@@ -1860,6 +1983,13 @@ function uniqueValueWhere(value: ValueInput) {
 function userError(message: string) {
   const error = new Error(message);
   error.name = "UserFacingError";
+
+  return error;
+}
+
+function relationUserError(message: string, details: RelationValidationErrorDetails) {
+  const error = userError(message) as Error & { details?: RelationValidationErrorDetails };
+  error.details = details;
 
   return error;
 }

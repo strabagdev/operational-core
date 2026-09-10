@@ -231,7 +231,7 @@ describe("entity records without technical status", () => {
     });
     const formData = new FormData();
     formData.append("field_owner", "foreign_record");
-    entityRecordCount.mockResolvedValueOnce(0);
+    entityRecordFindMany.mockResolvedValueOnce([]);
 
     await expect(
       validateRelationValues({
@@ -242,11 +242,11 @@ describe("entity records without technical status", () => {
       }),
     ).rejects.toThrow("owner contiene registros relacionados no válidos.");
 
-    expect(entityRecordCount).toHaveBeenCalledWith({
+    expect(entityRecordFindMany).toHaveBeenCalledWith({
+      select: expect.any(Object),
       where: {
         id: { in: ["foreign_record"] },
         entityType: {
-          id: "target_entity",
           contractId: "contract_1",
         },
       },
@@ -268,7 +268,16 @@ describe("entity records without technical status", () => {
 
       formData.append("field_department", "target_record_1");
       entityTypeFindFirst.mockResolvedValue(entityType([field("name"), relationField]) as never);
-      entityRecordCount.mockResolvedValueOnce(1);
+      entityRecordFindMany.mockResolvedValueOnce([{
+        displayName: "Departamento",
+        entityType: {
+          contractId: "contract_1",
+          id: "target_entity",
+          name: "Departamentos",
+        },
+        entityTypeId: "target_entity",
+        id: "target_record_1",
+      }] as never);
       currentTx.entityRecord.create.mockResolvedValue({
         id: "source_record_1",
         displayName: "Registro sin nombre",
@@ -279,16 +288,16 @@ describe("entity records without technical status", () => {
         createEntityRecord("contract_1", "entity_1", "user_1", formData),
       ).resolves.toMatchObject({ id: "source_record_1" });
 
-      expect(entityRecordCount).toHaveBeenCalledWith({
+      expect(entityRecordFindMany).toHaveBeenCalledWith({
+        select: expect.any(Object),
         where: {
           id: { in: ["target_record_1"] },
           entityType: {
-            id: "target_entity",
             contractId: "contract_1",
           },
         },
       });
-      const relationTargetWhere = entityRecordCount.mock.calls[0]?.[0]?.where;
+      const relationTargetWhere = entityRecordFindMany.mock.calls[0]?.[0]?.where;
 
       expect(relationTargetWhere).not.toHaveProperty("nature");
       expect(relationTargetWhere?.entityType).not.toHaveProperty("nature");
@@ -320,7 +329,7 @@ describe("entity records without technical status", () => {
 
     formData.append("field_procedure", "target_record_1");
     entityTypeFindFirst.mockResolvedValue(entityType([relationField]) as never);
-    entityRecordCount.mockResolvedValueOnce(1);
+    entityRecordFindMany.mockResolvedValueOnce([relationTarget("target_record_1")] as never);
     entityRecordFindFirst.mockResolvedValueOnce({
       id: "target_record_1",
       displayName: "Plan de emergencias",
@@ -365,7 +374,7 @@ describe("entity records without technical status", () => {
         },
       ],
     } as never);
-    entityRecordCount.mockResolvedValueOnce(1);
+    entityRecordFindMany.mockResolvedValueOnce([relationTarget("target_record_2")] as never);
     currentTx.entityRecord.update.mockResolvedValue({ id: "source_record_1", displayName: "Source" });
     transaction.mockImplementation(async (callback) => callback(currentTx as never));
 
@@ -420,7 +429,7 @@ describe("entity records without technical status", () => {
         id: "target_record_2",
         displayName: "Plan de emergencias",
       } as never);
-    entityRecordCount.mockResolvedValueOnce(1);
+    entityRecordFindMany.mockResolvedValueOnce([relationTarget("target_record_2")] as never);
     currentTx.entityRecord.update.mockResolvedValue({
       id: "source_record_1",
       displayName: "Plan de emergencias",
@@ -489,7 +498,10 @@ describe("entity records without technical status", () => {
     formData.append("field_departments", "target_record_1");
     formData.append("field_departments", "target_record_2");
     entityTypeFindFirst.mockResolvedValue(entityType([field("name"), relationField]) as never);
-    entityRecordCount.mockResolvedValueOnce(2);
+    entityRecordFindMany.mockResolvedValueOnce([
+      relationTarget("target_record_1"),
+      relationTarget("target_record_2"),
+    ] as never);
     currentTx.entityRecord.create.mockResolvedValue({
       id: "source_record_1",
       displayName: "Registro sin nombre",
@@ -762,6 +774,20 @@ function record(id: string) {
     displayName: id,
     updatedAt: new Date("2026-01-01"),
     values: [],
+  };
+}
+
+function relationTarget(id: string, overrides: Record<string, unknown> = {}) {
+  return {
+    displayName: id,
+    entityType: {
+      contractId: "contract_1",
+      id: "target_entity",
+      name: "Entidad relacionada",
+    },
+    entityTypeId: "target_entity",
+    id,
+    ...overrides,
   };
 }
 

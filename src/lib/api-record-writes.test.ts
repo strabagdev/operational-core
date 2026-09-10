@@ -179,7 +179,7 @@ describe("api record writes", () => {
   });
 
   it("creates EntityRelation rows from relation targetRecordId values", async () => {
-    vi.mocked(prisma.entityRecord.count).mockResolvedValueOnce(1);
+    vi.mocked(prisma.entityRecord.findMany).mockResolvedValueOnce([relationTarget("target_record_1")] as never);
 
     const result = await createApiEntityRecord({
       appId: "app_1",
@@ -203,11 +203,11 @@ describe("api record writes", () => {
     });
 
     expect(result).toEqual({ ok: true, recordId: "record_1", replay: false });
-    expect(prisma.entityRecord.count).toHaveBeenCalledWith({
+    expect(prisma.entityRecord.findMany).toHaveBeenCalledWith({
+      select: expect.any(Object),
       where: {
         id: { in: ["target_record_1"] },
         entityType: {
-          id: "reference_entity",
           contractId: "contract_1",
         },
       },
@@ -225,7 +225,7 @@ describe("api record writes", () => {
   });
 
   it("creates API records with displayName from a RELATION ONE primary target", async () => {
-    vi.mocked(prisma.entityRecord.count).mockResolvedValueOnce(1);
+    vi.mocked(prisma.entityRecord.findMany).mockResolvedValueOnce([relationTarget("target_record_1")] as never);
     vi.mocked(prisma.entityRecord.findFirst).mockResolvedValueOnce({
       displayName: "Plan de emergencias",
       id: "target_record_1",
@@ -256,6 +256,71 @@ describe("api record writes", () => {
       data: {
         displayName: "Plan de emergencias",
         entityTypeId: "entity_1",
+      },
+    });
+  });
+
+  it("returns structured diagnostics for rejected relation ids without exposing other contracts", async () => {
+    vi.mocked(prisma.entityRecord.findMany).mockResolvedValueOnce([]);
+
+    const result = await createApiEntityRecord({
+      appId: "app_1",
+      body: {
+        clientRequestId: "client-request-invalid-relation",
+        values: {
+          codigo: "EQ-001",
+          departamento: "foreign_record",
+        },
+      },
+      contractId: "contract_1",
+      entity: {
+        contractId: "contract_1",
+        fields: [textField, relationField],
+        id: "entity_1",
+        isActive: true,
+        name: "Equipos",
+        slug: "equipos",
+      } as never,
+      userId: "user_1",
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      response: expect.objectContaining({ status: 400 }),
+    });
+    expect(prisma.entityRecord.findMany).toHaveBeenCalledWith({
+      select: expect.any(Object),
+      where: {
+        id: { in: ["foreign_record"] },
+        entityType: {
+          contractId: "contract_1",
+        },
+      },
+    });
+    await expect(result.ok ? null : result.response.json()).resolves.toMatchObject({
+      ok: false,
+      error: {
+        code: "INVALID_RELATION",
+        details: {
+          relationDiagnostics: {
+            fields: [
+              {
+                fieldId: "field_departamento",
+                fieldName: "Departamento",
+                issues: [
+                  {
+                    cause: "UNDETERMINED",
+                    fieldId: "field_departamento",
+                    relatedEntityTypeId: "reference_entity",
+                    targetRecordId: "foreign_record",
+                  },
+                ],
+                relatedEntityTypeId: "reference_entity",
+                submittedRecordIds: ["foreign_record"],
+              },
+            ],
+          },
+        },
       },
     });
   });
@@ -540,7 +605,7 @@ describe("api record writes", () => {
         displayName: "Plan de emergencias",
         id: "target_record_2",
       } as never);
-    vi.mocked(prisma.entityRecord.count).mockResolvedValueOnce(1);
+    vi.mocked(prisma.entityRecord.findMany).mockResolvedValueOnce([relationTarget("target_record_2")] as never);
 
     const result = await patchApiEntityRecord({
       appId: "app_1",
@@ -567,3 +632,17 @@ describe("api record writes", () => {
     });
   });
 });
+
+function relationTarget(id: string, overrides: Record<string, unknown> = {}) {
+  return {
+    displayName: id,
+    entityType: {
+      contractId: "contract_1",
+      id: "reference_entity",
+      name: "Referencia",
+    },
+    entityTypeId: "reference_entity",
+    id,
+    ...overrides,
+  };
+}

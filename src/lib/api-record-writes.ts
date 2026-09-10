@@ -817,17 +817,21 @@ function mapApiWriteException(error: unknown) {
   }
 
   if (error instanceof Error && error.name === "UserFacingError") {
-    return writeError("INVALID_RELATION", error.message);
+    return writeError("INVALID_RELATION", error.message, readErrorDetails(error));
   }
 
   throw error;
 }
 
-function writeError(code: string, message: string) {
+function writeError(code: string, message: string, details?: unknown) {
   return {
     ok: false as const,
-    response: badRequest(message, code),
+    response: badRequest(message, code, details),
   };
+}
+
+function readErrorDetails(error: Error) {
+  return "details" in error ? (error as Error & { details?: unknown }).details : undefined;
 }
 
 class ApiRecordInputError extends Error {

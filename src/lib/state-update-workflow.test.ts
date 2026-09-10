@@ -1559,9 +1559,26 @@ function option(id: string, label: string, value: string) {
 }
 
 function defaultRecordFindMany(records: Array<ReturnType<typeof existingState>> = []) {
-  return (async (args: { where?: { entityTypeId?: string; id?: string } }) => {
+  return (async (args: { where?: { entityTypeId?: string; id?: { in?: string[] } | string } }) => {
     if (args.where?.entityTypeId === "equipment") {
       return [{ displayName: "Excavadora", id: "equipment_1" }] as never;
+    }
+
+    if (
+      args.where?.id &&
+      typeof args.where.id === "object" &&
+      args.where.id.in?.includes("location_b")
+    ) {
+      return [{
+        displayName: "Ubicación B",
+        entityType: {
+          contractId: "contract_1",
+          id: "equipment",
+          name: "Equipos",
+        },
+        entityTypeId: "equipment",
+        id: "location_b",
+      }] as never;
     }
 
     return records as never;
