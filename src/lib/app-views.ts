@@ -71,9 +71,36 @@ export type PanelConfig = {
   };
   filters: PanelFilter[];
   datasets: DatasetDefinition[];
-  metrics: [];
+  metrics: PanelMetric[];
   calculatedFields: [];
   modules: PanelModule[];
+};
+
+export type PanelMetricAggregation =
+  | "COUNT"
+  | "COUNT_VALUES"
+  | "COUNT_DISTINCT"
+  | "SUM"
+  | "AVG"
+  | "MIN"
+  | "MAX";
+
+export type PanelKpiFormat =
+  | "NUMBER"
+  | "INTEGER"
+  | "DECIMAL"
+  | "MONEY"
+  | "PERCENT"
+  | "DATE"
+  | "DATETIME";
+
+export type PanelMetric = {
+  id: string;
+  name: string;
+  datasetId: string;
+  aggregation: PanelMetricAggregation;
+  fieldId?: string | null;
+  filterIds: string[];
 };
 
 export type PanelFilter = {
@@ -137,19 +164,28 @@ export type PanelModule = {
   id: string;
   title?: string;
   datasetId: string;
-  visualization: {
-    type: "TABLE";
-    config: {
-      columns: Array<{
-        fieldId: string;
-        label?: string;
-        valueDisplay?: ReportSelectValueDisplay;
-        format?: string;
-      }>;
-      searchable?: boolean;
-      paginated?: boolean;
-    };
-  };
+  visualization:
+    | {
+        type: "TABLE";
+        config: {
+          columns: Array<{
+            fieldId: string;
+            label?: string;
+            valueDisplay?: ReportSelectValueDisplay;
+            format?: string;
+          }>;
+          searchable?: boolean;
+          paginated?: boolean;
+        };
+      }
+    | {
+        type: "KPI";
+        config: {
+          metricId: string;
+          label: string;
+          format: PanelKpiFormat;
+        };
+      };
   layout: {
     x: number;
     y: number;
@@ -700,6 +736,14 @@ function panelZodIssueFieldError(issue: z.core.$ZodIssue) {
     return { fieldName: "panelModuleColumns", message: "Selecciona al menos una columna para la tabla." };
   }
 
+  if (dottedPath.match(/^modules\.\d+\.visualization\.config\.metricId$/)) {
+    return { fieldName: "panelKpiMetric", message: "Selecciona una métrica para el KPI." };
+  }
+
+  if (dottedPath === "metrics" || dottedPath.startsWith("metrics.")) {
+    return { fieldName: "metrics", message: "Revisa la configuración de métricas." };
+  }
+
   if (dottedPath.match(/^datasets\.\d+\.transformation\.relationFieldId$/)) {
     return { fieldName: "panelDatasetRelation", message: "Selecciona el campo relacionado." };
   }
@@ -721,6 +765,9 @@ function panelErrorSection(fieldName: string) {
   }
   if (fieldName === "filters") {
     return "filtros";
+  }
+  if (["metrics", "panelKpiMetric"].includes(fieldName)) {
+    return "metricas";
   }
   if (["modules", "panelModuleColumns"].includes(fieldName)) {
     return "modulos";
@@ -1172,6 +1219,8 @@ const panelSortSchema = z.object({
   fieldId: z.string().trim().min(1),
   direction: z.enum(["asc", "desc"]),
 });
+const panelMetricAggregationSchema = z.enum(["COUNT", "COUNT_VALUES", "COUNT_DISTINCT", "SUM", "AVG", "MIN", "MAX"]);
+const panelKpiFormatSchema = z.enum(["NUMBER", "INTEGER", "DECIMAL", "MONEY", "PERCENT", "DATE", "DATETIME"]);
 const panelDatasetSchema = z.object({
   id: panelIdSchema,
   name: z.string().trim().min(1).optional(),
@@ -1206,25 +1255,46 @@ const panelDatasetSchema = z.object({
     });
   }
 });
+const panelTableModuleVisualizationSchema = z.object({
+  type: z.literal("TABLE"),
+  config: z.object({
+    columns: z.array(z.object({
+      fieldId: z.string().trim().min(1),
+      label: z.string().trim().min(1).optional(),
+      valueDisplay: z.enum(["LABEL", "INTERNAL_VALUE"]).optional(),
+      format: z.string().trim().min(1).optional(),
+    }).strict()).min(1, "Selecciona al menos una columna."),
+    searchable: z.boolean().optional(),
+    paginated: z.boolean().optional(),
+  }).strict(),
+}).strict();
+const panelKpiModuleVisualizationSchema = z.object({
+  type: z.literal("KPI"),
+  config: z.object({
+    metricId: z.string().trim().min(1, "Selecciona una métrica para el KPI."),
+    label: z.string().trim().min(1, "Escribe una etiqueta para el KPI."),
+    format: panelKpiFormatSchema,
+  }).strict(),
+}).strict();
+const panelMetricSchema = z.object({
+  id: panelIdSchema,
+  name: z.string().trim().min(1, "Escribe un nombre para la métrica."),
+  datasetId: z.string().trim().min(1, "Selecciona un dataset para la métrica."),
+  aggregation: panelMetricAggregationSchema,
+  fieldId: z.preprocess(
+    (value) => value === null ? undefined : value,
+    z.string().trim().optional().transform((value) => value || undefined),
+  ),
+  filterIds: z.array(z.string().trim().min(1)).default([]),
+}).strict();
 const panelModuleSchema = z.object({
   id: panelIdSchema,
   title: z.string().trim().min(1).optional(),
   datasetId: z.string().trim().min(1),
-  visualization: z.object({
-    type: z.literal("TABLE", {
-      message: "PANEL v1 solo soporta visualización TABLE.",
-    }),
-    config: z.object({
-      columns: z.array(z.object({
-        fieldId: z.string().trim().min(1),
-        label: z.string().trim().min(1).optional(),
-        valueDisplay: z.enum(["LABEL", "INTERNAL_VALUE"]).optional(),
-        format: z.string().trim().min(1).optional(),
-      }).strict()).min(1, "Selecciona al menos una columna."),
-      searchable: z.boolean().optional(),
-      paginated: z.boolean().optional(),
-    }).strict(),
-  }).strict(),
+  visualization: z.discriminatedUnion("type", [
+    panelTableModuleVisualizationSchema,
+    panelKpiModuleVisualizationSchema,
+  ]),
   layout: z.object({
     x: z.number().int().min(0),
     y: z.number().int().min(0),
@@ -1240,15 +1310,37 @@ const panelConfigInputSchema = z.object({
   }).strict(),
   filters: z.array(panelFilterSchema),
   datasets: z.array(panelDatasetSchema).min(1),
-  metrics: z.tuple([]),
+  metrics: z.array(panelMetricSchema),
   calculatedFields: z.tuple([]),
   modules: z.array(panelModuleSchema).min(1),
 }).strict().superRefine((config, ctx) => {
   addDuplicateIssues(config.filters.map((filter) => filter.id), ctx, "filters");
   addDuplicateIssues(config.datasets.map((dataset) => dataset.id), ctx, "datasets");
+  addDuplicateIssues(config.metrics.map((metric) => metric.id), ctx, "metrics");
   addDuplicateIssues(config.modules.map((module) => module.id), ctx, "modules");
 
   const datasetIds = new Set(config.datasets.map((dataset) => dataset.id));
+  const metricIds = new Set(config.metrics.map((metric) => metric.id));
+  const filterIds = new Set(config.filters.map((filter) => filter.id));
+  for (const [index, metric] of config.metrics.entries()) {
+    if (!datasetIds.has(metric.datasetId)) {
+      ctx.addIssue({
+        code: "custom",
+        message: "La métrica referencia un dataset inexistente.",
+        path: ["metrics", index, "datasetId"],
+      });
+    }
+    addDuplicateIssues(metric.filterIds, ctx, `metrics.${index}.filterIds`);
+    for (const filterId of metric.filterIds) {
+      if (!filterIds.has(filterId)) {
+        ctx.addIssue({
+          code: "custom",
+          message: "La métrica referencia un filtro de panel inexistente.",
+          path: ["metrics", index, "filterIds"],
+        });
+      }
+    }
+  }
   for (const [index, module] of config.modules.entries()) {
     if (!datasetIds.has(module.datasetId)) {
       ctx.addIssue({
@@ -1257,11 +1349,20 @@ const panelConfigInputSchema = z.object({
         path: ["modules", index, "datasetId"],
       });
     }
-    addDuplicateIssues(
-      module.visualization.config.columns.map((column) => column.fieldId),
-      ctx,
-      `modules.${index}.visualization.config.columns`,
-    );
+    if (module.visualization.type === "TABLE") {
+      addDuplicateIssues(
+        module.visualization.config.columns.map((column) => column.fieldId),
+        ctx,
+        `modules.${index}.visualization.config.columns`,
+      );
+    }
+    if (module.visualization.type === "KPI" && !metricIds.has(module.visualization.config.metricId)) {
+      ctx.addIssue({
+        code: "custom",
+        message: "El KPI referencia una métrica inexistente.",
+        path: ["modules", index, "visualization", "config", "metricId"],
+      });
+    }
     if (module.layout.x + module.layout.w > config.layout.columns) {
       ctx.addIssue({
         code: "custom",
@@ -1587,6 +1688,8 @@ async function validatePanelAppViewConfig({
 }) {
   const filtersById = new Map(config.filters.map((filter) => [filter.id, filter]));
   const datasetFieldIdsById = new Map<string, Set<string>>();
+  const datasetFieldsById = new Map<string, Map<string, { id: string; isActive: boolean; name: string; type: string }>>();
+  const datasetFiltersById = new Map<string, Set<string>>();
   const datasetNamesById = new Map<string, string>();
   const fieldNamesById = new Map<string, string>();
 
@@ -1596,6 +1699,9 @@ async function validatePanelAppViewConfig({
     const fieldIds = dataset.transformation.fieldIds;
 
     datasetNamesById.set(dataset.id, dataset.name ?? entityType.name);
+    datasetFiltersById.set(dataset.id, new Set((dataset.filters ?? [])
+      .filter((filter) => filter.type === "PANEL_FILTER")
+      .map((filter) => filter.filterId)));
     for (const field of fields) {
       fieldNamesById.set(field.id, field.name);
     }
@@ -1654,10 +1760,58 @@ async function validatePanelAppViewConfig({
     }
 
     datasetFieldIdsById.set(dataset.id, new Set(fieldIds));
+    datasetFieldsById.set(dataset.id, new Map(fields.map((field) => [field.id, field])));
+  }
+
+  for (const metric of config.metrics) {
+    const datasetFieldIds = datasetFieldIdsById.get(metric.datasetId);
+    const datasetFields = datasetFieldsById.get(metric.datasetId);
+    const datasetFilterIds = datasetFiltersById.get(metric.datasetId) ?? new Set<string>();
+    const metricName = metric.name || metric.id;
+
+    if (!datasetFieldIds || !datasetFields) {
+      throw new AppViewConfigError("La métrica referencia un dataset inexistente.", "metrics");
+    }
+
+    for (const filterId of metric.filterIds) {
+      if (!filtersById.has(filterId)) {
+        throw new AppViewConfigError("La métrica referencia un filtro de panel inexistente.", "metrics");
+      }
+      if (!datasetFilterIds.has(filterId)) {
+        throw new AppViewConfigError("La métrica referencia un filtro que no aplica a su dataset.", "metrics");
+      }
+    }
+
+    if (metric.aggregation === "COUNT") {
+      if (metric.fieldId) {
+        throw new AppViewConfigError(`La métrica ${metricName} no debe seleccionar campo para COUNT.`, "metrics");
+      }
+      continue;
+    }
+
+    if (!metric.fieldId) {
+      throw new AppViewConfigError(`Selecciona un campo para la métrica ${metricName}.`, "metrics");
+    }
+
+    if (!datasetFieldIds.has(metric.fieldId)) {
+      throw new AppViewConfigError(`El campo de la métrica ${metricName} no pertenece al dataset.`, "metrics");
+    }
+
+    const field = datasetFields.get(metric.fieldId);
+
+    if (!field?.isActive) {
+      throw new AppViewConfigError(`El campo de la métrica ${metricName} no está activo.`, "metrics");
+    }
+
+    if (!panelMetricAggregationTargetsField(metric.aggregation, field.type)) {
+      throw new AppViewConfigError(`La agregación ${metric.aggregation} no es compatible con el campo ${field.name}.`, "metrics");
+    }
   }
 
   const unresolvedColumnFieldIds = config.modules
-    .flatMap((module) => module.visualization.config.columns.map((column) => column.fieldId))
+    .flatMap((module) => module.visualization.type === "TABLE"
+      ? module.visualization.config.columns.map((column) => column.fieldId)
+      : [])
     .filter((fieldId) => !fieldNamesById.has(fieldId));
 
   if (unresolvedColumnFieldIds.length > 0) {
@@ -1687,16 +1841,39 @@ async function validatePanelAppViewConfig({
       throw new AppViewConfigError("El módulo referencia un dataset inexistente.", "modules");
     }
 
-    for (const column of panelModule.visualization.config.columns) {
-      if (!datasetFieldIds.has(column.fieldId)) {
-        const moduleName = panelModule.title ?? panelModule.id;
-        const columnName = column.label ?? fieldNamesById.get(column.fieldId) ?? column.fieldId;
-        const datasetName = datasetNamesById.get(panelModule.datasetId) ?? panelModule.datasetId;
+    if (panelModule.visualization.type === "TABLE") {
+      for (const column of panelModule.visualization.config.columns) {
+        if (!datasetFieldIds.has(column.fieldId)) {
+          const moduleName = panelModule.title ?? panelModule.id;
+          const columnName = column.label ?? fieldNamesById.get(column.fieldId) ?? column.fieldId;
+          const datasetName = datasetNamesById.get(panelModule.datasetId) ?? panelModule.datasetId;
 
-        throw new AppViewConfigError(
-          `La columna ${columnName} no pertenece al dataset ${datasetName} en el módulo ${moduleName}.`,
-          "modules",
-        );
+          throw new AppViewConfigError(
+            `La columna ${columnName} no pertenece al dataset ${datasetName} en el módulo ${moduleName}.`,
+            "modules",
+          );
+        }
+      }
+    }
+
+    if (panelModule.visualization.type === "KPI") {
+      const metricId = panelModule.visualization.config.metricId;
+      const metric = config.metrics.find((item) => item.id === metricId);
+
+      if (!metric) {
+        throw new AppViewConfigError("El KPI referencia una métrica inexistente.", "modules");
+      }
+
+      if (metric.datasetId !== panelModule.datasetId) {
+        throw new AppViewConfigError("El KPI debe usar una métrica del mismo dataset.", "modules");
+      }
+
+      const metricField = metric.fieldId
+        ? datasetFieldsById.get(metric.datasetId)?.get(metric.fieldId)
+        : undefined;
+
+      if (!panelKpiFormatTargetsMetric(panelModule.visualization.config.format, metric, metricField?.type)) {
+        throw new AppViewConfigError("El formato del KPI no es compatible con la métrica seleccionada.", "modules");
       }
     }
   }
@@ -1726,6 +1903,35 @@ function panelFilterValueTargetsField(valueType: PanelFilter["valueType"], field
   }
 
   return fieldType === "RELATION";
+}
+
+function panelMetricAggregationTargetsField(aggregation: PanelMetricAggregation, fieldType: string) {
+  if (aggregation === "COUNT_VALUES" || aggregation === "COUNT_DISTINCT") {
+    return true;
+  }
+  if (aggregation === "SUM" || aggregation === "AVG") {
+    return ["INTEGER", "DECIMAL", "MONEY"].includes(fieldType);
+  }
+  if (aggregation === "MIN" || aggregation === "MAX") {
+    return ["INTEGER", "DECIMAL", "MONEY", "DATE", "DATETIME"].includes(fieldType);
+  }
+
+  return aggregation === "COUNT";
+}
+
+function panelKpiFormatTargetsMetric(
+  format: PanelKpiFormat,
+  metric: Pick<PanelMetric, "aggregation">,
+  fieldType: string | undefined,
+) {
+  if ((metric.aggregation === "MIN" || metric.aggregation === "MAX") && fieldType === "DATE") {
+    return format === "DATE";
+  }
+  if ((metric.aggregation === "MIN" || metric.aggregation === "MAX") && fieldType === "DATETIME") {
+    return format === "DATETIME";
+  }
+
+  return ["NUMBER", "INTEGER", "DECIMAL", "MONEY", "PERCENT"].includes(format);
 }
 
 function validateReportAppViewFields({

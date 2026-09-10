@@ -36,12 +36,12 @@ describePostgres("PANEL PostgreSQL integration", () => {
     process.env.DATABASE_URL = process.env.PANEL_PG_INTEGRATION_DATABASE_URL;
     await cleanup();
     await seedPanelData();
-  });
+  }, 30000);
 
   afterAll(async () => {
     await cleanup();
     await prisma.$disconnect();
-  });
+  }, 30000);
 
   it("persists and reads a legacy REPORT AppView after migrations", async () => {
     const report = await prisma.appView.findUniqueOrThrow({
@@ -76,7 +76,9 @@ describePostgres("PANEL PostgreSQL integration", () => {
       hasMore: true,
     });
     expect(dataset?.rows.map((row) => row.id)).toEqual([ids.versionTieA]);
-    expect(result.data.modules[0]?.visualization.config.columns.map((column) => column.fieldId)).toEqual([
+    expect(result.data.modules[0]?.visualization.type).toBe("TABLE");
+    if (result.data.modules[0]?.visualization.type !== "TABLE") return;
+    expect(result.data.modules[0].visualization.config.columns.map((column) => column.fieldId)).toEqual([
       ids.procedureField,
       ids.statusField,
       ids.revisionField,
@@ -155,6 +157,39 @@ describePostgres("PANEL PostgreSQL integration", () => {
     if (!missing.ok) {
       expect(missing.response.status).toBe(400);
     }
+  });
+
+  it("calculates metrics from the full filtered dataset before paginating rows", async () => {
+    const result = await getApiPanel({
+      appViewId: ids.panelView,
+      contractId: ids.contract,
+      query: {
+        datasetId: "raw-records",
+        filters: JSON.stringify({ status: ids.statusCurrentOption }),
+        page: "1",
+        pageSize: "1",
+      },
+      userId: ids.user,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.datasets.map((dataset) => dataset.id)).toEqual(["raw-records"]);
+    expect(result.data.datasets[0]?.rows).toHaveLength(1);
+    expect(result.data.datasets[0]?.pagination).toMatchObject({
+      page: 1,
+      pageSize: 1,
+      total: 4,
+      hasMore: true,
+    });
+    expect(Object.fromEntries(result.data.metrics.map((metric) => [metric.id, metric.value]))).toEqual({
+      "raw-all": 5,
+      "raw-current": 4,
+      "raw-revision-sum": 9,
+      "raw-revision-avg": 1.8,
+      "raw-date-min": "2026-09-01",
+      "raw-date-max": "2026-09-04",
+    });
   });
 
   it("isolates AppView and entity lookup by contract", async () => {
@@ -358,11 +393,14 @@ function panelConfig() {
   return {
     schemaVersion: 1,
     layout: { columns: 12 },
-    filters: [],
+    filters: [{ id: "status", label: "Estatus", valueType: "OPTION" }],
     datasets: [
       {
         id: "latest-procedures",
         source: { type: "ENTITY", entityTypeId: ids.versions },
+        filters: [
+          { type: "PANEL_FILTER", filterId: "status", fieldId: ids.statusField, operator: "EQ" },
+        ],
         transformation: {
           type: "LATEST_BY_RELATION",
           relatedEntityTypeId: ids.procedures,
@@ -376,15 +414,26 @@ function panelConfig() {
       {
         id: "raw-records",
         source: { type: "ENTITY", entityTypeId: ids.versions },
+        filters: [
+          { type: "PANEL_FILTER", filterId: "status", fieldId: ids.statusField, operator: "EQ" },
+        ],
         sort: [{ fieldId: ids.dateField, direction: "desc" }],
         transformation: {
           type: "RECORDS",
-          fieldIds: [ids.statusField, ids.dateField],
+          fieldIds: [ids.statusField, ids.revisionField, ids.dateField],
           pagination: { pageSize: 25 },
         },
       },
     ],
-    metrics: [],
+    metrics: [
+      { id: "latest-current", name: "Últimos vigentes", datasetId: "latest-procedures", aggregation: "COUNT", fieldId: null, filterIds: ["status"] },
+      { id: "raw-all", name: "Registros", datasetId: "raw-records", aggregation: "COUNT", fieldId: null, filterIds: [] },
+      { id: "raw-current", name: "Registros vigentes", datasetId: "raw-records", aggregation: "COUNT", fieldId: null, filterIds: ["status"] },
+      { id: "raw-revision-sum", name: "Suma revisión", datasetId: "raw-records", aggregation: "SUM", fieldId: ids.revisionField, filterIds: [] },
+      { id: "raw-revision-avg", name: "Promedio revisión", datasetId: "raw-records", aggregation: "AVG", fieldId: ids.revisionField, filterIds: [] },
+      { id: "raw-date-min", name: "Fecha mínima", datasetId: "raw-records", aggregation: "MIN", fieldId: ids.dateField, filterIds: [] },
+      { id: "raw-date-max", name: "Fecha máxima", datasetId: "raw-records", aggregation: "MAX", fieldId: ids.dateField, filterIds: [] },
+    ],
     calculatedFields: [],
     modules: [
       {

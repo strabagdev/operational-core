@@ -5,6 +5,7 @@ import {
   AppViewForm,
   cleanPanelDatasetForEntity,
   cleanPanelFiltersForEntity,
+  cleanPanelMetricsForDatasets,
   cleanPanelModulesForDatasets,
   incompatiblePanelColumns,
 } from "./app-view-form";
@@ -182,7 +183,7 @@ describe("AppViewForm", () => {
     expect(html).toContain("Agregar dataset");
     expect(html).toContain("Agregar filtro");
     expect(html).toContain("Agregar tabla");
-    expect(html).toContain("próximamente");
+    expect(html).toContain("Agregar KPI");
     expect(html).toContain("Tabla de asistencia");
     expect(html).toContain("DD-MM-YYYY");
     expect(html).toContain('name="panelConfig"');
@@ -570,6 +571,51 @@ describe("AppViewForm", () => {
     expect(html).toContain("4. Fecha");
   });
 
+  it("renders PANEL KPI metrics and preview without exposing raw JSON", () => {
+    const html = renderToStaticMarkup(
+      <AppViewForm
+        action={noopAction}
+        entityTypes={panelEntityTypes()}
+        initialValues={panelInitialValues({
+          metrics: [
+            {
+              id: "total-registros",
+              name: "Total de registros",
+              datasetId: "latest-procedure-status",
+              aggregation: "COUNT",
+              fieldId: null,
+              filterIds: [],
+            },
+          ],
+          modules: [
+            panelConfigFixture().modules[0],
+            {
+              id: "total-kpi",
+              title: "Total",
+              datasetId: "latest-procedure-status",
+              visualization: {
+                type: "KPI",
+                config: {
+                  metricId: "total-registros",
+                  label: "Total de registros",
+                  format: "NUMBER",
+                },
+              },
+              layout: { x: 0, y: 1, w: 4, h: 2 },
+            },
+          ],
+        })}
+        submitLabel="Guardar experiencia"
+      />,
+    );
+
+    expect(html).toContain("Métricas");
+    expect(html).toContain("Agregar KPI");
+    expect(html).toContain("Indicador");
+    expect(html).toContain("Valor de ejemplo en vista previa");
+    expect(html).not.toContain("<textarea");
+  });
+
   it("keeps non-PANEL AppViews on the existing narrow form layout", () => {
     const html = renderToStaticMarkup(
       <AppViewForm
@@ -660,7 +706,9 @@ describe("AppViewForm", () => {
     ], [cleanedDataset]);
 
     expect(cleanedDataset.transformation.fieldIds).toEqual(["status_field"]);
-    expect(cleanedModules[0]?.visualization.config.columns).toEqual([{ fieldId: "status_field" }]);
+    expect(cleanedModules[0]?.visualization.type).toBe("TABLE");
+    if (cleanedModules[0]?.visualization.type !== "TABLE") return;
+    expect(cleanedModules[0].visualization.config.columns).toEqual([{ fieldId: "status_field" }]);
   });
 
   it("keeps fields that are still valid when the PANEL dataset entity changes", () => {
@@ -737,8 +785,48 @@ describe("AppViewForm", () => {
       layout: { x: 0, y: 0, w: 12, h: 6 },
     };
 
-    expect(cleanPanelModulesForDatasets([panelModule], datasets)[0]?.visualization.config.columns).toEqual([
+    const cleanedModule = cleanPanelModulesForDatasets([panelModule], datasets)[0];
+
+    expect(cleanedModule?.visualization.type).toBe("TABLE");
+    if (cleanedModule?.visualization.type !== "TABLE") return;
+    expect(cleanedModule.visualization.config.columns).toEqual([
       { fieldId: "date_field" },
+    ]);
+  });
+
+  it("cleans metric field and filter dependencies when a PANEL dataset changes", () => {
+    const datasets = [
+      {
+        id: "version-records",
+        source: { type: "ENTITY" as const, entityTypeId: "versions" },
+        filters: [{ type: "PANEL_FILTER" as const, filterId: "status", fieldId: "status_field", operator: "EQ" as const }],
+        transformation: { type: "RECORDS" as const, fieldIds: ["status_field", "date_field"] },
+      },
+      {
+        id: "procedure-records",
+        source: { type: "ENTITY" as const, entityTypeId: "procedures" },
+        transformation: { type: "RECORDS" as const, fieldIds: ["number_field"] },
+      },
+    ];
+
+    expect(cleanPanelMetricsForDatasets([
+      {
+        id: "metric-1",
+        name: "Métrica",
+        datasetId: "procedure-records",
+        aggregation: "COUNT_VALUES",
+        fieldId: "status_field",
+        filterIds: ["status"],
+      },
+    ], datasets)).toEqual([
+      {
+        id: "metric-1",
+        name: "Métrica",
+        datasetId: "procedure-records",
+        aggregation: "COUNT_VALUES",
+        fieldId: null,
+        filterIds: [],
+      },
     ]);
   });
 

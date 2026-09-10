@@ -624,9 +624,45 @@ Returns executable data for a configured `PANEL` AppView assigned to the authent
 - `page`: optional positive integer for the selected dataset, default `1`.
 - `pageSize`: optional positive integer capped at `100`; defaults to the dataset pagination page size or `25`.
 - `search`: optional text search over record display name and included relation target display names.
-- `filters`: optional JSON object keyed by panel filter id. Values are validated by the dataset bindings and translated to typed field filters; SELECT and MULTISELECT filters may use stable option ids.
+- `filters`: optional JSON object keyed by panel filter id. Values are validated by the dataset bindings and translated to typed field filters; SELECT and MULTISELECT filters may use stable option ids. For dataset rows, all provided filters bound by the executed dataset apply. For KPI metrics, only required filters and the optional filters listed in `metric.filterIds` apply.
 
-PANEL v1 supports only `source.type = ENTITY`, transformations `RECORDS` and `LATEST_BY_RELATION`, and visualization `TABLE`. `metrics` and `calculatedFields` must be empty arrays until the cross-platform metric engine exists. `Versionado` entities are normal transactional entities; latest-per-related-record behavior is represented by `LATEST_BY_RELATION`, not by a versioning-specific report type.
+PANEL v1 supports only `source.type = ENTITY`, transformations `RECORDS` and `LATEST_BY_RELATION`, visualizations `TABLE` and `KPI`, and metric aggregations `COUNT`, `COUNT_VALUES`, `COUNT_DISTINCT`, `SUM`, `AVG`, `MIN`, and `MAX`. `calculatedFields` must remain an empty array until the formula engine exists. `Versionado` entities are normal transactional entities; latest-per-related-record behavior is represented by `LATEST_BY_RELATION`, not by a versioning-specific report type.
+
+KPI modules reference metrics by stable id:
+
+```json
+{
+  "metrics": [
+    {
+      "id": "total-registros",
+      "name": "Total de registros",
+      "datasetId": "latest-procedure-status",
+      "aggregation": "COUNT",
+      "fieldId": null,
+      "filterIds": []
+    }
+  ],
+  "modules": [
+    {
+      "id": "total-kpi",
+      "datasetId": "latest-procedure-status",
+      "visualization": {
+        "type": "KPI",
+        "config": {
+          "metricId": "total-registros",
+          "label": "Total de registros",
+          "format": "NUMBER"
+        }
+      },
+      "layout": { "x": 0, "y": 0, "w": 4, "h": 2 }
+    }
+  ]
+}
+```
+
+Metrics are calculated server-side for the executed dataset only. If `datasetId` is omitted, Core executes the first configured dataset and returns only metrics attached to that dataset; if `datasetId` is provided, Core returns only metrics attached to the requested dataset. Core does not execute other datasets to satisfy metrics. Static dataset filters, required panel filters, metric-selected optional panel filters, and search are applied before aggregation. For `LATEST_BY_RELATION`, filtering happens before grouping and aggregation happens after grouping. Response pagination only affects `datasets[].rows`, never metric values. The configuration never accepts SQL, JavaScript, expressions, or field names as logic; all references use ids.
+
+Metric value rules are intentionally narrow: `COUNT` counts result rows; `COUNT_VALUES` excludes `null` and empty text but counts `0` and `false`; `COUNT_DISTINCT` deduplicates normalized typed values; `SUM` and `AVG` operate only on numeric field types; `MIN` and `MAX` compare numeric values numerically and `DATE`/`DATETIME` values by canonical ISO representations. Metric responses include `valueType = NUMBER`, `DATE`, or `DATETIME` according to the aggregation and field type.
 
 Response:
 
@@ -668,6 +704,15 @@ Response:
           "total": 1,
           "hasMore": false
         }
+      }
+    ],
+    "metrics": [
+      {
+        "id": "total-registros",
+        "datasetId": "records",
+        "value": 3,
+        "valueType": "NUMBER",
+        "calculatedAt": "2026-09-09T12:00:00.000Z"
       }
     ],
     "modules": []

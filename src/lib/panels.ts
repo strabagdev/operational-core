@@ -6,6 +6,8 @@ import {
   type DatasetDefinition,
   type FilterExpr,
   type PanelConfig,
+  type PanelMetric,
+  type PanelMetricAggregation,
   parseAppViewConfig,
 } from "@/lib/app-views";
 import { badRequest, forbidden, notFound } from "@/lib/api-response";
@@ -61,6 +63,14 @@ type PanelRecord = {
     jsonValue?: Prisma.JsonValue | null;
     textValue?: string | null;
   }>;
+};
+
+type PanelMetricResult = {
+  calculatedAt: string;
+  datasetId: string;
+  id: string;
+  value: number | string | null;
+  valueType: "NUMBER" | "DATE" | "DATETIME";
 };
 
 export async function getApiPanel({
@@ -135,6 +145,8 @@ export async function getApiPanel({
     return executedDataset;
   }
 
+  const calculatedAt = new Date().toISOString();
+
   return {
     ok: true as const,
     data: {
@@ -145,9 +157,15 @@ export async function getApiPanel({
       },
       schemaVersion: config.schemaVersion,
       configRevision: panelConfigRevision(config),
-      calculatedAt: new Date().toISOString(),
+      calculatedAt,
       filters: config.filters,
       datasets: [executedDataset.data],
+      metrics: calculatePanelMetrics({
+        calculatedAt,
+        config,
+        executionsByDatasetId: new Map([[dataset.id, executedDataset.execution]]),
+        panelFilterValues: panelFilterValues.values,
+      }),
       modules: config.modules,
     },
   };
@@ -238,13 +256,16 @@ async function executePanelDataset({
     };
   }
 
+  const requiredFilterIds = config.filters
+    .filter((filter) => filter.required && dataset.filters?.some((item) => item.type === "PANEL_FILTER" && item.filterId === filter.id))
+    .map((filter) => filter.id);
+  const requiredPanelFilterIds = new Set(requiredFilterIds);
   const filterWhere = panelFiltersWhere({
     filters: dataset.filters ?? [],
     fieldsById,
+    includedPanelFilterIds: requiredPanelFilterIds,
     panelFilterValues,
-    requiredFilterIds: config.filters
-      .filter((filter) => filter.required && dataset.filters?.some((item) => item.type === "PANEL_FILTER" && item.filterId === filter.id))
-      .map((filter) => filter.id),
+    requiredFilterIds,
   });
 
   if (!filterWhere.ok) {
@@ -265,71 +286,25 @@ async function executePanelDataset({
     ],
   };
 
-  if (dataset.transformation.type === "RECORDS") {
-    const sort = dataset.sort?.[0];
-
-    if (sort) {
-      const records = await prisma.entityRecord.findMany({
-        include: panelRecordInclude(fieldIds),
-        orderBy: [{ displayName: "asc" }, { id: "asc" }],
-        where: baseWhere,
-      });
-      const sortedRecords = sortPanelRecords({
-        direction: sort.direction,
-        field: fieldsById.get(sort.fieldId),
-        records: records as PanelRecord[],
-      });
-      const total = sortedRecords.length;
-
-      return {
-        ok: true as const,
-        data: panelDatasetResponse({
-          dataset,
-          fields,
-          page,
-          pageSize,
-          records: sortedRecords.slice((page - 1) * pageSize, page * pageSize),
-          total,
-        }),
-      };
-    }
-
-    const [total, records] = await Promise.all([
-      prisma.entityRecord.count({ where: baseWhere }),
-      prisma.entityRecord.findMany({
-        include: panelRecordInclude(fieldIds),
-        orderBy: [{ displayName: "asc" }, { id: "asc" }],
-        skip: (page - 1) * pageSize,
-        take: pageSize,
-        where: baseWhere,
-      }),
-    ]);
-
-    return {
-      ok: true as const,
-      data: panelDatasetResponse({
-        dataset,
-        fields,
-        page,
-        pageSize,
-        records: records as PanelRecord[],
-        total,
-      }),
-    };
-  }
-
   const records = await prisma.entityRecord.findMany({
     include: panelRecordInclude(fieldIds),
     orderBy: [{ displayName: "asc" }, { id: "asc" }],
     where: baseWhere,
   });
-  const latestRecords = latestByRelationRecords({
-    orderFieldId: dataset.transformation.orderFieldId,
-    records: records as PanelRecord[],
-    relationFieldId: dataset.transformation.relationFieldId,
+  const displayRecords = transformPanelDatasetRecords({
+    dataset,
+    fieldsById,
+    records: applyPanelFiltersToRecords({
+      fieldsById,
+      filterIds: panelProvidedDatasetFilterIds(dataset, panelFilterValues, requiredPanelFilterIds),
+      filters: dataset.filters ?? [],
+      panelFilterValues,
+      records: records as PanelRecord[],
+    }),
   });
-  const total = latestRecords.length;
-  const pagedRecords = latestRecords.slice((page - 1) * pageSize, page * pageSize);
+
+  const total = displayRecords.length;
+  const pagedRecords = displayRecords.slice((page - 1) * pageSize, page * pageSize);
 
   return {
     ok: true as const,
@@ -341,20 +316,59 @@ async function executePanelDataset({
       records: pagedRecords,
       total,
     }),
+    execution: {
+      dataset,
+      fieldsById,
+      records: records as PanelRecord[],
+    },
   };
 }
 
 function panelDatasetFieldIds(dataset: DatasetDefinition) {
+  const filterFieldIds = (dataset.filters ?? []).map((filter) => filter.fieldId);
+
   if (dataset.transformation.type === "RECORDS") {
-    return dataset.transformation.fieldIds;
+    return Array.from(new Set([
+      ...dataset.transformation.fieldIds,
+      ...filterFieldIds,
+    ]));
   }
 
   return Array.from(new Set([
     ...dataset.transformation.fieldIds,
+    ...filterFieldIds,
     dataset.transformation.relationFieldId,
     dataset.transformation.orderFieldId,
     dataset.transformation.requiredValueFieldId,
   ].filter((fieldId): fieldId is string => Boolean(fieldId))));
+}
+
+function transformPanelDatasetRecords({
+  dataset,
+  fieldsById,
+  records,
+}: {
+  dataset: DatasetDefinition;
+  fieldsById: Map<string, PanelField>;
+  records: PanelRecord[];
+}) {
+  if (dataset.transformation.type === "LATEST_BY_RELATION") {
+    return latestByRelationRecords({
+      orderFieldId: dataset.transformation.orderFieldId,
+      records,
+      relationFieldId: dataset.transformation.relationFieldId,
+    });
+  }
+
+  const sort = dataset.sort?.[0];
+
+  return sort
+    ? sortPanelRecords({
+        direction: sort.direction,
+        field: fieldsById.get(sort.fieldId),
+        records,
+      })
+    : records;
 }
 
 function panelRecordInclude(fieldIds: string[]) {
@@ -444,11 +458,13 @@ function panelDatasetResponse({
 function panelFiltersWhere({
   filters,
   fieldsById,
+  includedPanelFilterIds,
   panelFilterValues,
   requiredFilterIds,
 }: {
   filters: FilterExpr[];
   fieldsById: Map<string, PanelField>;
+  includedPanelFilterIds?: Set<string>;
   panelFilterValues: Record<string, unknown>;
   requiredFilterIds: string[];
 }) {
@@ -474,6 +490,10 @@ function panelFiltersWhere({
     }
 
     if (filter.type === "PANEL_FILTER") {
+      if (includedPanelFilterIds && !includedPanelFilterIds.has(filter.filterId)) {
+        continue;
+      }
+
       const value = panelFilterValues[filter.filterId];
       if (value === undefined || value === null || value === "") {
         continue;
@@ -495,6 +515,110 @@ function panelFiltersWhere({
   }
 
   return { ok: true as const, conditions };
+}
+
+function panelProvidedDatasetFilterIds(
+  dataset: DatasetDefinition,
+  panelFilterValues: Record<string, unknown>,
+  excludedFilterIds = new Set<string>(),
+) {
+  return new Set((dataset.filters ?? [])
+    .filter((filter) => filter.type === "PANEL_FILTER")
+    .map((filter) => filter.filterId)
+    .filter((filterId) => !excludedFilterIds.has(filterId))
+    .filter((filterId) => panelFilterHasValue(panelFilterValues[filterId])));
+}
+
+function applyPanelFiltersToRecords({
+  fieldsById,
+  filterIds,
+  filters,
+  panelFilterValues,
+  records,
+}: {
+  fieldsById: Map<string, PanelField>;
+  filterIds: Set<string>;
+  filters: FilterExpr[];
+  panelFilterValues: Record<string, unknown>;
+  records: PanelRecord[];
+}) {
+  if (filterIds.size === 0) {
+    return records;
+  }
+
+  const selectedFilters = filters.filter((filter) => filter.type === "PANEL_FILTER" && filterIds.has(filter.filterId));
+
+  return records.filter((record) => selectedFilters.every((filter) => {
+    if (filter.type !== "PANEL_FILTER") return true;
+    const field = fieldsById.get(filter.fieldId);
+    const value = panelFilterValues[filter.filterId];
+
+    return field ? panelRecordMatchesFilterValue({ field, filter, record, value }) : false;
+  }));
+}
+
+function panelFilterHasValue(value: unknown) {
+  return value !== undefined && value !== null && value !== "";
+}
+
+function panelRecordMatchesFilterValue({
+  field,
+  filter,
+  record,
+  value,
+}: {
+  field: PanelField;
+  filter: Extract<FilterExpr, { type: "PANEL_FILTER" }>;
+  record: PanelRecord;
+  value: unknown;
+}) {
+  if (!panelFilterHasValue(value)) {
+    return true;
+  }
+
+  const rawValues = filter.operator === "IN" && Array.isArray(value) ? value : [value];
+  const storedValues = rawValues
+    .map((item) => panelStoredFilterValue(field, item))
+    .filter((item) => item !== undefined)
+    .map((item) => panelComparableFilterValue(field, item));
+
+  if (storedValues.length === 0) {
+    return false;
+  }
+
+  const recordValues = panelRecordComparableValues(record, field);
+
+  return recordValues.some((recordValue) => storedValues.includes(recordValue));
+}
+
+function panelRecordComparableValues(record: PanelRecord, field: PanelField) {
+  if (field.type === "RELATION") {
+    return record.outgoingRelations
+      .filter((relation) => relation.sourceFieldId === field.id)
+      .map((relation) => relation.targetRecordId);
+  }
+
+  const value = record.values.find((item) => item.entityFieldId === field.id);
+
+  if (!value) return [];
+  if (value.integerValue !== null && value.integerValue !== undefined) return [String(value.integerValue)];
+  if (value.decimalValue !== null && value.decimalValue !== undefined) return [value.decimalValue.toString()];
+  if (value.booleanValue !== null && value.booleanValue !== undefined) return [String(value.booleanValue)];
+  if (value.dateValue !== null && value.dateValue !== undefined) {
+    return [field.type === "DATETIME" ? value.dateValue.toISOString() : formatDateOnly(value.dateValue)];
+  }
+  if (value.textValue !== null && value.textValue !== undefined) return [value.textValue];
+  if (value.jsonValue !== null && value.jsonValue !== undefined) return [JSON.stringify(value.jsonValue)];
+
+  return [];
+}
+
+function panelComparableFilterValue(field: PanelField, value: unknown) {
+  if (value instanceof Date) {
+    return field.type === "DATETIME" ? value.toISOString() : formatDateOnly(value);
+  }
+
+  return String(value);
 }
 
 function panelFieldValueWhere({
@@ -685,11 +809,162 @@ function serializePanelFieldValue({
   if (value.textValue !== null && value.textValue !== undefined) return value.textValue;
   if (value.integerValue !== null && value.integerValue !== undefined) return value.integerValue;
   if (value.decimalValue !== null && value.decimalValue !== undefined) return value.decimalValue.toString();
-  if (value.booleanValue !== null && value.booleanValue !== undefined) return value.booleanValue;
+  if (value.booleanValue !== null && value.booleanValue !== undefined) return value.booleanValue ? "true" : "false";
   if (value.dateValue !== null && value.dateValue !== undefined) return formatDateOnly(value.dateValue);
   if (value.jsonValue !== null && value.jsonValue !== undefined) return value.jsonValue;
 
   return null;
+}
+
+function calculatePanelMetrics({
+  calculatedAt,
+  config,
+  executionsByDatasetId,
+  panelFilterValues,
+}: {
+  calculatedAt: string;
+  config: PanelConfig;
+  executionsByDatasetId: Map<string, {
+    dataset: DatasetDefinition;
+    fieldsById: Map<string, PanelField>;
+    records: PanelRecord[];
+  }>;
+  panelFilterValues: Record<string, unknown>;
+}): PanelMetricResult[] {
+  const requiredPanelFilterIds = new Set(config.filters
+    .filter((filter) => filter.required)
+    .map((filter) => filter.id));
+
+  return config.metrics
+    .filter((metric) => executionsByDatasetId.has(metric.datasetId))
+    .map((metric) => {
+      const execution = executionsByDatasetId.get(metric.datasetId);
+      const field = metric.fieldId ? execution?.fieldsById.get(metric.fieldId) : undefined;
+      const filteredRecords = execution
+        ? transformPanelDatasetRecords({
+            dataset: execution.dataset,
+            fieldsById: execution.fieldsById,
+            records: applyPanelFiltersToRecords({
+              fieldsById: execution.fieldsById,
+              filterIds: new Set(metric.filterIds.filter((filterId) => !requiredPanelFilterIds.has(filterId))),
+              filters: execution.dataset.filters ?? [],
+              panelFilterValues,
+              records: execution.records,
+            }),
+          })
+        : [];
+
+      return {
+        id: metric.id,
+        datasetId: metric.datasetId,
+        value: execution ? aggregatePanelMetric(metric, filteredRecords, field) : null,
+        valueType: panelMetricValueType(metric.aggregation, field),
+        calculatedAt,
+      };
+    });
+}
+
+function aggregatePanelMetric(
+  metric: PanelMetric,
+  records: PanelRecord[],
+  field: PanelField | undefined,
+): PanelMetricResult["value"] {
+  if (metric.aggregation === "COUNT") {
+    return records.length;
+  }
+
+  if (!field) {
+    return null;
+  }
+
+  const values = records
+    .map((record) => panelMetricValue(record, field))
+    .filter((value): value is number | string | boolean => value !== null && value !== "");
+
+  if (metric.aggregation === "COUNT_VALUES") {
+    return values.length;
+  }
+
+  if (metric.aggregation === "COUNT_DISTINCT") {
+    return new Set(values.map(panelMetricDistinctKey)).size;
+  }
+
+  if (metric.aggregation === "SUM") {
+    return numericPanelMetricValues(values).reduce((total, value) => total + value, 0);
+  }
+
+  if (metric.aggregation === "AVG") {
+    const numericValues = numericPanelMetricValues(values);
+
+    return numericValues.length
+      ? numericValues.reduce((total, value) => total + value, 0) / numericValues.length
+      : null;
+  }
+
+  if (metric.aggregation === "MIN" || metric.aggregation === "MAX") {
+    const comparableValues = values.filter((value): value is number | string =>
+      typeof value === "number" || typeof value === "string");
+
+    if (comparableValues.length === 0) {
+      return null;
+    }
+
+    const sortedValues = [...comparableValues].sort((left, right) => {
+      if (typeof left === "number" && typeof right === "number") {
+        return left - right;
+      }
+
+      return String(left).localeCompare(String(right));
+    });
+
+    return metric.aggregation === "MIN" ? sortedValues[0] : sortedValues[sortedValues.length - 1];
+  }
+
+  return null;
+}
+
+function panelMetricValue(record: PanelRecord, field: PanelField) {
+  if (field.type === "RELATION") {
+    const values = record.outgoingRelations
+      .filter((relation) => relation.sourceFieldId === field.id)
+      .map((relation) => relation.targetRecordId);
+
+    return values.length > 0 ? values.join(",") : null;
+  }
+
+  const value = record.values.find((item) => item.entityFieldId === field.id);
+
+  if (!value) return null;
+  if (value.integerValue !== null && value.integerValue !== undefined) return value.integerValue;
+  if (value.decimalValue !== null && value.decimalValue !== undefined) return value.decimalValue.toNumber();
+  if (value.booleanValue !== null && value.booleanValue !== undefined) return value.booleanValue;
+  if (value.dateValue !== null && value.dateValue !== undefined) {
+    return field.type === "DATETIME" ? value.dateValue.toISOString() : formatDateOnly(value.dateValue);
+  }
+  if (value.textValue !== null && value.textValue !== undefined) return value.textValue;
+  if (value.jsonValue !== null && value.jsonValue !== undefined) return JSON.stringify(value.jsonValue);
+
+  return null;
+}
+
+function numericPanelMetricValues(values: Array<number | string | boolean>) {
+  return values
+    .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+}
+
+function panelMetricDistinctKey(value: number | string | boolean) {
+  return `${typeof value}:${String(value)}`;
+}
+
+function panelMetricValueType(aggregation: PanelMetricAggregation, field: PanelField | undefined): PanelMetricResult["valueType"] {
+  if ((aggregation === "MIN" || aggregation === "MAX") && field?.type === "DATE") {
+    return "DATE";
+  }
+  if ((aggregation === "MIN" || aggregation === "MAX") && field?.type === "DATETIME") {
+    return "DATETIME";
+  }
+
+  return "NUMBER";
 }
 
 function parsePositiveInt(value: string | null | undefined, fallback: number) {

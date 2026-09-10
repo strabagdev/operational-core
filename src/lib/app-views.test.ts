@@ -1947,12 +1947,60 @@ describe("PANEL AppView config", () => {
       "revision_field",
       "date_field",
     ]);
-    expect(config.modules[0]?.visualization.config.columns.map((column) => column.fieldId)).toEqual([
+    expect(config.modules[0]?.visualization.type).toBe("TABLE");
+    if (config.modules[0]?.visualization.type !== "TABLE") return;
+    expect(config.modules[0].visualization.config.columns.map((column) => column.fieldId)).toEqual([
       "procedure_field",
       "status_field",
       "revision_field",
       "date_field",
     ]);
+  });
+
+  it("parses PANEL configs with KPI modules and declarative metrics", () => {
+    const config = parseAppViewConfig({
+      config: recordsPanelConfig({
+        metrics: [
+          {
+            id: "total-registros",
+            name: "Total de registros",
+            datasetId: "version-records",
+            aggregation: "COUNT",
+            fieldId: null,
+            filterIds: [],
+          },
+        ],
+        modules: [
+          recordsPanelConfig().modules[0],
+          {
+            id: "total-kpi",
+            title: "Total",
+            datasetId: "version-records",
+            visualization: {
+              type: "KPI",
+              config: {
+                metricId: "total-registros",
+                label: "Total de registros",
+                format: "NUMBER",
+              },
+            },
+            layout: { x: 0, y: 1, w: 4, h: 2 },
+          },
+        ],
+      }),
+      type: "PANEL",
+    } as never);
+
+    expect(config).toMatchObject({ schemaVersion: 1, type: "PANEL" });
+    if (config.type !== "PANEL") return;
+    expect(config.metrics).toEqual([
+      expect.objectContaining({
+        id: "total-registros",
+        aggregation: "COUNT",
+        fieldId: undefined,
+      }),
+    ]);
+    expect(config.modules[1]?.visualization.type).toBe("KPI");
   });
 
   it("rejects unsupported PANEL visualization and reserved formula surfaces in v1", () => {
@@ -1962,7 +2010,7 @@ describe("PANEL AppView config", () => {
         modules: [
           {
             ...panelConfig().modules[0],
-            visualization: { type: "KPI", config: {} },
+            visualization: { type: "TEXT", config: {} },
           },
         ],
       },
@@ -1972,10 +2020,151 @@ describe("PANEL AppView config", () => {
     expect(() => parseAppViewConfig({
       config: {
         ...panelConfig(),
-        metrics: [{ id: "metric_1" }],
+        calculatedFields: [{ id: "formula_1", expression: "1 + 1" }],
       },
       type: "PANEL",
     } as never)).toThrow();
+  });
+
+  it("rejects SQL, JavaScript, or expression logic in PANEL metric config", () => {
+    for (const metricLogic of [
+      { sql: "count(*)" },
+      { javascript: "return rows.length" },
+      { expression: "COUNT(status_field)" },
+    ]) {
+      expect(() => parseAppViewConfig({
+        config: recordsPanelConfig({
+          metrics: [
+            {
+              id: "unsafe-metric",
+              name: "Unsafe",
+              datasetId: "version-records",
+              aggregation: "COUNT",
+              fieldId: null,
+              filterIds: [],
+              ...metricLogic,
+            },
+          ],
+        }),
+        type: "PANEL",
+      } as never)).toThrow("La configuración del panel contiene propiedades no soportadas.");
+    }
+  });
+
+  it("rejects PANEL metrics with invalid dataset, field, filter, or aggregation type", async () => {
+    entityTypeFindFirst.mockResolvedValue(panelEntityType() as never);
+
+    await expect(
+      createAppView("contract_1", "user_1", panelInput(recordsPanelConfig({
+        metrics: [
+          { id: "missing-dataset", name: "Métrica", datasetId: "missing", aggregation: "COUNT", fieldId: null, filterIds: [] },
+        ],
+      }))),
+    ).rejects.toThrow("La métrica referencia un dataset inexistente.");
+
+    await expect(
+      createAppView("contract_1", "user_1", panelInput(recordsPanelConfig({
+        metrics: [
+          { id: "missing-field", name: "Métrica", datasetId: "version-records", aggregation: "SUM", fieldId: "missing", filterIds: [] },
+        ],
+      }))),
+    ).rejects.toThrow("El campo de la métrica Métrica no pertenece al dataset.");
+
+    await expect(
+      createAppView("contract_1", "user_1", panelInput(recordsPanelConfig({
+        metrics: [
+          { id: "bad-type", name: "Métrica", datasetId: "version-records", aggregation: "SUM", fieldId: "status_field", filterIds: [] },
+        ],
+      }))),
+    ).rejects.toThrow("La agregación SUM no es compatible con el campo Estatus.");
+
+    await expect(
+      createAppView("contract_1", "user_1", panelInput(recordsPanelConfig({
+        metrics: [
+          { id: "bad-filter", name: "Métrica", datasetId: "version-records", aggregation: "COUNT", fieldId: null, filterIds: ["missing"] },
+        ],
+      }))),
+    ).rejects.toThrow("La métrica referencia un filtro de panel inexistente.");
+  });
+
+  it("rejects KPI modules without an existing metric id", async () => {
+    entityTypeFindFirst.mockResolvedValue(panelEntityType() as never);
+
+    await expect(
+      createAppView("contract_1", "user_1", panelInput(recordsPanelConfig({
+        modules: [
+          {
+            id: "missing-kpi",
+            title: "KPI",
+            datasetId: "version-records",
+            visualization: {
+              type: "KPI",
+              config: { metricId: "missing", label: "KPI", format: "NUMBER" },
+            },
+            layout: { x: 0, y: 0, w: 4, h: 2 },
+          },
+        ],
+      }))),
+    ).rejects.toThrow("El KPI referencia una métrica inexistente.");
+  });
+
+  it("rejects KPI formats that do not match the metric result type", async () => {
+    entityTypeFindFirst.mockResolvedValue(panelEntityType() as never);
+
+    await expect(
+      createAppView("contract_1", "user_1", panelInput(recordsPanelConfig({
+        metrics: [
+          { id: "latest-date", name: "Fecha", datasetId: "version-records", aggregation: "MAX", fieldId: "date_field", filterIds: [] },
+        ],
+        modules: [
+          {
+            id: "date-kpi",
+            title: "Fecha",
+            datasetId: "version-records",
+            visualization: {
+              type: "KPI",
+              config: { metricId: "latest-date", label: "Fecha", format: "MONEY" },
+            },
+            layout: { x: 0, y: 0, w: 4, h: 2 },
+          },
+        ],
+      }))),
+    ).rejects.toThrow("El formato del KPI no es compatible con la métrica seleccionada.");
+  });
+
+  it("rejects KPI modules that reference metrics from another dataset", async () => {
+    entityTypeFindFirst.mockResolvedValue(panelEntityType() as never);
+
+    await expect(
+      createAppView("contract_1", "user_1", panelInput(recordsPanelConfig({
+        datasets: [
+          recordsPanelConfig().datasets[0],
+          {
+            id: "other-records",
+            source: { type: "ENTITY", entityTypeId: "versionado" },
+            transformation: {
+              type: "RECORDS",
+              fieldIds: ["status_field"],
+            },
+          },
+        ],
+        metrics: [
+          { id: "other-count", name: "Otro", datasetId: "other-records", aggregation: "COUNT", fieldId: null, filterIds: [] },
+        ],
+        modules: [
+          {
+            id: "wrong-kpi",
+            title: "KPI",
+            datasetId: "version-records",
+            visualization: {
+              type: "KPI",
+              config: { metricId: "other-count", label: "KPI", format: "NUMBER" },
+            },
+            layout: { x: 0, y: 0, w: 4, h: 2 },
+          },
+        ],
+      }))),
+    ).rejects.toThrow("El KPI debe usar una métrica del mismo dataset.");
   });
 
   it("rejects duplicate dataset fields and module columns", () => {
