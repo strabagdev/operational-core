@@ -102,9 +102,84 @@ describe("AppViewForm", () => {
     expect(html).toContain("Reporte");
     expect(html).toContain("Tablero");
     expect(html).toContain("Dashboard");
+    expect(html).toContain("Panel");
     expect(html).toContain("Configuración de registros");
     expect(html).not.toContain("Subvista Estados");
     expect(html).toContain("Crear experiencia");
+  });
+
+  it("renders PANEL visual sections without exposing technical JSON", () => {
+    const html = renderToStaticMarkup(
+      <AppViewForm
+        action={noopAction}
+        entityTypes={entityTypes}
+        initialValues={{
+          active: true,
+          config: {
+            type: "PANEL",
+            schemaVersion: 1,
+            layout: { columns: 12, rowHeight: 8 },
+            filters: [
+              { id: "status", label: "Estado", valueType: "OPTION" },
+            ],
+            datasets: [
+              {
+                id: "attendance-records",
+                name: "Asistencias",
+                source: { type: "ENTITY", entityTypeId: "attendance" },
+                transformation: {
+                  type: "RECORDS",
+                  fieldIds: ["person_field", "date_field", "status_field"],
+                  pagination: { pageSize: 25 },
+                },
+              },
+            ],
+            modules: [
+              {
+                id: "attendance-table",
+                title: "Tabla de asistencia",
+                datasetId: "attendance-records",
+                visualization: {
+                  type: "TABLE",
+                  config: {
+                    columns: [
+                      { fieldId: "date_field", format: "DD-MM-YYYY" },
+                      { fieldId: "person_field" },
+                      { fieldId: "status_field", valueDisplay: "LABEL" },
+                    ],
+                    searchable: true,
+                    paginated: true,
+                  },
+                },
+                layout: { x: 0, y: 0, w: 12, h: 6 },
+              },
+            ],
+            metrics: [],
+            calculatedFields: [],
+          },
+          icon: "clipboard-check",
+          name: "Panel asistencia",
+          slug: "panel-asistencia",
+          sortOrder: 5,
+          type: "PANEL",
+        }}
+        submitLabel="Guardar experiencia"
+      />,
+    );
+
+    expect(html).toContain("Configuración del panel");
+    expect(html).toContain("Fuentes de datos");
+    expect(html).toContain("Filtros");
+    expect(html).toContain("Módulos");
+    expect(html).toContain("Diseño");
+    expect(html).toContain("Agregar dataset");
+    expect(html).toContain("Agregar filtro");
+    expect(html).toContain("Agregar tabla");
+    expect(html).toContain("próximamente");
+    expect(html).toContain("Tabla de asistencia");
+    expect(html).toContain("DD-MM-YYYY");
+    expect(html).toContain('name="panelConfig"');
+    expect(html).not.toContain("<textarea");
   });
 
   it("renders REPORT table configuration", () => {

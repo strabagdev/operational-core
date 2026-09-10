@@ -9,6 +9,7 @@ import {
   parseAppViewConfig,
   setAppViewActive,
   updateAppView,
+  type PanelConfig,
 } from "./app-views";
 import { prisma } from "./prisma";
 
@@ -1614,6 +1615,205 @@ describe("AppView administration", () => {
 });
 
 describe("PANEL AppView config", () => {
+  it("accepts the visual editor payload and persists the normalized PANEL contract", async () => {
+    const config = recordsPanelConfig();
+
+    entityTypeFindFirst.mockResolvedValueOnce(panelEntityType() as never);
+
+    await createAppView("contract_1", "user_1", getAppViewInput(formData({
+      name: "Panel operativo",
+      panelConfig: JSON.stringify(config),
+      slug: "panel-operativo",
+      type: "PANEL",
+    })));
+
+    expect(appViewCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        config,
+        type: "PANEL",
+      }),
+    }));
+    expect(appViewCreate.mock.calls[0]?.[0].data.config).not.toHaveProperty("source");
+  });
+
+  it("supports multiple PANEL datasets and keeps module columns in configured order", async () => {
+    const config = recordsPanelConfig({
+      datasets: [
+        recordsPanelConfig().datasets[0],
+        {
+          id: "status-records",
+          name: "Estados",
+          source: { type: "ENTITY", entityTypeId: "versions" },
+          transformation: {
+            type: "RECORDS",
+            fieldIds: ["status_field", "date_field"],
+            pagination: { pageSize: 25 },
+          },
+        },
+      ],
+      modules: [
+        {
+          id: "status-table",
+          title: "Estados",
+          datasetId: "status-records",
+          visualization: {
+            type: "TABLE",
+            config: {
+              columns: [
+                { fieldId: "date_field", format: "DD-MM-YYYY" },
+                { fieldId: "status_field", valueDisplay: "LABEL" },
+              ],
+            },
+          },
+          layout: { x: 0, y: 0, w: 8, h: 6 },
+        },
+        recordsPanelConfig().modules[0],
+      ],
+    });
+
+    entityTypeFindFirst
+      .mockResolvedValueOnce(panelEntityType() as never)
+      .mockResolvedValueOnce(panelEntityType() as never);
+
+    await createAppView("contract_1", "user_1", panelInput(config));
+
+    expect(appViewCreate.mock.calls[0]?.[0].data.config).toMatchObject({
+      datasets: [
+        expect.objectContaining({ id: "version-records" }),
+        expect.objectContaining({ id: "status-records" }),
+      ],
+      modules: [
+        expect.objectContaining({
+          id: "status-table",
+          datasetId: "status-records",
+          visualization: {
+            type: "TABLE",
+            config: {
+              columns: [
+                { fieldId: "date_field", format: "DD-MM-YYYY" },
+                { fieldId: "status_field", valueDisplay: "LABEL" },
+              ],
+            },
+          },
+        }),
+        expect.objectContaining({ id: "version-table" }),
+      ],
+    });
+  });
+
+  it("updates PANEL through the parser without changing stable ids or order", async () => {
+    const config = recordsPanelConfig({
+      filters: [
+        { id: "status", label: "Estado", valueType: "OPTION" },
+        { id: "period", label: "Periodo", valueType: "DATE" },
+      ],
+      modules: [
+        recordsPanelConfig().modules[0],
+        {
+          id: "second-table",
+          title: "Segunda tabla",
+          datasetId: "version-records",
+          visualization: {
+            type: "TABLE",
+            config: {
+              columns: [
+                { fieldId: "date_field", format: "DD-MM-YYYY" },
+                { fieldId: "revision_field" },
+              ],
+            },
+          },
+          layout: { x: 0, y: 1, w: 6, h: 4 },
+        },
+      ],
+    });
+
+    entityTypeFindFirst.mockResolvedValue(panelEntityType() as never);
+
+    await updateAppView("contract_1", "view_1", "user_1", getAppViewInput(formData({
+      name: "Panel operativo",
+      panelConfig: JSON.stringify(config),
+      slug: "panel-operativo",
+      type: "PANEL",
+    })));
+
+    expect(appViewUpdate.mock.calls[0]?.[0].data.config).toMatchObject({
+      filters: [
+        { id: "status" },
+        { id: "period" },
+      ],
+      datasets: [expect.objectContaining({ id: "version-records" })],
+      modules: [
+        expect.objectContaining({ id: "version-table" }),
+        expect.objectContaining({ id: "second-table" }),
+      ],
+    });
+  });
+
+  it("saving the same PANEL config twice does not degrade the persisted contract", async () => {
+    const config = recordsPanelConfig();
+
+    entityTypeFindFirst.mockResolvedValue(panelEntityType() as never);
+
+    await updateAppView("contract_1", "view_1", "user_1", panelInput(config));
+    await updateAppView("contract_1", "view_1", "user_1", panelInput(config));
+
+    expect(appViewUpdate.mock.calls[0]?.[0].data.config).toEqual(config);
+    expect(appViewUpdate.mock.calls[1]?.[0].data.config).toEqual(config);
+  });
+
+  it("allows changing a TABLE module to an existing dataset only", async () => {
+    const config = recordsPanelConfig({
+      datasets: [
+        recordsPanelConfig().datasets[0],
+        {
+          id: "summary-records",
+          source: { type: "ENTITY", entityTypeId: "versions" },
+          transformation: {
+            type: "RECORDS",
+            fieldIds: ["date_field", "status_field"],
+          },
+        },
+      ],
+      modules: [
+        {
+          ...recordsPanelConfig().modules[0],
+          datasetId: "summary-records",
+          visualization: {
+            type: "TABLE",
+            config: {
+              columns: [
+                { fieldId: "status_field" },
+                { fieldId: "date_field" },
+              ],
+            },
+          },
+        },
+      ],
+    });
+
+    entityTypeFindFirst
+      .mockResolvedValueOnce(panelEntityType() as never)
+      .mockResolvedValueOnce(panelEntityType() as never);
+
+    await createAppView("contract_1", "user_1", panelInput(config));
+
+    expect(appViewCreate.mock.calls[0]?.[0].data.config).toMatchObject({
+      modules: [expect.objectContaining({ datasetId: "summary-records" })],
+    });
+  });
+
+  it("rejects unknown PANEL properties instead of preserving future surfaces blindly", async () => {
+    const config = recordsPanelConfig({
+      editorMetadata: { collapsed: false },
+    });
+
+    entityTypeFindFirst.mockResolvedValueOnce(panelEntityType() as never);
+
+    await expect(
+      createAppView("contract_1", "user_1", panelInput(config)),
+    ).rejects.toThrow("La configuración del panel contiene propiedades no soportadas.");
+  });
+
   it("parses TABLE panel configs and preserves dataset and column order by field id", () => {
     const config = parseAppViewConfig({
       config: panelConfig(),
@@ -1699,6 +1899,96 @@ describe("PANEL AppView config", () => {
     } as never)).toThrow();
   });
 
+  it("rejects PANEL modules without a valid dataset, columns, or supported type", async () => {
+    entityTypeFindFirst.mockResolvedValue(panelEntityType() as never);
+
+    await expect(
+      createAppView("contract_1", "user_1", panelInput(recordsPanelConfig({
+        modules: [
+          {
+            ...recordsPanelConfig().modules[0],
+            datasetId: "missing",
+          },
+        ],
+      }))),
+    ).rejects.toThrow("El módulo referencia un dataset inexistente.");
+
+    await expect(
+      createAppView("contract_1", "user_1", panelInput(recordsPanelConfig({
+        modules: [
+          {
+            ...recordsPanelConfig().modules[0],
+            visualization: { type: "TABLE", config: { columns: [] } },
+          },
+        ],
+      }))),
+    ).rejects.toThrow();
+
+    await expect(
+      createAppView("contract_1", "user_1", panelInput(recordsPanelConfig({
+        modules: [
+          {
+            ...recordsPanelConfig().modules[0],
+            visualization: { type: "TEXT", config: {} },
+          },
+        ],
+      }))),
+    ).rejects.toThrow();
+  });
+
+  it("rejects manually submitted PANEL fields that do not belong to the configured entity", async () => {
+    entityTypeFindFirst.mockResolvedValue(panelEntityType() as never);
+
+    await expect(
+      createAppView("contract_1", "user_1", panelInput(recordsPanelConfig({
+        datasets: [
+          {
+            ...recordsPanelConfig().datasets[0],
+            transformation: {
+              type: "RECORDS",
+              fieldIds: ["foreign_field"],
+            },
+          },
+        ],
+        modules: [
+          {
+            ...recordsPanelConfig().modules[0],
+            visualization: { type: "TABLE", config: { columns: [{ fieldId: "foreign_field" }] } },
+          },
+        ],
+      }))),
+    ).rejects.toThrow("Selecciona un campo activo válido para campos del dataset.");
+  });
+
+  it("rejects duplicate PANEL datasets, filters, and modules from manual payloads", async () => {
+    await expect(
+      createAppView("contract_1", "user_1", panelInput(recordsPanelConfig({
+        datasets: [
+          recordsPanelConfig().datasets[0],
+          recordsPanelConfig().datasets[0],
+        ],
+      }))),
+    ).rejects.toThrow();
+
+    await expect(
+      createAppView("contract_1", "user_1", panelInput(recordsPanelConfig({
+        filters: [
+          { id: "status", label: "Estado", valueType: "OPTION" },
+          { id: "status", label: "Estado duplicado", valueType: "OPTION" },
+        ],
+      }))),
+    ).rejects.toThrow();
+
+    await expect(
+      createAppView("contract_1", "user_1", panelInput(recordsPanelConfig({
+        modules: [
+          recordsPanelConfig().modules[0],
+          recordsPanelConfig().modules[0],
+        ],
+      }))),
+    ).rejects.toThrow();
+  });
+
   it("validates PANEL field ids, relation targets, and same-contract entities before persisting", async () => {
     entityTypeFindFirst
       .mockResolvedValueOnce(panelEntityType() as never)
@@ -1742,7 +2032,7 @@ describe("PANEL AppView config", () => {
   });
 });
 
-function panelInput(config = panelConfig()) {
+function panelInput(config: unknown = panelConfig()) {
   return {
     common: {
       active: true,
@@ -1755,7 +2045,9 @@ function panelInput(config = panelConfig()) {
   } as never;
 }
 
-function panelConfig(overrides: Record<string, unknown> = {}) {
+type StoredPanelConfig = Omit<PanelConfig, "type"> & Record<string, unknown>;
+
+function panelConfig(overrides: Record<string, unknown> = {}): StoredPanelConfig {
   return {
     schemaVersion: 1,
     layout: { columns: 12, rowHeight: 8 },
@@ -1803,7 +2095,55 @@ function panelConfig(overrides: Record<string, unknown> = {}) {
       },
     ],
     ...overrides,
-  };
+  } as StoredPanelConfig;
+}
+
+function recordsPanelConfig(overrides: Record<string, unknown> = {}): StoredPanelConfig {
+  return {
+    schemaVersion: 1,
+    layout: { columns: 12, rowHeight: 8 },
+    filters: [
+      { id: "status", label: "Estado", valueType: "OPTION" },
+    ],
+    datasets: [
+      {
+        id: "version-records",
+        name: "Versiones",
+        source: { type: "ENTITY", entityTypeId: "versions" },
+        filters: [
+          { type: "PANEL_FILTER", filterId: "status", fieldId: "status_field", operator: "EQ" },
+        ],
+        transformation: {
+          type: "RECORDS",
+          fieldIds: ["revision_field", "status_field", "date_field"],
+          pagination: { pageSize: 25 },
+        },
+      },
+    ],
+    metrics: [],
+    calculatedFields: [],
+    modules: [
+      {
+        id: "version-table",
+        title: "Versiones",
+        datasetId: "version-records",
+        visualization: {
+          type: "TABLE",
+          config: {
+            columns: [
+              { fieldId: "revision_field" },
+              { fieldId: "status_field", valueDisplay: "LABEL" },
+              { fieldId: "date_field", format: "DD-MM-YYYY" },
+            ],
+            searchable: true,
+            paginated: true,
+          },
+        },
+        layout: { x: 0, y: 0, w: 12, h: 6 },
+      },
+    ],
+    ...overrides,
+  } as StoredPanelConfig;
 }
 
 function panelEntityType(overrides: Record<string, unknown> = {}) {

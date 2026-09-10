@@ -9,6 +9,12 @@ import {
   appViewTypeOptions,
   appViewWorkflowOptions,
   type AppViewConfig,
+  type DatasetDefinition,
+  type FilterExpr,
+  type PanelConfig,
+  type PanelFilter,
+  type PanelModule,
+  type ReportSelectValueDisplay,
   suggestedAppViewSlug,
 } from "@/lib/app-views";
 import { entityIconOptions } from "@/lib/entity-icons";
@@ -49,6 +55,13 @@ type ReportVirtualFieldOption = {
   name: string;
   type: string;
 };
+
+type PanelEditorDataset = DatasetDefinition;
+type PanelEditorFilter = PanelFilter & {
+  fieldId?: string;
+  operator?: "EQ" | "IN";
+};
+type PanelEditorModule = PanelModule;
 
 type AppViewFormProps = {
   action: (
@@ -358,6 +371,31 @@ export function AppViewForm({
     ? initialValues.config.groupByFieldKey
     : activeBoardFields[0]?.key ?? "";
   const [groupByFieldKey, setGroupByFieldKey] = useState(initialBoardFieldKey);
+  const initialPanelConfig = panelConfigFromState(state) ??
+    (initialValues?.config.type === "PANEL" ? initialValues.config : undefined);
+  const [panelDatasets, setPanelDatasets] = useState<PanelEditorDataset[]>(
+    initialPanelConfig?.datasets ?? [],
+  );
+  const [panelFilters, setPanelFilters] = useState<PanelEditorFilter[]>(
+    panelEditorFilters(initialPanelConfig),
+  );
+  const [panelModules, setPanelModules] = useState<PanelEditorModule[]>(
+    initialPanelConfig?.modules ?? [],
+  );
+  const [panelLayoutColumns, setPanelLayoutColumns] = useState(
+    initialPanelConfig?.layout.columns ?? 12,
+  );
+  const [panelLayoutRowHeight, setPanelLayoutRowHeight] = useState(
+    initialPanelConfig?.layout.rowHeight ?? 8,
+  );
+  const panelConfig = buildPanelConfig({
+    baseConfig: initialPanelConfig,
+    datasets: panelDatasets,
+    filters: panelFilters,
+    modules: panelModules,
+    columns: panelLayoutColumns,
+    rowHeight: panelLayoutRowHeight,
+  });
   function toggleDashboardEntity(entityTypeId: string, checked: boolean) {
     const next = new Set(dashboardEntityTypeIds);
 
@@ -441,87 +479,105 @@ export function AppViewForm({
         <FieldError errors={state.fieldErrors?.type} />
       </label>
 
-      <ConfigFields
-        activeBoardFields={activeBoardFields}
-        contextFieldIds={contextFieldIds}
-        currentStatusDateFieldId={currentStatusDateFieldId}
-        currentStatusStateFieldId={currentStatusStateFieldId}
-        currentStatusSubjectFieldId={currentStatusSubjectFieldId}
-        dashboardEntityTypeIds={dashboardEntityTypeIds}
-        defaultSortDirection={defaultSortDirection}
-        defaultSortFieldId={defaultSortFieldId}
-        displayFieldIds={displayFieldIds}
-        entityTypeId={entityTypeId}
-        entityTypes={entityTypes}
-        fieldErrors={state.fieldErrors}
-        groupByFieldKey={groupByFieldKey}
-        dateFieldId={dateFieldId}
-        extraFieldIds={extraFieldIds}
-        appViews={appViews}
-        latestByRelationRelatedEntityTypeId={latestByRelationRelatedEntityTypeId}
-        setEntityTypeId={setEntityTypeId}
-        setLatestByRelationRelatedEntityTypeId={setLatestByRelationRelatedEntityTypeId}
-        observationFieldId={observationFieldId}
-        personFieldId={personFieldId}
-        presentationMode={presentationMode}
-        subjectFieldId={subjectFieldId}
-        defaultCheckInOptionId={defaultCheckInOptionId}
-        historyMode={historyMode}
-        requiredStateFieldIds={requiredStateFieldIds}
-        stateFieldDefaultOptionIds={stateFieldDefaultOptionIds}
-        reportTimeAllowChange={reportTimeAllowChange}
-        reportTimeDefaultPeriod={reportTimeDefaultPeriod}
-        reportTimeMode={reportTimeMode}
-        reportColumnFieldId={reportColumnFieldId}
-        reportRowFieldId={reportRowFieldId}
-        reportSourceMode={reportSourceMode}
-        reportSummaryFieldId={reportSummaryFieldId}
-        reportValueFieldId={reportValueFieldId}
-        reportValueDisplay={reportValueDisplay}
-        setDateFieldId={setDateFieldId}
-        setContextFieldIds={setContextFieldIds}
-        setDefaultSortDirection={setDefaultSortDirection}
-        setDefaultSortFieldId={setDefaultSortFieldId}
-        setExtraFieldIds={setExtraFieldIds}
-        setGroupByFieldKey={setGroupByFieldKey}
-        setHistoryMode={setHistoryMode}
-        setObservationFieldId={setObservationFieldId}
-        setPersonFieldId={setPersonFieldId}
-        setPresentationMode={setPresentationMode}
-        setRequiredStateFieldIds={setRequiredStateFieldIds}
-        setReportTimeAllowChange={setReportTimeAllowChange}
-        setReportTimeDefaultPeriod={setReportTimeDefaultPeriod}
-        setReportTimeMode={setReportTimeMode}
-        setReportColumnFieldId={setReportColumnFieldId}
-        setReportRowFieldId={setReportRowFieldId}
-        setReportSourceMode={setReportSourceMode}
-        setReportSummaryFieldId={setReportSummaryFieldId}
-        setReportValueFieldId={setReportValueFieldId}
-        setCurrentStatusDateFieldId={setCurrentStatusDateFieldId}
-        setCurrentStatusStateFieldId={setCurrentStatusStateFieldId}
-        setCurrentStatusSubjectFieldId={setCurrentStatusSubjectFieldId}
-        setDefaultCheckInOptionId={setDefaultCheckInOptionId}
-        setDisplayFieldIds={setDisplayFieldIds}
-        setSourceEntityTypeId={setSourceEntityTypeId}
-        setStateFieldIds={setStateFieldIds}
-        setStatusFieldId={setStatusFieldId}
-        setStateUpdateAppViewId={setStateUpdateAppViewId}
-        setSubjectFieldId={setSubjectFieldId}
-        setTargetEntityTypeId={setTargetEntityTypeId}
-        setUniquenessMode={setUniquenessMode}
-        setWorkflowKey={setWorkflowKey}
-        sourceEntityTypeId={sourceEntityTypeId}
-        stateFieldIds={stateFieldIds}
-        stateUpdateAppViewId={stateUpdateAppViewId}
-        statusFieldId={statusFieldId}
-        targetEntityTypeId={targetEntityTypeId}
-        toggleDashboardEntity={toggleDashboardEntity}
-        type={type}
-        uniquenessMode={uniquenessMode}
-        visibleFieldIds={visibleFieldIds}
-        setVisibleFieldIds={setVisibleFieldIds}
-        workflowKey={workflowKey}
-      />
+      {type === "PANEL" ? (
+        <PanelConfigFields
+          config={panelConfig}
+          datasets={panelDatasets}
+          entityTypes={entityTypes}
+          fieldErrors={state.fieldErrors}
+          filters={panelFilters}
+          layoutColumns={panelLayoutColumns}
+          layoutRowHeight={panelLayoutRowHeight}
+          modules={panelModules}
+          setDatasets={setPanelDatasets}
+          setFilters={setPanelFilters}
+          setLayoutColumns={setPanelLayoutColumns}
+          setLayoutRowHeight={setPanelLayoutRowHeight}
+          setModules={setPanelModules}
+        />
+      ) : (
+        <ConfigFields
+          activeBoardFields={activeBoardFields}
+          contextFieldIds={contextFieldIds}
+          currentStatusDateFieldId={currentStatusDateFieldId}
+          currentStatusStateFieldId={currentStatusStateFieldId}
+          currentStatusSubjectFieldId={currentStatusSubjectFieldId}
+          dashboardEntityTypeIds={dashboardEntityTypeIds}
+          defaultSortDirection={defaultSortDirection}
+          defaultSortFieldId={defaultSortFieldId}
+          displayFieldIds={displayFieldIds}
+          entityTypeId={entityTypeId}
+          entityTypes={entityTypes}
+          fieldErrors={state.fieldErrors}
+          groupByFieldKey={groupByFieldKey}
+          dateFieldId={dateFieldId}
+          extraFieldIds={extraFieldIds}
+          appViews={appViews}
+          latestByRelationRelatedEntityTypeId={latestByRelationRelatedEntityTypeId}
+          setEntityTypeId={setEntityTypeId}
+          setLatestByRelationRelatedEntityTypeId={setLatestByRelationRelatedEntityTypeId}
+          observationFieldId={observationFieldId}
+          personFieldId={personFieldId}
+          presentationMode={presentationMode}
+          subjectFieldId={subjectFieldId}
+          defaultCheckInOptionId={defaultCheckInOptionId}
+          historyMode={historyMode}
+          requiredStateFieldIds={requiredStateFieldIds}
+          stateFieldDefaultOptionIds={stateFieldDefaultOptionIds}
+          reportTimeAllowChange={reportTimeAllowChange}
+          reportTimeDefaultPeriod={reportTimeDefaultPeriod}
+          reportTimeMode={reportTimeMode}
+          reportColumnFieldId={reportColumnFieldId}
+          reportRowFieldId={reportRowFieldId}
+          reportSourceMode={reportSourceMode}
+          reportSummaryFieldId={reportSummaryFieldId}
+          reportValueFieldId={reportValueFieldId}
+          reportValueDisplay={reportValueDisplay}
+          setDateFieldId={setDateFieldId}
+          setContextFieldIds={setContextFieldIds}
+          setDefaultSortDirection={setDefaultSortDirection}
+          setDefaultSortFieldId={setDefaultSortFieldId}
+          setExtraFieldIds={setExtraFieldIds}
+          setGroupByFieldKey={setGroupByFieldKey}
+          setHistoryMode={setHistoryMode}
+          setObservationFieldId={setObservationFieldId}
+          setPersonFieldId={setPersonFieldId}
+          setPresentationMode={setPresentationMode}
+          setRequiredStateFieldIds={setRequiredStateFieldIds}
+          setReportTimeAllowChange={setReportTimeAllowChange}
+          setReportTimeDefaultPeriod={setReportTimeDefaultPeriod}
+          setReportTimeMode={setReportTimeMode}
+          setReportColumnFieldId={setReportColumnFieldId}
+          setReportRowFieldId={setReportRowFieldId}
+          setReportSourceMode={setReportSourceMode}
+          setReportSummaryFieldId={setReportSummaryFieldId}
+          setReportValueFieldId={setReportValueFieldId}
+          setCurrentStatusDateFieldId={setCurrentStatusDateFieldId}
+          setCurrentStatusStateFieldId={setCurrentStatusStateFieldId}
+          setCurrentStatusSubjectFieldId={setCurrentStatusSubjectFieldId}
+          setDefaultCheckInOptionId={setDefaultCheckInOptionId}
+          setDisplayFieldIds={setDisplayFieldIds}
+          setSourceEntityTypeId={setSourceEntityTypeId}
+          setStateFieldIds={setStateFieldIds}
+          setStatusFieldId={setStatusFieldId}
+          setStateUpdateAppViewId={setStateUpdateAppViewId}
+          setSubjectFieldId={setSubjectFieldId}
+          setTargetEntityTypeId={setTargetEntityTypeId}
+          setUniquenessMode={setUniquenessMode}
+          setWorkflowKey={setWorkflowKey}
+          sourceEntityTypeId={sourceEntityTypeId}
+          stateFieldIds={stateFieldIds}
+          stateUpdateAppViewId={stateUpdateAppViewId}
+          statusFieldId={statusFieldId}
+          targetEntityTypeId={targetEntityTypeId}
+          toggleDashboardEntity={toggleDashboardEntity}
+          type={type}
+          uniquenessMode={uniquenessMode}
+          visibleFieldIds={visibleFieldIds}
+          setVisibleFieldIds={setVisibleFieldIds}
+          workflowKey={workflowKey}
+        />
+      )}
 
       <div className="grid gap-4 sm:grid-cols-2">
         <label className="grid gap-2 text-sm font-medium">
@@ -549,6 +605,572 @@ export function AppViewForm({
         {actionPending ? "Guardando..." : submitLabel}
       </Button>
     </form>
+  );
+}
+
+function PanelConfigFields({
+  config,
+  datasets,
+  entityTypes,
+  fieldErrors,
+  filters,
+  layoutColumns,
+  layoutRowHeight,
+  modules,
+  setDatasets,
+  setFilters,
+  setLayoutColumns,
+  setLayoutRowHeight,
+  setModules,
+}: {
+  config: PanelConfig;
+  datasets: PanelEditorDataset[];
+  entityTypes: AppViewEntityTypeOption[];
+  fieldErrors?: Record<string, string[]>;
+  filters: PanelEditorFilter[];
+  layoutColumns: number;
+  layoutRowHeight: number;
+  modules: PanelEditorModule[];
+  setDatasets: (value: PanelEditorDataset[]) => void;
+  setFilters: (value: PanelEditorFilter[]) => void;
+  setLayoutColumns: (value: number) => void;
+  setLayoutRowHeight: (value: number) => void;
+  setModules: (value: PanelEditorModule[]) => void;
+}) {
+  const addDataset = () => {
+    const entityType = entityTypes[0];
+    const fieldId = entityType?.fields.find((field) => field.isActive)?.id ?? "";
+    const id = nextPanelId("dataset", datasets.map((dataset) => dataset.id));
+
+    setDatasets([
+      ...datasets,
+      {
+        id,
+        name: "Dataset",
+        source: { type: "ENTITY", entityTypeId: entityType?.id ?? "" },
+        transformation: {
+          type: "RECORDS",
+          fieldIds: fieldId ? [fieldId] : [],
+          pagination: { pageSize: 25 },
+        },
+      },
+    ]);
+  };
+  const addFilter = () => {
+    const dataset = datasets[0];
+    const entityType = entityTypes.find((item) => item.id === dataset?.source.entityTypeId) ?? entityTypes[0];
+    const field = entityType?.fields.find((item) => item.isActive);
+    const id = nextPanelId("filter", filters.map((filter) => filter.id));
+
+    setFilters([
+      ...filters,
+      {
+        id,
+        label: "Filtro",
+        valueType: panelValueTypeForField(field),
+        fieldId: field?.id ?? "",
+        operator: "EQ",
+      },
+    ]);
+  };
+  const addModule = () => {
+    const dataset = datasets[0];
+    const id = nextPanelId("table", modules.map((module) => module.id));
+
+    setModules([
+      ...modules,
+      {
+        id,
+        title: "Tabla",
+        datasetId: dataset?.id ?? "",
+        visualization: {
+          type: "TABLE",
+          config: {
+            columns: [],
+            searchable: true,
+            paginated: true,
+          },
+        },
+        layout: { x: 0, y: modules.length, w: Math.min(12, layoutColumns), h: 6 },
+      },
+    ]);
+  };
+
+  return (
+    <fieldset className="grid gap-4 rounded-md border border-border p-3">
+      <legend className="px-1 text-sm font-medium">Configuración del panel</legend>
+      <input name="panelConfig" type="hidden" value={JSON.stringify(panelConfigFormValue(config))} />
+      <FieldError errors={fieldErrors?.panelConfig ?? fieldErrors?.datasets ?? fieldErrors?.modules ?? fieldErrors?.filters} />
+
+      <section className="grid gap-3">
+        <div className="flex items-center justify-between gap-3">
+          <h3 className="text-sm font-medium">Fuentes de datos</h3>
+          <button className="rounded border border-input px-3 py-1 text-sm" onClick={addDataset} type="button">
+            Agregar dataset
+          </button>
+        </div>
+        {datasets.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No hay datasets configurados.</p>
+        ) : (
+          <div className="grid gap-3">
+            {datasets.map((dataset, index) => (
+              <PanelDatasetEditor
+                dataset={dataset}
+                datasets={datasets}
+                entityTypes={entityTypes}
+                index={index}
+                key={dataset.id}
+                setDatasets={setDatasets}
+              />
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="grid gap-3">
+        <div className="flex items-center justify-between gap-3">
+          <h3 className="text-sm font-medium">Filtros</h3>
+          <button className="rounded border border-input px-3 py-1 text-sm" disabled={datasets.length === 0} onClick={addFilter} type="button">
+            Agregar filtro
+          </button>
+        </div>
+        {filters.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Sin filtros de panel.</p>
+        ) : (
+          <div className="grid gap-3">
+            {filters.map((filter, index) => (
+              <PanelFilterEditor
+                datasets={datasets}
+                entityTypes={entityTypes}
+                filter={filter}
+                filters={filters}
+                index={index}
+                key={filter.id}
+                setFilters={setFilters}
+              />
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="grid gap-3">
+        <div className="flex items-center justify-between gap-3">
+          <h3 className="text-sm font-medium">Módulos</h3>
+          <button className="rounded border border-input px-3 py-1 text-sm" disabled={datasets.length === 0} onClick={addModule} type="button">
+            Agregar tabla
+          </button>
+        </div>
+        <div className="grid gap-2 rounded-md border border-dashed border-border p-3 text-sm text-muted-foreground">
+          <span>KPI, gráficos, tablero, Gantt y texto: próximamente</span>
+        </div>
+        {modules.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No hay módulos configurados.</p>
+        ) : (
+          <div className="grid gap-3">
+            {modules.map((module, index) => (
+              <PanelModuleEditor
+                datasets={datasets}
+                entityTypes={entityTypes}
+                index={index}
+                key={module.id}
+                layoutColumns={layoutColumns}
+                module={module}
+                modules={modules}
+                setModules={setModules}
+              />
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="grid gap-3">
+        <h3 className="text-sm font-medium">Diseño</h3>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <NumberControl
+            label="Columnas de grilla"
+            max={24}
+            min={1}
+            onChange={setLayoutColumns}
+            value={layoutColumns}
+          />
+          <NumberControl
+            label="Alto de fila"
+            max={64}
+            min={1}
+            onChange={setLayoutRowHeight}
+            value={layoutRowHeight}
+          />
+        </div>
+        <div className="grid gap-2 rounded-md border border-border p-3">
+          <p className="text-sm font-medium">Vista previa</p>
+          <div className="grid gap-2">
+            {modules.map((module, index) => (
+              <div className="rounded border border-border px-3 py-2 text-sm" key={module.id}>
+                {index + 1}. {module.title || module.id} · columnas {module.layout.w} · dataset {module.datasetId || "sin dataset"}
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+    </fieldset>
+  );
+}
+
+function PanelDatasetEditor({
+  dataset,
+  datasets,
+  entityTypes,
+  index,
+  setDatasets,
+}: {
+  dataset: PanelEditorDataset;
+  datasets: PanelEditorDataset[];
+  entityTypes: AppViewEntityTypeOption[];
+  index: number;
+  setDatasets: (value: PanelEditorDataset[]) => void;
+}) {
+  const entityType = entityTypes.find((item) => item.id === dataset.source.entityTypeId);
+  const activeFields = entityType?.fields.filter((field) => field.isActive) ?? [];
+  const updateDataset = (next: PanelEditorDataset) => setDatasets(replaceAt(datasets, index, next));
+  const transformation = dataset.transformation;
+
+  return (
+    <div className="grid gap-3 rounded-md border border-border p-3">
+      <div className="grid gap-3 sm:grid-cols-2">
+        <TextControl
+          label="Nombre visible"
+          onChange={(name) => updateDataset({ ...dataset, name })}
+          value={dataset.name ?? ""}
+        />
+        <TextControl
+          label="Identificador interno"
+          onChange={(id) => updateDataset({ ...dataset, id })}
+          value={dataset.id}
+        />
+        <EntitySelect
+          label="Entidad de origen"
+          name={`panelDatasetEntity:${dataset.id}`}
+          onChange={(entityTypeId) => {
+            const nextEntity = entityTypes.find((item) => item.id === entityTypeId);
+            const nextFieldIds = transformation.fieldIds.filter((fieldId) =>
+              nextEntity?.fields.some((field) => field.id === fieldId && field.isActive),
+            );
+
+            updateDataset({
+              ...dataset,
+              source: { type: "ENTITY", entityTypeId },
+              transformation: transformation.type === "LATEST_BY_RELATION"
+                ? {
+                    ...transformation,
+                    relatedEntityTypeId: relationTargetEntityTypeIds(nextEntity)[0] ?? "",
+                    relationFieldId: "",
+                    orderFieldId: "",
+                    requiredValueFieldId: undefined,
+                    fieldIds: nextFieldIds,
+                  }
+                : { ...transformation, fieldIds: nextFieldIds },
+            });
+          }}
+          options={entityTypes}
+          value={dataset.source.entityTypeId}
+        />
+        <SelectControl
+          label="Transformación"
+          name={`panelDatasetTransformation:${dataset.id}`}
+          onChange={(value) => {
+            updateDataset({
+              ...dataset,
+              transformation: value === "LATEST_BY_RELATION"
+                ? {
+                    type: "LATEST_BY_RELATION",
+                    relatedEntityTypeId: relationTargetEntityTypeIds(entityType)[0] ?? "",
+                    relationFieldId: "",
+                    orderFieldId: "",
+                    fieldIds: transformation.fieldIds,
+                    pagination: transformation.pagination,
+                  }
+                : {
+                    type: "RECORDS",
+                    fieldIds: transformation.fieldIds,
+                    pagination: transformation.pagination,
+                  },
+            });
+          }}
+          options={[
+            { label: "Registros", value: "RECORDS" },
+            { label: "Último registro por relación", value: "LATEST_BY_RELATION" },
+          ]}
+          value={transformation.type}
+        />
+      </div>
+      {transformation.type === "LATEST_BY_RELATION" ? (
+        <div className="grid gap-3 sm:grid-cols-2">
+          <EntitySelect
+            label="Entidad relacionada"
+            name={`panelDatasetRelatedEntity:${dataset.id}`}
+            onChange={(relatedEntityTypeId) => updateDataset({
+              ...dataset,
+              transformation: {
+                ...transformation,
+                relatedEntityTypeId,
+                relationFieldId: relationFieldsTargeting(entityType, relatedEntityTypeId)[0]?.id ?? "",
+              },
+            })}
+            options={entityTypes}
+            value={transformation.relatedEntityTypeId}
+          />
+          <FieldSelect
+            allowedTypes={["RELATION"]}
+            fields={relationFieldsTargeting(entityType, transformation.relatedEntityTypeId)}
+            label="Campo relacionado"
+            name={`panelDatasetRelation:${dataset.id}`}
+            onChange={(relationFieldId) => updateDataset({ ...dataset, transformation: { ...transformation, relationFieldId } })}
+            preferredType="RELATION"
+            value={transformation.relationFieldId}
+          />
+          <FieldSelect
+            fields={activeFields.filter((field) => reportSortableFieldTypes.has(field.type))}
+            label="Ordenar por"
+            name={`panelDatasetOrder:${dataset.id}`}
+            onChange={(orderFieldId) => updateDataset({ ...dataset, transformation: { ...transformation, orderFieldId } })}
+            preferredType="DATE"
+            value={transformation.orderFieldId}
+          />
+          <FieldSelect
+            fields={activeFields}
+            includeEmpty
+            label="Campo con valor obligatorio"
+            name={`panelDatasetRequired:${dataset.id}`}
+            onChange={(requiredValueFieldId) => updateDataset({
+              ...dataset,
+              transformation: { ...transformation, requiredValueFieldId: requiredValueFieldId || undefined },
+            })}
+            preferredType="SELECT"
+            value={transformation.requiredValueFieldId ?? ""}
+          />
+        </div>
+      ) : null}
+      <OrderedFieldChecklist
+        fields={activeFields}
+        label={transformation.type === "RECORDS" ? "Campos seleccionados" : "Campos requeridos para la salida"}
+        name={`panelDatasetFields:${dataset.id}`}
+        selected={transformation.fieldIds}
+        setSelected={(fieldIds) => updateDataset({ ...dataset, transformation: { ...transformation, fieldIds } })}
+      />
+      <div className="flex justify-end">
+        <button className="rounded border border-input px-3 py-1 text-sm" onClick={() => setDatasets(datasets.filter((_, itemIndex) => itemIndex !== index))} type="button">
+          Eliminar
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function PanelFilterEditor({
+  datasets,
+  entityTypes,
+  filter,
+  filters,
+  index,
+  setFilters,
+}: {
+  datasets: PanelEditorDataset[];
+  entityTypes: AppViewEntityTypeOption[];
+  filter: PanelEditorFilter;
+  filters: PanelEditorFilter[];
+  index: number;
+  setFilters: (value: PanelEditorFilter[]) => void;
+}) {
+  const dataset = datasets[0];
+  const entityType = entityTypes.find((item) => item.id === dataset?.source.entityTypeId);
+  const compatibleFields = entityType?.fields.filter((field) => field.isActive) ?? [];
+  const selectedField = compatibleFields.find((field) => field.id === filter.fieldId);
+  const operators = panelOperatorsForField(selectedField);
+  const updateFilter = (next: PanelEditorFilter) => setFilters(replaceAt(filters, index, next));
+
+  return (
+    <div className="grid gap-3 rounded-md border border-border p-3">
+      <div className="grid gap-3 sm:grid-cols-2">
+        <TextControl label="Etiqueta" onChange={(label) => updateFilter({ ...filter, label })} value={filter.label ?? ""} />
+        <TextControl label="Identificador interno" onChange={(id) => updateFilter({ ...filter, id })} value={filter.id} />
+        <FieldSelect
+          fields={compatibleFields}
+          label="Campo objetivo"
+          name={`panelFilterField:${filter.id}`}
+          onChange={(fieldId) => {
+            const field = compatibleFields.find((item) => item.id === fieldId);
+            updateFilter({
+              ...filter,
+              fieldId,
+              valueType: panelValueTypeForField(field),
+              operator: panelOperatorsForField(field)[0]?.value as PanelEditorFilter["operator"],
+            });
+          }}
+          preferredType="SELECT"
+          value={filter.fieldId ?? ""}
+        />
+        <SelectControl
+          label="Operador"
+          name={`panelFilterOperator:${filter.id}`}
+          onChange={(operator) => updateFilter({ ...filter, operator: operator as PanelEditorFilter["operator"] })}
+          options={operators}
+          value={filter.operator ?? operators[0]?.value ?? "EQ"}
+        />
+      </div>
+      <div className="flex justify-end">
+        <button className="rounded border border-input px-3 py-1 text-sm" onClick={() => setFilters(filters.filter((_, itemIndex) => itemIndex !== index))} type="button">
+          Eliminar
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function PanelModuleEditor({
+  datasets,
+  entityTypes,
+  index,
+  layoutColumns,
+  module,
+  modules,
+  setModules,
+}: {
+  datasets: PanelEditorDataset[];
+  entityTypes: AppViewEntityTypeOption[];
+  index: number;
+  layoutColumns: number;
+  module: PanelEditorModule;
+  modules: PanelEditorModule[];
+  setModules: (value: PanelEditorModule[]) => void;
+}) {
+  const dataset = datasets.find((item) => item.id === module.datasetId);
+  const datasetFieldIds = dataset?.transformation.fieldIds ?? [];
+  const entityType = entityTypes.find((item) => item.id === dataset?.source.entityTypeId);
+  const fieldsById = new Map((entityType?.fields ?? []).map((field) => [field.id, field]));
+  const datasetFields = datasetFieldIds
+    .map((fieldId) => fieldsById.get(fieldId))
+    .filter((field): field is AppViewEntityTypeOption["fields"][number] => Boolean(field));
+  const columns = module.visualization.config.columns;
+  const updateModule = (next: PanelEditorModule) => setModules(replaceAt(modules, index, next));
+  const updateColumns = (nextColumns: PanelModule["visualization"]["config"]["columns"]) => updateModule({
+    ...module,
+    visualization: {
+      type: "TABLE",
+      config: { ...module.visualization.config, columns: nextColumns },
+    },
+  });
+
+  return (
+    <div className="grid gap-3 rounded-md border border-border p-3">
+      <div className="grid gap-3 sm:grid-cols-2">
+        <TextControl label="Título" onChange={(title) => updateModule({ ...module, title })} value={module.title ?? ""} />
+        <TextControl label="Identificador interno" onChange={(id) => updateModule({ ...module, id })} value={module.id} />
+        <SelectControl
+          label="Dataset asociado"
+          name={`panelModuleDataset:${module.id}`}
+          onChange={(datasetId) => updateModule({
+            ...module,
+            datasetId,
+            visualization: { type: "TABLE", config: { ...module.visualization.config, columns: [] } },
+          })}
+          options={[{ label: "Selecciona un dataset", value: "" }, ...datasets.map((item) => ({ label: item.name || item.id, value: item.id }))]}
+          value={module.datasetId}
+        />
+        <SelectControl
+          label="Tipo"
+          name={`panelModuleType:${module.id}`}
+          onChange={() => undefined}
+          options={[{ label: "Tabla", value: "TABLE" }]}
+          value="TABLE"
+        />
+      </div>
+      <fieldset className="grid gap-2 rounded-md border border-border p-3">
+        <legend className="px-1 text-sm font-medium">Columnas visibles</legend>
+        <div className="grid gap-2">
+          {datasetFields.map((field) => {
+            const columnIndex = columns.findIndex((column) => column.fieldId === field.id);
+            const column = columns[columnIndex];
+            const isSelected = Boolean(column);
+
+            return (
+              <div className="grid gap-2 rounded-md border border-border px-2 py-2" key={field.id}>
+                <div className="flex items-center justify-between gap-2">
+                  <label className="flex min-w-0 items-center gap-2 text-sm">
+                    <input
+                      checked={isSelected}
+                      className="h-4 w-4"
+                      onChange={(event) => {
+                        if (event.target.checked) {
+                          updateColumns([...columns, { fieldId: field.id }]);
+                        } else {
+                          updateColumns(columns.filter((item) => item.fieldId !== field.id));
+                        }
+                      }}
+                      type="checkbox"
+                    />
+                    <span className="truncate">{field.name}</span>
+                  </label>
+                  {isSelected ? (
+                    <div className="flex shrink-0 gap-1">
+                      <button aria-label={`Subir ${field.name}`} className="rounded border border-input px-2 py-1 text-xs disabled:opacity-40" disabled={columnIndex === 0} onClick={() => updateColumns(moveAt(columns, columnIndex, -1))} type="button">
+                        Subir
+                      </button>
+                      <button aria-label={`Bajar ${field.name}`} className="rounded border border-input px-2 py-1 text-xs disabled:opacity-40" disabled={columnIndex === columns.length - 1} onClick={() => updateColumns(moveAt(columns, columnIndex, 1))} type="button">
+                        Bajar
+                      </button>
+                      <button aria-label={`Eliminar ${field.name}`} className="rounded border border-input px-2 py-1 text-xs" onClick={() => updateColumns(columns.filter((item) => item.fieldId !== field.id))} type="button">
+                        Eliminar
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+                {isSelected ? (
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <SelectControl
+                      label="Formato visual"
+                      name={`panelColumnFormat:${module.id}:${field.id}`}
+                      onChange={(format) => updateColumns(replaceAt(columns, columnIndex, { ...column, format: format || undefined }))}
+                      options={panelFormatOptions(field.type)}
+                      value={column?.format ?? ""}
+                    />
+                    {field.type === "SELECT" || field.type === "MULTISELECT" ? (
+                      <SelectControl
+                        label="Mostrar valores como"
+                        name={`panelColumnValueDisplay:${module.id}:${field.id}`}
+                        onChange={(valueDisplay) => updateColumns(replaceAt(columns, columnIndex, {
+                          ...column,
+                          valueDisplay: valueDisplay as ReportSelectValueDisplay,
+                        }))}
+                        options={[
+                          { label: "Etiqueta visible", value: "LABEL" },
+                          { label: "Valor interno", value: "INTERNAL_VALUE" },
+                        ]}
+                        value={column?.valueDisplay ?? "LABEL"}
+                      />
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      </fieldset>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <NumberControl label="Ancho" max={layoutColumns} min={1} onChange={(w) => updateModule({ ...module, layout: { ...module.layout, w } })} value={module.layout.w} />
+        <NumberControl label="Orden" max={99} min={0} onChange={(y) => updateModule({ ...module, layout: { ...module.layout, y } })} value={module.layout.y} />
+      </div>
+      <div className="flex justify-end gap-2">
+        <button aria-label={`Subir módulo ${module.title || module.id}`} className="rounded border border-input px-3 py-1 text-sm disabled:opacity-40" disabled={index === 0} onClick={() => setModules(moveAt(modules, index, -1))} type="button">
+          Subir
+        </button>
+        <button aria-label={`Bajar módulo ${module.title || module.id}`} className="rounded border border-input px-3 py-1 text-sm disabled:opacity-40" disabled={index === modules.length - 1} onClick={() => setModules(moveAt(modules, index, 1))} type="button">
+          Bajar
+        </button>
+        <button className="rounded border border-input px-3 py-1 text-sm" onClick={() => setModules(modules.filter((_, itemIndex) => itemIndex !== index))} type="button">
+          Eliminar
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -1359,6 +1981,55 @@ function ConfigFields({
   );
 }
 
+function TextControl({
+  label,
+  onChange,
+  value,
+}: {
+  label: string;
+  onChange: (value: string) => void;
+  value: string;
+}) {
+  return (
+    <label className="grid gap-2 text-sm font-medium">
+      {label}
+      <input
+        className="h-10 rounded-md border border-input bg-background px-3 text-sm font-normal outline-none ring-ring focus-visible:ring-2"
+        onChange={(event) => onChange(event.target.value)}
+        value={value}
+      />
+    </label>
+  );
+}
+
+function NumberControl({
+  label,
+  max,
+  min,
+  onChange,
+  value,
+}: {
+  label: string;
+  max: number;
+  min: number;
+  onChange: (value: number) => void;
+  value: number;
+}) {
+  return (
+    <label className="grid gap-2 text-sm font-medium">
+      {label}
+      <input
+        className="h-10 rounded-md border border-input bg-background px-3 text-sm font-normal outline-none ring-ring focus-visible:ring-2"
+        max={max}
+        min={min}
+        onChange={(event) => onChange(Number(event.target.value))}
+        type="number"
+        value={value}
+      />
+    </label>
+  );
+}
+
 function FieldSelect({
   allowedTypes,
   errors,
@@ -1750,6 +2421,199 @@ function reportSelectDisplayFields(
     selected.has(field.id) &&
     (field.type === "SELECT" || field.type === "MULTISELECT"),
   );
+}
+
+function buildPanelConfig({
+  baseConfig,
+  columns,
+  datasets,
+  filters,
+  modules,
+  rowHeight,
+}: {
+  baseConfig?: PanelConfig;
+  columns: number;
+  datasets: PanelEditorDataset[];
+  filters: PanelEditorFilter[];
+  modules: PanelEditorModule[];
+  rowHeight: number;
+}): PanelConfig {
+  const panelFilters = filters.map(panelFilterConfig);
+  const filterExpressionsByFieldId = filters
+    .filter((filter): filter is PanelEditorFilter & { fieldId: string; operator: "EQ" | "IN" } =>
+      Boolean(filter.fieldId) && (filter.operator === "EQ" || filter.operator === "IN"),
+    )
+    .map((filter): FilterExpr => ({
+      type: "PANEL_FILTER",
+      filterId: filter.id,
+      fieldId: filter.fieldId,
+      operator: filter.operator,
+    }));
+
+  return {
+    ...baseConfig,
+    type: "PANEL",
+    schemaVersion: 1,
+    layout: {
+      ...baseConfig?.layout,
+      columns,
+      rowHeight,
+    },
+    filters: panelFilters,
+    datasets: datasets.map((dataset) => ({
+      ...dataset,
+      filters: mergePanelFilterExpressions(dataset.filters, filterExpressionsByFieldId),
+    })),
+    modules,
+    metrics: [],
+    calculatedFields: [],
+  };
+}
+
+function mergePanelFilterExpressions(
+  existing: FilterExpr[] | undefined,
+  panelFilters: FilterExpr[],
+) {
+  const fieldFilters = existing?.filter((filter) => filter.type === "FIELD_VALUE") ?? [];
+
+  return [...fieldFilters, ...panelFilters];
+}
+
+function panelFilterConfig(filter: PanelEditorFilter): PanelFilter {
+  const next = { ...filter } as Record<string, unknown>;
+
+  delete next.fieldId;
+  delete next.operator;
+
+  return next as PanelFilter;
+}
+
+function panelConfigFormValue(config: PanelConfig) {
+  const value = { ...config } as Record<string, unknown>;
+
+  delete value.type;
+
+  return value;
+}
+
+function panelConfigFromState(state: AppViewActionState) {
+  const raw = valueFromState(state, "panelConfig");
+
+  if (!raw) {
+    return undefined;
+  }
+
+  try {
+    const parsed = JSON.parse(raw);
+
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as PanelConfig
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function panelEditorFilters(config: PanelConfig | undefined): PanelEditorFilter[] {
+  if (!config) {
+    return [];
+  }
+
+  return config.filters.map((filter) => {
+    const binding = config.datasets
+      .flatMap((dataset) => dataset.filters ?? [])
+      .find((item) => item.type === "PANEL_FILTER" && item.filterId === filter.id);
+
+    return {
+      ...filter,
+      fieldId: binding?.fieldId,
+      operator: binding?.operator === "EQ" || binding?.operator === "IN" ? binding.operator : undefined,
+    };
+  });
+}
+
+function panelValueTypeForField(field: AppViewEntityTypeOption["fields"][number] | undefined): PanelFilter["valueType"] {
+  if (!field) {
+    return "TEXT";
+  }
+  if (["INTEGER", "DECIMAL", "MONEY"].includes(field.type)) {
+    return "NUMBER";
+  }
+  if (["DATE", "DATETIME"].includes(field.type)) {
+    return "DATE";
+  }
+  if (field.type === "BOOLEAN") {
+    return "BOOLEAN";
+  }
+  if (field.type === "SELECT" || field.type === "MULTISELECT") {
+    return "OPTION";
+  }
+  if (field.type === "RELATION") {
+    return "RECORD";
+  }
+
+  return "TEXT";
+}
+
+function panelOperatorsForField(field: AppViewEntityTypeOption["fields"][number] | undefined) {
+  if (!field) {
+    return [{ label: "Igual", value: "EQ" }];
+  }
+  if (field.type === "MULTISELECT") {
+    return [{ label: "Incluye", value: "IN" }];
+  }
+
+  return [{ label: "Igual", value: "EQ" }];
+}
+
+function panelFormatOptions(fieldType: string) {
+  if (fieldType === "DATE") {
+    return [
+      { label: "Sin formato", value: "" },
+      { label: "DD-MM-YYYY", value: "DD-MM-YYYY" },
+      { label: "YYYY-MM-DD", value: "YYYY-MM-DD" },
+    ];
+  }
+  if (["INTEGER", "DECIMAL", "MONEY"].includes(fieldType)) {
+    return [
+      { label: "Sin formato", value: "" },
+      { label: "Número", value: "NUMBER" },
+      { label: "Moneda", value: "MONEY" },
+    ];
+  }
+
+  return [{ label: "Sin formato", value: "" }];
+}
+
+function nextPanelId(prefix: string, existingIds: string[]) {
+  let index = existingIds.length + 1;
+  let id = `${prefix}-${index}`;
+
+  while (existingIds.includes(id)) {
+    index += 1;
+    id = `${prefix}-${index}`;
+  }
+
+  return id;
+}
+
+function replaceAt<T>(items: T[], index: number, value: T) {
+  return items.map((item, itemIndex) => itemIndex === index ? value : item);
+}
+
+function moveAt<T>(items: T[], index: number, direction: -1 | 1) {
+  const nextIndex = index + direction;
+
+  if (nextIndex < 0 || nextIndex >= items.length) {
+    return items;
+  }
+
+  const next = [...items];
+  const [item] = next.splice(index, 1);
+
+  next.splice(nextIndex, 0, item);
+
+  return next;
 }
 
 function stateUpdateCurrentReportFields(

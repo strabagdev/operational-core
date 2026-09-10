@@ -342,6 +342,7 @@ export function getAppViewInput(formData: FormData) {
       latestByRelationRelatedEntityTypeId: formData.get("latestByRelationRelatedEntityTypeId"),
       latestByRelationRelationFieldId: formData.get("latestByRelationRelationFieldId"),
       latestByRelationRequiredValueFieldId: formData.get("latestByRelationRequiredValueFieldId"),
+      panelConfig: formData.get("panelConfig"),
       reportProjection: formData.get("reportProjection"),
       reportRowFieldId: formData.get("reportRowFieldId"),
       reportSummaryFieldId: formData.get("reportSummaryFieldId"),
@@ -1064,7 +1065,7 @@ const panelFilterSchema = z.object({
   label: z.string().trim().min(1).optional(),
   valueType: z.enum(["TEXT", "NUMBER", "DATE", "BOOLEAN", "OPTION", "RECORD"]),
   required: z.boolean().optional(),
-});
+}).strict();
 const panelFilterExprSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("FIELD_VALUE"),
@@ -1072,13 +1073,13 @@ const panelFilterExprSchema = z.discriminatedUnion("type", [
     operator: z.enum(["EQ", "IN", "HAS_VALUE"]),
     value: z.unknown().optional(),
     values: z.array(z.unknown()).optional(),
-  }),
+  }).strict(),
   z.object({
     type: z.literal("PANEL_FILTER"),
     filterId: z.string().trim().min(1),
     fieldId: z.string().trim().min(1),
     operator: z.enum(["EQ", "IN"]),
-  }),
+  }).strict(),
 ]);
 const panelSortSchema = z.object({
   fieldId: z.string().trim().min(1),
@@ -1090,7 +1091,7 @@ const panelDatasetSchema = z.object({
   source: z.object({
     type: z.literal("ENTITY"),
     entityTypeId: z.string().trim().min(1),
-  }),
+  }).strict(),
   filters: z.array(panelFilterExprSchema).optional(),
   sort: z.array(panelSortSchema).optional(),
   transformation: z.discriminatedUnion("type", [
@@ -1109,7 +1110,7 @@ const panelDatasetSchema = z.object({
       pagination: panelPaginationSchema.optional(),
     }),
   ]),
-}).superRefine((dataset, ctx) => {
+}).strict().superRefine((dataset, ctx) => {
   if (new Set(dataset.transformation.fieldIds).size !== dataset.transformation.fieldIds.length) {
     ctx.addIssue({
       code: "custom",
@@ -1132,30 +1133,30 @@ const panelModuleSchema = z.object({
         label: z.string().trim().min(1).optional(),
         valueDisplay: z.enum(["LABEL", "INTERNAL_VALUE"]).optional(),
         format: z.string().trim().min(1).optional(),
-      })).min(1, "Selecciona al menos una columna."),
+      }).strict()).min(1, "Selecciona al menos una columna."),
       searchable: z.boolean().optional(),
       paginated: z.boolean().optional(),
-    }),
-  }),
+    }).strict(),
+  }).strict(),
   layout: z.object({
     x: z.number().int().min(0),
     y: z.number().int().min(0),
     w: z.number().int().min(1),
     h: z.number().int().min(1),
-  }),
-});
+  }).strict(),
+}).strict();
 const panelConfigInputSchema = z.object({
   schemaVersion: z.literal(1),
   layout: z.object({
     columns: z.number().int().min(1).max(24),
     rowHeight: z.number().int().min(1).optional(),
-  }),
+  }).strict(),
   filters: z.array(panelFilterSchema),
   datasets: z.array(panelDatasetSchema).min(1),
   metrics: z.tuple([]),
   calculatedFields: z.tuple([]),
   modules: z.array(panelModuleSchema).min(1),
-}).superRefine((config, ctx) => {
+}).strict().superRefine((config, ctx) => {
   addDuplicateIssues(config.filters.map((filter) => filter.id), ctx, "filters");
   addDuplicateIssues(config.datasets.map((dataset) => dataset.id), ctx, "datasets");
   addDuplicateIssues(config.modules.map((module) => module.id), ctx, "modules");
@@ -1189,7 +1190,36 @@ function parseRecordsConfigInput(rawConfig: unknown) {
 }
 
 function parsePanelConfigInput(rawConfig: unknown) {
-  return panelConfigInputSchema.parse(rawConfig);
+  if (isRecord(rawConfig) && typeof rawConfig.panelConfig === "string") {
+    try {
+      return parsePanelConfigObject(JSON.parse(rawConfig.panelConfig));
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        throw new AppViewConfigError("La configuración del panel no es válida.", "panelConfig");
+      }
+
+      throw error;
+    }
+  }
+
+  return parsePanelConfigObject(rawConfig);
+}
+
+function parsePanelConfigObject(rawConfig: unknown) {
+  const result = panelConfigInputSchema.safeParse(rawConfig);
+
+  if (!result.success) {
+    if (result.error.issues.some((issue) => issue.code === "unrecognized_keys")) {
+      throw new AppViewConfigError(
+        "La configuración del panel contiene propiedades no soportadas.",
+        "panelConfig",
+      );
+    }
+
+    throw result.error;
+  }
+
+  return result.data;
 }
 
 function addDuplicateIssues(ids: string[], ctx: z.RefinementCtx, path: string) {
