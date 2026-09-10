@@ -97,12 +97,13 @@ Request:
 ```json
 {
   "email": "usuario@dominio.cl",
-  "password": "password",
-  "clientId": "opco_app_..."
+  "password": "password"
 }
 ```
 
-`clientId` is required. This is a breaking change in `/api/v1` because the API is still in development and has no production clients yet.
+The normal client flow does not send `clientId`. The API validates credentials first, then resolves the active organizations and external applications available to that user.
+
+If exactly one active organization has exactly one active `ExternalApp`, login completes immediately.
 
 Success response:
 
@@ -116,6 +117,41 @@ Success response:
   }
 }
 ```
+
+If multiple organizations are available, the response does not issue access or refresh tokens. Instead it returns a short-lived login-selection challenge:
+
+```json
+{
+  "ok": true,
+  "data": {
+    "status": "selection_required",
+    "challenge": "...",
+    "expiresIn": 300,
+    "organizations": [
+      {
+        "selectionId": "...",
+        "organization": {
+          "name": "Empresa A"
+        }
+      }
+    ],
+    "preferredSelectionId": "..."
+  }
+}
+```
+
+The visible selector must use only organization names. `selectionId` is an opaque one-time selection handle for the returned challenge; it is not an organization id. Web responses set an HttpOnly nonce cookie scoped to `/api/v1/auth`; native responses include `challengeNonce` so the native app can keep it only in memory. The password is never sent again during selection.
+
+To complete selection, post:
+
+```json
+{
+  "challenge": "...",
+  "selectionId": "..."
+}
+```
+
+Native clients also include the in-memory `challengeNonce`. The API verifies the challenge signature, expiry, nonce, selected option, current user state, active app state, and current membership before issuing the final access/refresh session.
 
 For Web or absent platform headers, the response also sets this cookie and does not include `refreshToken` in JSON:
 
@@ -148,8 +184,10 @@ Errors:
 | Status | Code | Meaning |
 | --- | --- | --- |
 | 400 | `INVALID_JSON` | Request body is not valid JSON. |
-| 400 | `INVALID_LOGIN_BODY` | Request body does not match the expected email/password/clientId shape. |
+| 400 | `INVALID_LOGIN_BODY` | Request body does not match either the credentials or selection shape. |
 | 401 | `INVALID_CREDENTIALS` | Email or password is invalid. The response does not reveal which one failed. |
+| 401 | `LOGIN_SELECTION_EXPIRED` | The selection challenge expired before completion. |
+| 401 | `LOGIN_SELECTION_INVALID` | The selection challenge, nonce, or option is invalid. |
 | 401 | `INVALID_CLIENT` | The application is unknown or the user is not a member of the application's organization. |
 | 403 | `CLIENT_INACTIVE` | The application exists but is inactive. |
 | 500 | `API_AUTH_SECRET_MISSING` | `API_AUTH_SECRET` is not configured at runtime. |
@@ -1209,7 +1247,7 @@ Invalid hours, full dates, timestamps, and free text are rejected with the stand
 
 ## Multiple Memberships
 
-Operational Core supports a user with memberships in more than one organization for the external API. The external API never silently chooses the first organization: `clientId` selects an `ExternalApp`, `ExternalApp.organizationId` selects the effective organization, and every protected request revalidates membership inside that organization.
+Operational Core supports a user with memberships in more than one organization for the external API. The external API never silently chooses the first organization. Neutral login validates credentials first, then offers only organizations where the user has membership and exactly one active `ExternalApp`. After selection, `ExternalApp.organizationId` is the effective organization and every protected request revalidates membership inside that organization.
 
 ## External Applications
 
@@ -1234,11 +1272,11 @@ Fields implemented:
 | `createdAt` | Creation timestamp. |
 | `updatedAt` | Update timestamp. |
 
-`clientId` identifies the external application during `/api/v1/auth/login`. It is not a secret and can be displayed/copied from administration or included in an access link such as `https://client.opco.cl/?clientId=opco_app_...`. Do not use `clientId` as proof of trust by itself.
+`clientId` remains the internal external-application identifier carried in issued API tokens. It is not a secret and must not be used as proof of trust by itself. The normal Client access URL is `https://client.opco.cl`; users do not need `clientId` links.
 
 `active = true` means the application is enabled. `active = false` means the application is disabled but its configuration remains stored. Inactive apps cannot log in. If an app is disabled after an access token has been issued, subsequent protected API calls reject that token with `TOKEN_APP_INACTIVE`.
 
-Administration is available in the web app at `/app/settings/apps` for organization `ADMIN` users. `MEMBER` users cannot administer external applications. The organization is always derived from the authenticated admin user; forms do not decide `organizationId`.
+Administration is available in the web app at `/app/settings/apps` for organization `ADMIN` users. `MEMBER` users cannot administer external applications. Admin users must select an explicitly authorized organization when more than one is available.
 
 This stage does not expose public `/api/v1/apps` endpoints.
 

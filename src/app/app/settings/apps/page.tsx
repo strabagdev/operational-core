@@ -146,7 +146,7 @@ export default async function ExternalAppAdministrationPage({
                       <span>Slug: {app.slug}</span>
                       <span>Client ID: {app.clientId}</span>
                       <span className="break-all md:col-span-2">
-                        Enlace: {buildExternalAppAccessUrl(app.clientId)}
+                        Acceso Client: {buildExternalAppAccessUrl()}
                       </span>
                       <span>Organización: {app.organization.name}</span>
                       <span>Creada: {app.createdAt.toLocaleDateString("es-CL")}</span>

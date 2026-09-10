@@ -97,10 +97,8 @@ describe("external app administration", () => {
     expect(first).not.toBe(second);
   });
 
-  it("builds a client access URL with the public clientId", () => {
-    expect(buildExternalAppAccessUrl("opco_app_test_client")).toBe(
-      "https://client.opco.cl/?clientId=opco_app_test_client",
-    );
+  it("builds the neutral client access URL", () => {
+    expect(buildExternalAppAccessUrl()).toBe("https://client.opco.cl/");
   });
 
   it("allows an ADMIN to list apps from their organization", async () => {

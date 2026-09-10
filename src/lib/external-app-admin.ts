@@ -55,13 +55,9 @@ export function generateExternalAppClientId() {
   return `opco_app_${randomBytes(24).toString("base64url")}`;
 }
 
-export function buildExternalAppAccessUrl(clientId: string) {
+export function buildExternalAppAccessUrl() {
   const baseUrl = process.env.OPCO_CLIENT_PUBLIC_URL ?? "https://client.opco.cl";
-  const url = new URL(baseUrl);
-
-  url.searchParams.set("clientId", clientId);
-
-  return url.toString();
+  return new URL(baseUrl).toString();
 }
 
 export async function getExternalAppAdministration(userId: string, selectedOrganizationId?: string) {

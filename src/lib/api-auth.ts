@@ -18,8 +18,11 @@ import {
 
 export const apiAccessTokenExpiresIn = 60 * 60;
 export const apiRefreshTokenCookieName = "opco_api_refresh_token";
+export const apiLoginSelectionChallengeCookieName = "opco_api_login_selection";
 export const apiRefreshTokenExpiresIn = 30 * 24 * 60 * 60;
+export const apiLoginSelectionChallengeExpiresIn = 5 * 60;
 export const apiAccessTokenType = "access";
+export const apiLoginSelectionChallengeType = "login-selection";
 export const apiJwtAlgorithm = "HS256";
 
 export type ApiAccessTokenPayload = {
@@ -28,6 +31,23 @@ export type ApiAccessTokenPayload = {
   email: string;
   sub: string;
   type: typeof apiAccessTokenType;
+};
+
+export type ApiLoginSelectionChallengeOptionPayload = {
+  appId: string;
+  appName: string;
+  appSlug: string;
+  clientId: string;
+  organizationId: string;
+  organizationName: string;
+  selectionId: string;
+};
+
+export type ApiLoginSelectionChallengePayload = {
+  nonce: string;
+  options: ApiLoginSelectionChallengeOptionPayload[];
+  sub: string;
+  type: typeof apiLoginSelectionChallengeType;
 };
 
 export type ApiAuthenticatedUser = {
@@ -177,6 +197,46 @@ export type ApiLoginClientResult =
   | {
       ok: false;
       response: Response;
+    };
+
+export type ApiLoginSelectionOption = {
+  organization: {
+    name: string;
+  };
+  selectionId: string;
+};
+
+export type ApiLoginSelectionChallenge = {
+  challenge: string;
+  expiresIn: number;
+  nonce: string;
+  options: ApiLoginSelectionOption[];
+  preferredSelectionId?: string;
+};
+
+export type ApiLoginOrganizationAppResolution =
+  | {
+      app: ApiAuthenticatedApp;
+      ok: true;
+      organization: {
+        id: string;
+        name: string;
+      };
+    }
+  | {
+      ok: false;
+      reason: "no-valid-organizations";
+    };
+
+export type ApiLoginSelectionCompletionResult =
+  | {
+      app: ApiAuthenticatedApp;
+      ok: true;
+      user: ApiAuthenticatedUser;
+    }
+  | {
+      ok: false;
+      reason: "expired-challenge" | "invalid-challenge" | "invalid-selection";
     };
 
 export type ApiRefreshTokenTransport = "native" | "web";
@@ -332,6 +392,17 @@ export function apiRefreshTokenCookieHeader(token: string) {
   ].join("; ");
 }
 
+export function apiLoginSelectionChallengeCookieHeader(nonce: string) {
+  return [
+    `${apiLoginSelectionChallengeCookieName}=${encodeURIComponent(nonce)}`,
+    "HttpOnly",
+    "Secure",
+    "SameSite=None",
+    "Path=/api/v1/auth",
+    `Max-Age=${apiLoginSelectionChallengeExpiresIn}`,
+  ].join("; ");
+}
+
 export function apiRefreshTokenCookieDeletionHeader() {
   return [
     `${apiRefreshTokenCookieName}=`,
@@ -344,7 +415,27 @@ export function apiRefreshTokenCookieDeletionHeader() {
   ].join("; ");
 }
 
+export function apiLoginSelectionChallengeCookieDeletionHeader() {
+  return [
+    `${apiLoginSelectionChallengeCookieName}=`,
+    "HttpOnly",
+    "Secure",
+    "SameSite=None",
+    "Path=/api/v1/auth",
+    "Max-Age=0",
+    "Expires=Thu, 01 Jan 1970 00:00:00 GMT",
+  ].join("; ");
+}
+
 export function extractApiRefreshTokenCookie(request: Request) {
+  return extractApiCookie(request, apiRefreshTokenCookieName);
+}
+
+export function extractApiLoginSelectionChallengeCookie(request: Request) {
+  return extractApiCookie(request, apiLoginSelectionChallengeCookieName);
+}
+
+function extractApiCookie(request: Request, cookieName: string) {
   const cookie = request.headers.get("cookie");
 
   if (!cookie) {
@@ -354,7 +445,7 @@ export function extractApiRefreshTokenCookie(request: Request) {
   for (const part of cookie.split(";")) {
     const [rawName, ...rawValue] = part.trim().split("=");
 
-    if (rawName === apiRefreshTokenCookieName) {
+    if (rawName === cookieName) {
       return decodeURIComponent(rawValue.join("="));
     }
   }
@@ -522,6 +613,347 @@ export async function resolveApiLoginExternalApp({
     membership: membership.membership,
     ok: true,
   };
+}
+
+export async function resolveApiLoginOrganizationsForUser({
+  preferredOrganizationId,
+  userId,
+}: {
+  preferredOrganizationId?: string | null;
+  userId: string;
+}): Promise<ApiLoginOrganizationAppResolution | {
+  challenge: ApiLoginSelectionChallenge;
+  ok: "selection-required";
+}> {
+  const memberships = await withPrismaReadRetry(
+    () => prisma.membership.findMany({
+      orderBy: {
+        organization: {
+          name: "asc",
+        },
+      },
+      select: {
+        organization: {
+          select: {
+            active: true,
+            externalApps: {
+              orderBy: {
+                name: "asc",
+              },
+              select: {
+                active: true,
+                clientId: true,
+                id: true,
+                name: true,
+                organizationId: true,
+                slug: true,
+              },
+              where: {
+                active: true,
+              },
+            },
+            id: true,
+            name: true,
+          },
+        },
+      },
+      where: {
+        userId,
+      },
+    }),
+    { context: "api.auth.login.organizations" },
+  );
+
+  const options = memberships
+    .filter((membership) => membership.organization.active)
+    .map((membership) => ({
+      organization: membership.organization,
+      activeApps: membership.organization.externalApps,
+    }))
+    .filter((item) => item.activeApps.length === 1)
+    .map((item): ApiLoginSelectionChallengeOptionPayload => {
+      const app = item.activeApps[0];
+
+      return {
+        appId: app.id,
+        appName: app.name,
+        appSlug: app.slug,
+        clientId: app.clientId,
+        organizationId: item.organization.id,
+        organizationName: item.organization.name,
+        selectionId: randomUUID(),
+      };
+    });
+
+  if (options.length === 0) {
+    return {
+      ok: false,
+      reason: "no-valid-organizations",
+    };
+  }
+
+  if (options.length === 1) {
+    const option = options[0];
+
+    return {
+      app: {
+        clientId: option.clientId,
+        id: option.appId,
+        name: option.appName,
+        organizationId: option.organizationId,
+        slug: option.appSlug,
+      },
+      ok: true,
+      organization: {
+        id: option.organizationId,
+        name: option.organizationName,
+      },
+    };
+  }
+
+  return {
+    challenge: await signApiLoginSelectionChallenge({
+      options,
+      preferredOrganizationId,
+      userId,
+    }),
+    ok: "selection-required",
+  };
+}
+
+export async function signApiLoginSelectionChallenge({
+  options,
+  preferredOrganizationId,
+  userId,
+}: {
+  options: ApiLoginSelectionChallengeOptionPayload[];
+  preferredOrganizationId?: string | null;
+  userId: string;
+}): Promise<ApiLoginSelectionChallenge> {
+  const nonce = randomUUID();
+  const challenge = await new SignJWT({
+    nonce,
+    options,
+    type: apiLoginSelectionChallengeType,
+  })
+    .setProtectedHeader({ alg: apiJwtAlgorithm, typ: "JWT" })
+    .setSubject(userId)
+    .setIssuedAt()
+    .setExpirationTime(`${apiLoginSelectionChallengeExpiresIn}s`)
+    .sign(getApiAuthSecret());
+  const preferredSelectionId = options.find(
+    (option) => option.organizationId === preferredOrganizationId,
+  )?.selectionId;
+
+  return {
+    challenge,
+    expiresIn: apiLoginSelectionChallengeExpiresIn,
+    nonce,
+    options: options.map((option) => ({
+      organization: {
+        name: option.organizationName,
+      },
+      selectionId: option.selectionId,
+    })),
+    ...(preferredSelectionId ? { preferredSelectionId } : {}),
+  };
+}
+
+export async function completeApiLoginSelection({
+  challenge,
+  expectedNonce,
+  selectionId,
+}: {
+  challenge: string;
+  expectedNonce?: string | null;
+  selectionId: string;
+}): Promise<ApiLoginSelectionCompletionResult> {
+  const verification = await verifyApiLoginSelectionChallenge(challenge);
+
+  if (!verification.ok) {
+    return {
+      ok: false,
+      reason: verification.reason,
+    };
+  }
+
+  if (expectedNonce !== undefined && verification.payload.nonce !== expectedNonce) {
+    return {
+      ok: false,
+      reason: "invalid-challenge",
+    };
+  }
+
+  const selected = verification.payload.options.find(
+    (option) => option.selectionId === selectionId,
+  );
+
+  if (!selected) {
+    return {
+      ok: false,
+      reason: "invalid-selection",
+    };
+  }
+
+  const user = await withPrismaReadRetry(
+    () => prisma.user.findUnique({
+      select: {
+        active: true,
+        email: true,
+        id: true,
+        name: true,
+      },
+      where: {
+        id: verification.payload.sub,
+      },
+    }),
+    { context: "api.auth.login.selection.user" },
+  );
+
+  if (!user || user.active === false) {
+    return {
+      ok: false,
+      reason: "invalid-challenge",
+    };
+  }
+
+  const app = await withPrismaReadRetry(
+    () => prisma.externalApp.findUnique({
+      select: {
+        active: true,
+        clientId: true,
+        id: true,
+        name: true,
+        organizationId: true,
+        slug: true,
+      },
+      where: {
+        id: selected.appId,
+      },
+    }),
+    { context: "api.auth.login.selection.app" },
+  );
+
+  if (
+    !app ||
+    app.active === false ||
+    app.clientId !== selected.clientId ||
+    app.organizationId !== selected.organizationId
+  ) {
+    return {
+      ok: false,
+      reason: "invalid-selection",
+    };
+  }
+
+  const membership = await getApiUserAppMembership({
+    organizationId: app.organizationId,
+    userId: user.id,
+  });
+
+  if (!membership.ok) {
+    return {
+      ok: false,
+      reason: "invalid-selection",
+    };
+  }
+
+  return {
+    app: {
+      clientId: app.clientId,
+      id: app.id,
+      name: app.name,
+      organizationId: app.organizationId,
+      slug: app.slug,
+    },
+    ok: true,
+    user: {
+      email: user.email,
+      id: user.id,
+      name: user.name,
+    },
+  };
+}
+
+export async function verifyApiLoginSelectionChallenge(token: string): Promise<
+  | {
+      ok: true;
+      payload: ApiLoginSelectionChallengePayload;
+    }
+  | {
+      ok: false;
+      reason: "expired-challenge" | "invalid-challenge";
+    }
+> {
+  const secret = getApiAuthSecret();
+
+  try {
+    const { payload } = await jwtVerify(token, secret, {
+      algorithms: [apiJwtAlgorithm],
+      typ: "JWT",
+    });
+
+    if (
+      typeof payload.sub !== "string" ||
+      typeof payload.nonce !== "string" ||
+      payload.type !== apiLoginSelectionChallengeType ||
+      !Array.isArray(payload.options)
+    ) {
+      return {
+        ok: false,
+        reason: "invalid-challenge",
+      };
+    }
+
+    const options = payload.options;
+
+    if (!options.every(isApiLoginSelectionChallengeOptionPayload)) {
+      return {
+        ok: false,
+        reason: "invalid-challenge",
+      };
+    }
+
+    return {
+      ok: true,
+      payload: {
+        nonce: payload.nonce,
+        options,
+        sub: payload.sub,
+        type: apiLoginSelectionChallengeType,
+      },
+    };
+  } catch (error) {
+    if (error instanceof errors.JWTExpired) {
+      return {
+        ok: false,
+        reason: "expired-challenge",
+      };
+    }
+
+    return {
+      ok: false,
+      reason: "invalid-challenge",
+    };
+  }
+}
+
+function isApiLoginSelectionChallengeOptionPayload(
+  value: unknown,
+): value is ApiLoginSelectionChallengeOptionPayload {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+
+  const option = value as Record<string, unknown>;
+
+  return typeof option.appId === "string" &&
+    typeof option.appName === "string" &&
+    typeof option.appSlug === "string" &&
+    typeof option.clientId === "string" &&
+    typeof option.organizationId === "string" &&
+    typeof option.organizationName === "string" &&
+    typeof option.selectionId === "string";
 }
 
 export async function issueApiRefreshToken({
