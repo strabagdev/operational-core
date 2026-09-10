@@ -10,7 +10,7 @@ vi.mock("@/lib/prisma", () => ({
       findUnique: vi.fn(),
     },
     membership: {
-      findMany: vi.fn(),
+      findUnique: vi.fn(),
     },
     user: {
       findUnique: vi.fn(),
@@ -19,7 +19,7 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 const externalAppFindUnique = vi.mocked(prisma.externalApp.findUnique);
-const membershipFindMany = vi.mocked(prisma.membership.findMany);
+const membershipFindUnique = vi.mocked(prisma.membership.findUnique);
 const userFindUnique = vi.mocked(prisma.user.findUnique);
 
 beforeEach(() => {
@@ -39,6 +39,7 @@ const testApp = {
   clientId: "opco_app_client_1",
   id: "app_1",
   name: "Bodega",
+  organizationId: "org_1",
   slug: "bodega",
 };
 
@@ -93,17 +94,24 @@ describe("GET /api/v1/context", () => {
       id: "user_1",
       name: "User One",
     } as never);
-    membershipFindMany
-      .mockResolvedValueOnce([{ organization: { active: true }, organizationId: "org_1" }] as never)
-      .mockResolvedValueOnce([
-        membershipFixture({
-          contracts: [
-            { id: "contract_1", name: "Contrato A" },
-            { id: "contract_2", name: "Contrato B" },
-          ],
-          role: "ADMIN",
-        }),
-      ] as never);
+    membershipFindUnique.mockResolvedValue({
+      ...membershipFixture({
+        contracts: [
+          { id: "contract_1", name: "Contrato A" },
+          { id: "contract_2", name: "Contrato B" },
+        ],
+        role: "ADMIN",
+      }),
+      organization: {
+        active: true,
+        contracts: [
+          { id: "contract_1", name: "Contrato A" },
+          { id: "contract_2", name: "Contrato B" },
+        ],
+        id: "org_1",
+        name: "Organizacion A",
+      },
+    } as never);
 
     const response = await GET(await contextRequest());
 
@@ -129,7 +137,7 @@ describe("GET /api/v1/context", () => {
         ],
       },
     });
-    expect(membershipFindMany).toHaveBeenCalledWith(expect.objectContaining({
+    expect(membershipFindUnique).toHaveBeenCalledWith(expect.objectContaining({
       include: {
         organization: {
           include: {
@@ -145,7 +153,10 @@ describe("GET /api/v1/context", () => {
         },
       },
       where: {
-        userId: "user_1",
+        userId_organizationId: {
+          organizationId: "org_1",
+          userId: "user_1",
+        },
       },
     }));
   });
@@ -156,14 +167,18 @@ describe("GET /api/v1/context", () => {
       id: "user_1",
       name: null,
     } as never);
-    membershipFindMany
-      .mockResolvedValueOnce([{ organization: { active: true }, organizationId: "org_1" }] as never)
-      .mockResolvedValueOnce([
-        membershipFixture({
-          contracts: [],
-          role: "MEMBER",
-        }),
-      ] as never);
+    membershipFindUnique.mockResolvedValue({
+      ...membershipFixture({
+        contracts: [],
+        role: "MEMBER",
+      }),
+      organization: {
+        active: true,
+        contracts: [],
+        id: "org_1",
+        name: "Organizacion A",
+      },
+    } as never);
 
     const response = await GET(await contextRequest());
 
@@ -186,13 +201,17 @@ describe("GET /api/v1/context", () => {
       id: "user_1",
       name: "Member One",
     } as never);
-    membershipFindMany
-      .mockResolvedValueOnce([{ organization: { active: true }, organizationId: "org_1" }] as never)
-      .mockResolvedValueOnce([
-        membershipFixture({
-          role: "MEMBER",
-        }),
-      ] as never);
+    membershipFindUnique.mockResolvedValue({
+      ...membershipFixture({
+        role: "MEMBER",
+      }),
+      organization: {
+        active: true,
+        contracts: [{ id: "contract_1", name: "Contrato A" }],
+        id: "org_1",
+        name: "Organizacion A",
+      },
+    } as never);
 
     const response = await GET(await contextRequest());
 
@@ -253,7 +272,7 @@ describe("GET /api/v1/context", () => {
         message: "Token no valido",
       },
     });
-    expect(membershipFindMany).not.toHaveBeenCalled();
+    expect(membershipFindUnique).not.toHaveBeenCalled();
   });
 
   it("rejects context when the token app is inactive or cross-tenant", async () => {
@@ -262,9 +281,10 @@ describe("GET /api/v1/context", () => {
       id: "user_1",
       name: "User One",
     } as never);
-    membershipFindMany.mockResolvedValue([
-      { organization: { active: true }, organizationId: "org_1" },
-    ] as never);
+    membershipFindUnique.mockResolvedValue({
+      organization: { active: true },
+      role: "MEMBER",
+    } as never);
 
     externalAppFindUnique.mockResolvedValueOnce({
       active: false,
@@ -291,9 +311,10 @@ describe("GET /api/v1/context", () => {
       clientId: "opco_app_client_1",
       id: "app_1",
       name: "Bodega",
-      organizationId: "org_foreign",
+      organizationId: "org_2",
       slug: "bodega",
     } as never);
+    membershipFindUnique.mockResolvedValueOnce(null);
 
     const foreign = await GET(await contextRequest());
 
@@ -314,9 +335,10 @@ describe("GET /api/v1/context", () => {
       id: "user_1",
       name: "User One",
     } as never);
-    membershipFindMany.mockResolvedValueOnce([
-      { organization: { active: false }, organizationId: "org_1" },
-    ] as never);
+    membershipFindUnique.mockResolvedValueOnce({
+      organization: { active: false },
+      role: "MEMBER",
+    } as never);
 
     const response = await GET(await contextRequest());
 
@@ -330,32 +352,52 @@ describe("GET /api/v1/context", () => {
     });
   });
 
-  it("does not choose an arbitrary organization when multiple memberships exist", async () => {
+  it("returns the app organization when the user has multiple memberships", async () => {
     userFindUnique.mockResolvedValueOnce({
       email: "multi@example.com",
       id: "user_1",
       name: "Multi Org",
     } as never);
-    membershipFindMany.mockResolvedValueOnce([
-      membershipFixture({
-        organizationId: "org_1",
-        organizationName: "Organizacion A",
-      }),
-      membershipFixture({
+    externalAppFindUnique.mockResolvedValueOnce({
+      active: true,
+      clientId: "opco_app_client_1",
+      id: "app_1",
+      name: "Bodega",
+      organizationId: "org_2",
+      slug: "bodega",
+    } as never);
+    membershipFindUnique.mockResolvedValue({
+      ...membershipFixture({
+        contracts: [{ id: "contract_2", name: "Contrato B" }],
         organizationId: "org_2",
         organizationName: "Organizacion B",
         role: "MEMBER",
       }),
-    ] as never);
+      organization: {
+        active: true,
+        contracts: [{ id: "contract_2", name: "Contrato B" }],
+        id: "org_2",
+        name: "Organizacion B",
+      },
+    } as never);
 
     const response = await GET(await contextRequest());
 
-    expect(response.status).toBe(409);
+    expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
-      ok: false,
-      error: {
-        code: "MULTIPLE_ORGANIZATIONS_NOT_SUPPORTED",
-        message: "El usuario pertenece a multiples organizaciones",
+      ok: true,
+      data: {
+        contracts: [
+          {
+            id: "contract_2",
+            name: "Contrato B",
+            role: "MEMBER",
+          },
+        ],
+        organization: {
+          id: "org_2",
+          name: "Organizacion B",
+        },
       },
     });
   });

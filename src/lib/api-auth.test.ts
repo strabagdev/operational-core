@@ -26,7 +26,6 @@ vi.mock("@/lib/prisma", () => ({
       findUnique: vi.fn(),
     },
     membership: {
-      findMany: vi.fn(),
       findUnique: vi.fn(),
     },
     user: {
@@ -37,7 +36,6 @@ vi.mock("@/lib/prisma", () => ({
 
 const contractFindFirst = vi.mocked(prisma.contract.findFirst);
 const externalAppFindUnique = vi.mocked(prisma.externalApp.findUnique);
-const membershipFindMany = vi.mocked(prisma.membership.findMany);
 const membershipFindUnique = vi.mocked(prisma.membership.findUnique);
 const userFindUnique = vi.mocked(prisma.user.findUnique);
 
@@ -58,9 +56,10 @@ async function expiredAccessToken() {
 beforeEach(() => {
   vi.clearAllMocks();
   process.env.API_AUTH_SECRET = "test-api-auth-secret";
-  membershipFindMany.mockResolvedValue([
-    { organization: { active: true }, organizationId: "org_1" },
-  ] as never);
+  membershipFindUnique.mockResolvedValue({
+    organization: { active: true },
+    role: "MEMBER",
+  } as never);
   externalAppFindUnique.mockResolvedValue({
     active: true,
     clientId: "opco_app_client_1",
@@ -75,6 +74,7 @@ const testApp = {
   clientId: "opco_app_client_1",
   id: "app_1",
   name: "Bodega",
+  organizationId: "org_1",
   slug: "bodega",
 };
 
@@ -186,6 +186,9 @@ describe("API auth bearer tokens", () => {
     }))).resolves.toEqual({
       ok: true,
       app: testApp,
+      membership: {
+        role: "MEMBER",
+      },
       token: {
         appId: "app_1",
         clientId: "opco_app_client_1",
@@ -295,7 +298,7 @@ describe("API auth bearer tokens", () => {
     });
   });
 
-  it("rejects tokens when the app no longer belongs to the user's organization", async () => {
+  it("rejects tokens when the user does not belong to the app organization", async () => {
     userFindUnique.mockResolvedValueOnce({
       email: "user@example.com",
       id: "user_1",
@@ -306,9 +309,10 @@ describe("API auth bearer tokens", () => {
       clientId: "opco_app_client_1",
       id: "app_1",
       name: "Bodega",
-      organizationId: "org_foreign",
+      organizationId: "org_2",
       slug: "bodega",
     } as never);
+    membershipFindUnique.mockResolvedValueOnce(null);
 
     const token = await signApiAccessToken({
       app: testApp,
@@ -319,8 +323,42 @@ describe("API auth bearer tokens", () => {
       headers: { authorization: `Bearer ${token}` },
     }))).resolves.toEqual({
       ok: false,
-      reason: "app-organization-mismatch",
+      reason: "membership-not-found",
     });
+  });
+
+  it("allows bearer tokens for users with memberships in multiple organizations when this app membership exists", async () => {
+    userFindUnique.mockResolvedValueOnce({
+      active: true,
+      email: "user@example.com",
+      id: "user_1",
+      name: "User One",
+    } as never);
+    membershipFindUnique.mockResolvedValueOnce({
+      organization: { active: true },
+      role: "ADMIN",
+    } as never);
+
+    const token = await signApiAccessToken({
+      app: testApp,
+      user: testUser,
+    });
+
+    await expect(getAuthenticatedApiUser(new Request("http://localhost/api/v1/me", {
+      headers: { authorization: `Bearer ${token}` },
+    }))).resolves.toMatchObject({
+      app: testApp,
+      membership: { role: "ADMIN" },
+      ok: true,
+    });
+    expect(membershipFindUnique).toHaveBeenCalledWith(expect.objectContaining({
+      where: {
+        userId_organizationId: {
+          organizationId: "org_1",
+          userId: "user_1",
+        },
+      },
+    }));
   });
 
   it("rejects bearer tokens when the user's organization is inactive", async () => {
@@ -330,9 +368,10 @@ describe("API auth bearer tokens", () => {
       id: "user_1",
       name: "User One",
     } as never);
-    membershipFindMany.mockResolvedValueOnce([
-      { organization: { active: false }, organizationId: "org_1" },
-    ] as never);
+    membershipFindUnique.mockResolvedValueOnce({
+      organization: { active: false },
+      role: "MEMBER",
+    } as never);
 
     const token = await signApiAccessToken({
       app: testApp,
@@ -370,6 +409,10 @@ describe("API contract access", () => {
         name: "Organizacion A",
       },
       organizationId: "org_1",
+    } as never);
+    membershipFindUnique.mockResolvedValueOnce({
+      organization: { active: true },
+      role: "MEMBER",
     } as never);
     membershipFindUnique.mockResolvedValueOnce({
       role: "ADMIN",
@@ -460,7 +503,12 @@ describe("API contract access", () => {
       },
       organizationId: "org_foreign",
     } as never);
-    membershipFindUnique.mockResolvedValueOnce(null);
+    membershipFindUnique
+      .mockResolvedValueOnce({
+        organization: { active: true },
+        role: "MEMBER",
+      } as never)
+      .mockResolvedValueOnce(null);
 
     const result = await requireApiContractAccess(
       await apiRequestWithUserToken(),

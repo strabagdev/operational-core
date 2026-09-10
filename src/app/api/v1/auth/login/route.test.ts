@@ -16,7 +16,7 @@ vi.mock("@/lib/prisma", () => ({
       findUnique: vi.fn(),
     },
     membership: {
-      findMany: vi.fn(),
+      findUnique: vi.fn(),
     },
     user: {
       findUnique: vi.fn(),
@@ -26,7 +26,7 @@ vi.mock("@/lib/prisma", () => ({
 
 const apiRefreshTokenCreate = vi.mocked(prisma.apiRefreshToken.create);
 const externalAppFindUnique = vi.mocked(prisma.externalApp.findUnique);
-const membershipFindMany = vi.mocked(prisma.membership.findMany);
+const membershipFindUnique = vi.mocked(prisma.membership.findUnique);
 const userFindUnique = vi.mocked(prisma.user.findUnique);
 
 function loginRequest(body: unknown, headers?: HeadersInit) {
@@ -40,9 +40,10 @@ function loginRequest(body: unknown, headers?: HeadersInit) {
 beforeEach(() => {
   vi.clearAllMocks();
   process.env.API_AUTH_SECRET = "test-api-auth-secret";
-  membershipFindMany.mockResolvedValue([
-    { organization: { active: true }, organizationId: "org_1" },
-  ] as never);
+  membershipFindUnique.mockResolvedValue({
+    organization: { active: true },
+    role: "MEMBER",
+  } as never);
   apiRefreshTokenCreate.mockResolvedValue({ id: "refresh_1" } as never);
   externalAppFindUnique.mockResolvedValue({
     active: true,
@@ -270,7 +271,7 @@ describe("POST /api/v1/auth/login", () => {
     });
   });
 
-  it("returns 401 for an unknown or cross-tenant clientId without revealing app ownership", async () => {
+  it("returns 401 for an unknown clientId without revealing app ownership", async () => {
     userFindUnique.mockResolvedValueOnce({
       email: "user@example.com",
       id: "user_1",
@@ -293,7 +294,9 @@ describe("POST /api/v1/auth/login", () => {
         message: "Aplicacion no valida",
       },
     });
+  }, 20000);
 
+  it("returns 401 when the user does not belong to the clientId organization", async () => {
     userFindUnique.mockResolvedValueOnce({
       email: "user@example.com",
       id: "user_1",
@@ -308,6 +311,7 @@ describe("POST /api/v1/auth/login", () => {
       organizationId: "org_foreign",
       slug: "foreign",
     } as never);
+    membershipFindUnique.mockResolvedValueOnce(null);
 
     const foreign = await POST(loginRequest({
       clientId: "opco_app_foreign",
@@ -323,6 +327,49 @@ describe("POST /api/v1/auth/login", () => {
         message: "Aplicacion no valida",
       },
     });
+  }, 20000);
+
+  it("allows a user with multiple organization memberships to log in to the selected app organization", async () => {
+    userFindUnique.mockResolvedValueOnce({
+      email: "user@example.com",
+      id: "user_1",
+      name: "User One",
+      passwordHash: await bcrypt.hash("secret123", 12),
+    } as never);
+    externalAppFindUnique.mockResolvedValueOnce({
+      active: true,
+      clientId: "opco_app_client_2",
+      id: "app_2",
+      name: "Bodega Sur",
+      organizationId: "org_2",
+      slug: "bodega-sur",
+    } as never);
+    membershipFindUnique.mockResolvedValueOnce({
+      organization: { active: true },
+      role: "MEMBER",
+    } as never);
+
+    const response = await POST(loginRequest({
+      clientId: "opco_app_client_2",
+      email: "user@example.com",
+      password: "secret123",
+    }));
+
+    expect(response.status).toBe(200);
+    expect(apiRefreshTokenCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        externalAppId: "app_2",
+        userId: "user_1",
+      }),
+    }));
+    expect(membershipFindUnique).toHaveBeenCalledWith(expect.objectContaining({
+      where: {
+        userId_organizationId: {
+          organizationId: "org_2",
+          userId: "user_1",
+        },
+      },
+    }));
   }, 20000);
 
   it("returns 401 for an inactive user without revealing account state", async () => {
@@ -390,9 +437,10 @@ describe("POST /api/v1/auth/login", () => {
       name: "User One",
       passwordHash: await bcrypt.hash("secret123", 12),
     } as never);
-    membershipFindMany.mockResolvedValueOnce([
-      { organization: { active: false }, organizationId: "org_1" },
-    ] as never);
+    membershipFindUnique.mockResolvedValueOnce({
+      organization: { active: false },
+      role: "MEMBER",
+    } as never);
 
     const response = await POST(loginRequest({
       clientId: "opco_app_client_1",
@@ -408,20 +456,17 @@ describe("POST /api/v1/auth/login", () => {
         message: "Organizacion inactiva",
       },
     });
-    expect(externalAppFindUnique).not.toHaveBeenCalled();
+    expect(externalAppFindUnique).toHaveBeenCalled();
   });
 
-  it("rejects login for users with multiple organizations", async () => {
+  it("rejects login for a user outside the selected app organization even if credentials are valid", async () => {
     userFindUnique.mockResolvedValueOnce({
       email: "user@example.com",
       id: "user_1",
       name: "User One",
       passwordHash: await bcrypt.hash("secret123", 12),
     } as never);
-    membershipFindMany.mockResolvedValueOnce([
-      { organizationId: "org_1" },
-      { organizationId: "org_2" },
-    ] as never);
+    membershipFindUnique.mockResolvedValueOnce(null);
 
     const response = await POST(loginRequest({
       clientId: "opco_app_client_1",
@@ -429,12 +474,12 @@ describe("POST /api/v1/auth/login", () => {
       password: "secret123",
     }));
 
-    expect(response.status).toBe(409);
+    expect(response.status).toBe(401);
     expect(await response.json()).toEqual({
       ok: false,
       error: {
-        code: "MULTIPLE_ORGANIZATIONS_NOT_SUPPORTED",
-        message: "El usuario pertenece a multiples organizaciones",
+        code: "INVALID_CLIENT",
+        message: "Aplicacion no valida",
       },
     });
   });

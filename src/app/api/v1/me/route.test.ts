@@ -10,7 +10,7 @@ vi.mock("@/lib/prisma", () => ({
       findUnique: vi.fn(),
     },
     membership: {
-      findMany: vi.fn(),
+      findUnique: vi.fn(),
     },
     user: {
       findUnique: vi.fn(),
@@ -19,13 +19,16 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 const externalAppFindUnique = vi.mocked(prisma.externalApp.findUnique);
-const membershipFindMany = vi.mocked(prisma.membership.findMany);
+const membershipFindUnique = vi.mocked(prisma.membership.findUnique);
 const userFindUnique = vi.mocked(prisma.user.findUnique);
 
 beforeEach(() => {
   vi.clearAllMocks();
   process.env.API_AUTH_SECRET = "test-api-auth-secret";
-  membershipFindMany.mockResolvedValue([{ organizationId: "org_1" }] as never);
+  membershipFindUnique.mockResolvedValue({
+    organization: { active: true },
+    role: "MEMBER",
+  } as never);
   externalAppFindUnique.mockResolvedValue({
     active: true,
     clientId: "opco_app_client_1",
@@ -40,6 +43,7 @@ const testApp = {
   clientId: "opco_app_client_1",
   id: "app_1",
   name: "Bodega",
+  organizationId: "org_1",
   slug: "bodega",
 };
 
@@ -68,7 +72,12 @@ describe("GET /api/v1/me", () => {
     expect(await response.json()).toEqual({
       ok: true,
       data: {
-        app: testApp,
+        app: {
+          clientId: "opco_app_client_1",
+          id: "app_1",
+          name: "Bodega",
+          slug: "bodega",
+        },
         user: {
           email: "user@example.com",
           id: "user_1",

@@ -3,6 +3,7 @@ export type ExternalAppAdminSearchParams = {
   editApp?: string;
   error?: string;
   notice?: string;
+  organizationId?: string;
 };
 
 export function buildExternalAppsHref(

@@ -22,7 +22,7 @@ Role summary:
 
 Platform administrators use `/app/platform/organizations` to list organizations, create additional organizations, edit organization name/slug, and activate or deactivate organizations. This area is platform-scoped: it does not impersonate organization users and does not automatically create `Membership` rows for the platform administrator in every organization.
 
-Creating an organization after bootstrap is transactional: `Organization(active=true)`, the initial `User(active=true, platformRole=NONE)`, and its `Membership(role=ADMIN)` are written together. Existing emails are rejected because Operational Core still does not support one user belonging to multiple organizations.
+Creating an organization after bootstrap is transactional: `Organization(active=true)`, the initial `User(active=true, platformRole=NONE)`, and its `Membership(role=ADMIN)` are written together. Web administration may still constrain user creation flows, but the external API does not infer tenant context from "the user's first organization".
 
 Initial setup remains only the bootstrap path. `/setup` creates the first organization, the first `PLATFORM_ADMIN`, and that user's first organization `ADMIN` membership. Subsequent organizations are created from the platform area.
 
@@ -181,7 +181,7 @@ Because refresh rotates the credential, clients must not blindly retry `/api/v1/
 
 Web and native clients use different refresh-token transports. Web receives `opco_api_refresh_token` as `HttpOnly; Secure; SameSite=None; Path=/api/v1/auth`, and `/api/v1/auth/refresh` plus `/api/v1/auth/logout` validate `Origin` against `API_ALLOWED_ORIGINS` before accepting the cookie. Native clients send `X-Opco-Client-Platform: native` and receive/send the refresh token in JSON so Android/iOS can store it in SecureStore. The platform header only selects transport; authorization still comes from the persisted token, user, app, and organization checks.
 
-Contract-scoped API access derives organization, app, contract, and membership from the database on every protected request. Clients cannot choose organization or role through request payloads.
+Contract-scoped API access derives app, effective organization, contract, and membership from the database on every protected request. `clientId` selects an `ExternalApp`; `ExternalApp.organizationId` selects the effective organization; clients cannot choose organization or role through request payloads.
 
 Prisma/PostgreSQL transient connection failures are treated as infrastructure errors, not authentication or authorization failures. Central read-only helpers may retry a failed read once after a connection reset/disconnect. Persistent database unavailability is surfaced as `DB_UNAVAILABLE`/503 for `/api/v1` and as a recoverable web error state. Mutations and write transactions are not retried automatically.
 

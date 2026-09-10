@@ -16,7 +16,6 @@ vi.mock("@/lib/prisma", () => ({
       findUnique: vi.fn(),
     },
     membership: {
-      findMany: vi.fn(),
       findUnique: vi.fn(),
     },
     user: {
@@ -28,7 +27,6 @@ vi.mock("@/lib/prisma", () => ({
 const appViewFindMany = vi.mocked(prisma.appView.findMany);
 const contractFindFirst = vi.mocked(prisma.contract.findFirst);
 const externalAppFindUnique = vi.mocked(prisma.externalApp.findUnique);
-const membershipFindMany = vi.mocked(prisma.membership.findMany);
 const membershipFindUnique = vi.mocked(prisma.membership.findUnique);
 const userFindUnique = vi.mocked(prisma.user.findUnique);
 
@@ -36,6 +34,7 @@ const app = {
   clientId: "opco_app_client_1",
   id: "app_1",
   name: "Opco Client",
+  organizationId: "org_1",
   slug: "opco-client",
 };
 
@@ -75,8 +74,10 @@ beforeEach(() => {
     id: "user_1",
     name: "User One",
   } as never);
-  membershipFindMany.mockResolvedValue([{ organizationId: "org_1" }] as never);
-  membershipFindUnique.mockResolvedValue({ role: "MEMBER" } as never);
+  membershipFindUnique.mockResolvedValue({
+    organization: { active: true },
+    role: "MEMBER",
+  } as never);
   externalAppFindUnique.mockResolvedValue({
     active: true,
     clientId: app.clientId,
@@ -303,7 +304,15 @@ describe("GET /api/v1/contracts/[contractId]/views", () => {
   });
 
   it("rejects a contract from another organization", async () => {
-    membershipFindUnique.mockResolvedValueOnce(null);
+    contractFindFirst.mockResolvedValueOnce({
+      id: "contract_2",
+      name: "Contrato externo",
+      organization: {
+        id: "org_2",
+        name: "Organización externa",
+      },
+      organizationId: "org_2",
+    } as never);
 
     const response = await GET(
       await apiRequest("/api/v1/contracts/contract_1/views"),

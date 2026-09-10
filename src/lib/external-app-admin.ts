@@ -9,6 +9,7 @@ import { prisma } from "./prisma";
 export const externalAppFormSchema = z.object({
   active: z.coerce.boolean().default(false),
   name: z.string().trim().min(1, "El nombre es obligatorio."),
+  organizationId: z.string().trim().min(1, "Selecciona una organización."),
   slug: z.string().trim().min(1, "El slug es obligatorio."),
 });
 
@@ -25,6 +26,7 @@ export function getExternalAppFormInput(formData: FormData): ExternalAppFormInpu
   return externalAppFormSchema.parse({
     active: formData.get("active") === "on",
     name: formData.get("name"),
+    organizationId: formData.get("organizationId"),
     slug: formData.get("slug"),
   });
 }
@@ -53,11 +55,25 @@ export function generateExternalAppClientId() {
   return `opco_app_${randomBytes(24).toString("base64url")}`;
 }
 
-export async function getExternalAppAdministration(userId: string) {
-  const organization = await getAdminOrganization(userId);
+export function buildExternalAppAccessUrl(clientId: string) {
+  const baseUrl = process.env.OPCO_CLIENT_PUBLIC_URL ?? "https://client.opco.cl";
+  const url = new URL(baseUrl);
+
+  url.searchParams.set("clientId", clientId);
+
+  return url.toString();
+}
+
+export async function getExternalAppAdministration(userId: string, selectedOrganizationId?: string) {
+  const organizations = await getAdminOrganizations(userId);
+  const organization = selectedOrganizationId
+    ? organizations.find((item) => item.id === selectedOrganizationId) ?? null
+    : organizations.length === 1
+      ? organizations[0]
+      : null;
 
   if (!organization) {
-    return { organization: null, apps: [] };
+    return { apps: [], organization: null, organizations };
   }
 
   const apps = await prisma.externalApp.findMany({
@@ -70,14 +86,14 @@ export async function getExternalAppAdministration(userId: string) {
     orderBy: [{ active: "desc" }, { name: "asc" }],
   });
 
-  return { organization, apps };
+  return { apps, organization, organizations };
 }
 
 export async function createExternalAppForAdmin(
   userId: string,
   input: ExternalAppFormInput,
 ) {
-  const organization = await resolveAdminOrganization(userId);
+  const organization = await resolveAdminOrganization(userId, input.organizationId);
   const name = input.name.trim();
   const slug = normalizeRequiredSlug(input.slug);
 
@@ -163,8 +179,11 @@ export async function setExternalAppActiveForAdmin(
   });
 }
 
-async function getAdminOrganization(userId: string) {
-  return prisma.organization.findFirst({
+async function getAdminOrganizations(userId: string) {
+  return prisma.organization.findMany({
+    orderBy: {
+      name: "asc",
+    },
     where: {
       memberships: {
         some: {
@@ -173,14 +192,21 @@ async function getAdminOrganization(userId: string) {
         },
       },
     },
-    orderBy: {
-      name: "asc",
-    },
   });
 }
 
-async function resolveAdminOrganization(userId: string) {
-  const organization = await getAdminOrganization(userId);
+async function resolveAdminOrganization(userId: string, organizationId: string) {
+  const organization = await prisma.organization.findFirst({
+    where: {
+      id: organizationId,
+      memberships: {
+        some: {
+          role: "ADMIN",
+          userId,
+        },
+      },
+    },
+  });
 
   if (!organization) {
     throw new ExternalAppAdminError("No tienes permisos para administrar aplicaciones.");

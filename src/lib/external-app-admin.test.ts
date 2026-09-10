@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  buildExternalAppAccessUrl,
   createExternalAppForAdmin,
   ExternalAppAdminError,
   generateExternalAppClientId,
@@ -22,6 +23,7 @@ vi.mock("./prisma", () => ({
     },
     organization: {
       findFirst: vi.fn(),
+      findMany: vi.fn(),
     },
   },
 }));
@@ -31,6 +33,7 @@ const externalAppFindFirst = vi.mocked(prisma.externalApp.findFirst);
 const externalAppFindMany = vi.mocked(prisma.externalApp.findMany);
 const externalAppUpdate = vi.mocked(prisma.externalApp.update);
 const organizationFindFirst = vi.mocked(prisma.organization.findFirst);
+const organizationFindMany = vi.mocked(prisma.organization.findMany);
 
 function organization(overrides: Record<string, unknown> = {}) {
   return {
@@ -61,6 +64,7 @@ function externalApp(overrides: Record<string, unknown> = {}) {
 beforeEach(() => {
   vi.clearAllMocks();
   organizationFindFirst.mockResolvedValue(organization() as never);
+  organizationFindMany.mockResolvedValue([organization()] as never);
   externalAppFindFirst.mockResolvedValue(null);
   externalAppFindMany.mockResolvedValue([] as never);
   externalAppCreate.mockResolvedValue(externalApp() as never);
@@ -71,12 +75,14 @@ describe("external app administration", () => {
   it("normalizes form input and slug values", () => {
     const formData = new FormData();
     formData.set("name", "  Bodega Norte  ");
+    formData.set("organizationId", "org_1");
     formData.set("slug", "  Bódega Norte!! ");
     formData.set("active", "on");
 
     expect(getExternalAppFormInput(formData)).toEqual({
       active: true,
       name: "Bodega Norte",
+      organizationId: "org_1",
       slug: "Bódega Norte!!",
     });
     expect(normalizeExternalAppSlug("  Bódega Norte!! ")).toBe("bodega-norte");
@@ -91,6 +97,12 @@ describe("external app administration", () => {
     expect(first).not.toBe(second);
   });
 
+  it("builds a client access URL with the public clientId", () => {
+    expect(buildExternalAppAccessUrl("opco_app_test_client")).toBe(
+      "https://client.opco.cl/?clientId=opco_app_test_client",
+    );
+  });
+
   it("allows an ADMIN to list apps from their organization", async () => {
     externalAppFindMany.mockResolvedValueOnce([
       externalApp({ id: "app_1", name: "Bodega" }),
@@ -100,7 +112,7 @@ describe("external app administration", () => {
 
     expect(result.organization).toMatchObject({ id: "org_1" });
     expect(result.apps).toHaveLength(1);
-    expect(organizationFindFirst).toHaveBeenCalledWith(expect.objectContaining({
+    expect(organizationFindMany).toHaveBeenCalledWith(expect.objectContaining({
       where: {
         memberships: {
           some: {
@@ -117,19 +129,64 @@ describe("external app administration", () => {
     }));
   });
 
-  it("returns no administration data for MEMBER users", async () => {
-    organizationFindFirst.mockResolvedValueOnce(null);
+  it("requires an explicit organization when an ADMIN manages multiple organizations", async () => {
+    organizationFindMany.mockResolvedValueOnce([
+      organization({ id: "org_1", name: "Organizacion A" }),
+      organization({ id: "org_2", name: "Organizacion B" }),
+    ] as never);
 
-    const result = await getExternalAppAdministration("member_1");
+    const result = await getExternalAppAdministration("admin_1");
 
-    expect(result).toEqual({ organization: null, apps: [] });
+    expect(result).toMatchObject({
+      apps: [],
+      organization: null,
+      organizations: [
+        expect.objectContaining({ id: "org_1" }),
+        expect.objectContaining({ id: "org_2" }),
+      ],
+    });
     expect(externalAppFindMany).not.toHaveBeenCalled();
   });
 
-  it("creates an app using the server-side ADMIN organization", async () => {
+  it("lists apps for the explicitly selected ADMIN organization", async () => {
+    organizationFindMany.mockResolvedValueOnce([
+      organization({ id: "org_1", name: "Organizacion A" }),
+      organization({ id: "org_2", name: "Organizacion B" }),
+    ] as never);
+    externalAppFindMany.mockResolvedValueOnce([
+      externalApp({
+        id: "app_2",
+        name: "Bodega B",
+        organization: organization({ id: "org_2", name: "Organizacion B" }),
+        organizationId: "org_2",
+      }),
+    ] as never);
+
+    const result = await getExternalAppAdministration("admin_1", "org_2");
+
+    expect(result.organization).toMatchObject({ id: "org_2" });
+    expect(result.apps).toHaveLength(1);
+    expect(externalAppFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: {
+        organizationId: "org_2",
+      },
+    }));
+  });
+
+  it("returns no administration data for MEMBER users", async () => {
+    organizationFindMany.mockResolvedValueOnce([] as never);
+
+    const result = await getExternalAppAdministration("member_1");
+
+    expect(result).toEqual({ organization: null, organizations: [], apps: [] });
+    expect(externalAppFindMany).not.toHaveBeenCalled();
+  });
+
+  it("creates an app using the explicitly selected ADMIN organization", async () => {
     await createExternalAppForAdmin("admin_1", {
       active: true,
       name: "  Bodega  ",
+      organizationId: "org_1",
       slug: "  Bódega  ",
     });
 
@@ -150,8 +207,22 @@ describe("external app administration", () => {
     await expect(createExternalAppForAdmin("admin_1", {
       active: true,
       name: "Bodega",
+      organizationId: "org_1",
       slug: "bodega",
     })).rejects.toThrow(ExternalAppAdminError);
+  });
+
+  it("rejects creating an app for an organization the admin does not administer", async () => {
+    organizationFindFirst.mockResolvedValueOnce(null);
+
+    await expect(createExternalAppForAdmin("admin_1", {
+      active: true,
+      name: "Bodega",
+      organizationId: "org_foreign",
+      slug: "bodega",
+    })).rejects.toThrow(ExternalAppAdminError);
+
+    expect(externalAppCreate).not.toHaveBeenCalled();
   });
 
   it("allows the same slug in different organizations by checking only the admin organization", async () => {
@@ -163,6 +234,7 @@ describe("external app administration", () => {
     await createExternalAppForAdmin("admin_2", {
       active: true,
       name: "Bodega",
+      organizationId: "org_2",
       slug: "bodega",
     });
 
@@ -188,6 +260,7 @@ describe("external app administration", () => {
     await updateExternalAppForAdmin("admin_1", "app_1", {
       active: false,
       name: "Bodega Sur",
+      organizationId: "org_1",
       slug: "Bodega Sur",
     });
 
@@ -209,6 +282,7 @@ describe("external app administration", () => {
     const result = await updateExternalAppForAdmin("admin_1", "foreign_app", {
       active: true,
       name: "Foreign",
+      organizationId: "org_1",
       slug: "foreign",
     });
 

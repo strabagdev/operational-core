@@ -86,7 +86,6 @@ const entityValueFindFirst = vi.mocked(prisma.entityValue.findFirst);
 const entityTypeFindFirst = vi.mocked(prisma.entityType.findFirst);
 const entityTypeFindMany = vi.mocked(prisma.entityType.findMany);
 const externalAppFindUnique = vi.mocked(prisma.externalApp.findUnique);
-const membershipFindMany = vi.mocked(prisma.membership.findMany);
 const membershipFindUnique = vi.mocked(prisma.membership.findUnique);
 const userFindUnique = vi.mocked(prisma.user.findUnique);
 
@@ -94,6 +93,7 @@ const app = {
   clientId: "opco_app_client_1",
   id: "app_1",
   name: "Bodega",
+  organizationId: "org_1",
   slug: "bodega",
 };
 const recordUpdatedAt = new Date("2026-08-19T18:32:10.123Z");
@@ -178,7 +178,6 @@ beforeEach(() => {
     id: "user_1",
     name: "User One",
   } as never);
-  membershipFindMany.mockResolvedValue([{ organizationId: "org_1" }] as never);
   externalAppFindUnique.mockResolvedValue({
     active: true,
     clientId: app.clientId,
@@ -197,7 +196,10 @@ beforeEach(() => {
   entityValueCreateMany.mockResolvedValue({ count: 1 } as never);
   entityValueDeleteMany.mockResolvedValue({ count: 1 } as never);
   entityValueFindFirst.mockResolvedValue(null);
-  membershipFindUnique.mockResolvedValue({ role: "ADMIN" } as never);
+  membershipFindUnique.mockResolvedValue({
+    organization: { active: true },
+    role: "ADMIN",
+  } as never);
 });
 
 describe("GET /api/v1/contracts/[contractId]/entities", () => {
@@ -225,7 +227,15 @@ describe("GET /api/v1/contracts/[contractId]/entities", () => {
   });
 
   it("rejects a contract from another organization", async () => {
-    membershipFindUnique.mockResolvedValue(null);
+    contractFindFirst.mockResolvedValueOnce({
+      id: "contract_2",
+      name: "Contrato externo",
+      organization: {
+        id: "org_2",
+        name: "Organizacion externa",
+      },
+      organizationId: "org_2",
+    } as never);
 
     const response = await entitiesGET(await apiRequest("/api/v1/contracts/contract_1/entities"), {
       params: Promise.resolve({ contractId: "contract_1" }),

@@ -19,7 +19,7 @@ vi.mock("@/lib/prisma", () => ({
       updateMany: vi.fn(),
     },
     membership: {
-      findMany: vi.fn(),
+      findUnique: vi.fn(),
     },
   },
 }));
@@ -28,7 +28,7 @@ const apiRefreshTokenCreate = vi.mocked(prisma.apiRefreshToken.create);
 const apiRefreshTokenFindUnique = vi.mocked(prisma.apiRefreshToken.findUnique);
 const apiRefreshTokenUpdate = vi.mocked(prisma.apiRefreshToken.update);
 const apiRefreshTokenUpdateMany = vi.mocked(prisma.apiRefreshToken.updateMany);
-const membershipFindMany = vi.mocked(prisma.membership.findMany);
+const membershipFindUnique = vi.mocked(prisma.membership.findUnique);
 const transaction = vi.mocked(prisma.$transaction);
 
 const refreshToken = "opco_rt_existing_refresh_token";
@@ -105,9 +105,10 @@ beforeEach(() => {
   vi.clearAllMocks();
   process.env.API_AUTH_SECRET = "test-api-auth-secret";
   process.env.API_ALLOWED_ORIGINS = allowedOrigin;
-  membershipFindMany.mockResolvedValue([
-    { organization: { active: true }, organizationId: "org_1" },
-  ] as never);
+  membershipFindUnique.mockResolvedValue({
+    organization: { active: true },
+    role: "MEMBER",
+  } as never);
   apiRefreshTokenCreate.mockResolvedValue({ id: "refresh_2" } as never);
   apiRefreshTokenUpdate.mockResolvedValue({} as never);
   apiRefreshTokenUpdateMany.mockResolvedValue({ count: 1 } as never);
@@ -218,11 +219,16 @@ describe("POST /api/v1/auth/refresh", () => {
     ["inactive user", { user: { ...activeUser, active: false } }, "REFRESH_USER_INACTIVE"],
     ["inactive app", { externalApp: { ...activeExternalApp, active: false } }, "REFRESH_APP_INACTIVE"],
     ["inactive organization", {}, "REFRESH_ORGANIZATION_INACTIVE"],
+    ["app organization without user membership", {}, "REFRESH_APP_INVALID"],
   ])("rejects a %s refresh token", async (_, overrides, code) => {
     if (code === "REFRESH_ORGANIZATION_INACTIVE") {
-      membershipFindMany.mockResolvedValueOnce([
-        { organization: { active: false }, organizationId: "org_1" },
-      ] as never);
+      membershipFindUnique.mockResolvedValueOnce({
+        organization: { active: false },
+        role: "MEMBER",
+      } as never);
+    }
+    if (code === "REFRESH_APP_INVALID") {
+      membershipFindUnique.mockResolvedValueOnce(null);
     }
     apiRefreshTokenFindUnique.mockResolvedValueOnce(storedRefreshToken(overrides) as never);
 

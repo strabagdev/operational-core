@@ -20,7 +20,10 @@ import {
   getActiveExternalAppAdminModal,
   type ExternalAppAdminSearchParams,
 } from "@/lib/external-app-admin-navigation";
-import { getExternalAppAdministration } from "@/lib/external-app-admin";
+import {
+  buildExternalAppAccessUrl,
+  getExternalAppAdministration,
+} from "@/lib/external-app-admin";
 import {
   createExternalAppAction,
   setExternalAppActiveAction,
@@ -41,9 +44,9 @@ export default async function ExternalAppAdministrationPage({
 
   const params = await searchParams;
   const basePath = "/app/settings/apps";
-  const data = await getExternalAppAdministration(session.user.id);
+  const data = await getExternalAppAdministration(session.user.id, params.organizationId);
 
-  if (!data.organization) {
+  if (data.organizations.length === 0) {
     notFound();
   }
 
@@ -70,16 +73,18 @@ export default async function ExternalAppAdministrationPage({
         <div>
           <h1 className="text-2xl font-semibold">Aplicaciones externas</h1>
           <p className="text-sm text-muted-foreground">
-            Administra las aplicaciones externas registradas para tu organización.
+            Administra las aplicaciones externas registradas para una organización autorizada.
           </p>
         </div>
         <div className="flex flex-wrap gap-2 sm:justify-end">
           <Button asChild variant="outline">
             <Link href="/app">Volver</Link>
           </Button>
-          <Button asChild>
-            <Link href={createHref}>Nueva aplicación</Link>
-          </Button>
+          {data.organization ? (
+            <Button asChild>
+              <Link href={createHref}>Nueva aplicación</Link>
+            </Button>
+          ) : null}
         </div>
       </header>
 
@@ -100,6 +105,34 @@ export default async function ExternalAppAdministrationPage({
 
       {data.organization ? (
         <section className="grid gap-3">
+          <div className="flex flex-col gap-2 rounded-lg border bg-card p-4 text-sm sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="font-medium">Organización</p>
+              <p className="text-muted-foreground">{data.organization.name}</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {data.organizations.map((organization) => (
+                <Button
+                  asChild
+                  key={organization.id}
+                  size="sm"
+                  variant={organization.id === data.organization?.id ? "default" : "outline"}
+                >
+                  <Link
+                    href={buildExternalAppsHref(basePath, params, {
+                      createApp: undefined,
+                      editApp: undefined,
+                      error: undefined,
+                      notice: undefined,
+                      organizationId: organization.id,
+                    })}
+                  >
+                    {organization.name}
+                  </Link>
+                </Button>
+              ))}
+            </div>
+          </div>
           {data.apps.length > 0 ? (
             data.apps.map((app) => (
               <Card className={app.active ? "" : "opacity-75"} key={app.id}>
@@ -112,6 +145,9 @@ export default async function ExternalAppAdministrationPage({
                     <div className="grid gap-1 text-sm text-muted-foreground md:grid-cols-2">
                       <span>Slug: {app.slug}</span>
                       <span>Client ID: {app.clientId}</span>
+                      <span className="break-all md:col-span-2">
+                        Enlace: {buildExternalAppAccessUrl(app.clientId)}
+                      </span>
                       <span>Organización: {app.organization.name}</span>
                       <span>Creada: {app.createdAt.toLocaleDateString("es-CL")}</span>
                       <span>Actualizada: {app.updatedAt.toLocaleDateString("es-CL")}</span>
@@ -168,10 +204,27 @@ export default async function ExternalAppAdministrationPage({
         </section>
       ) : (
         <Card>
-          <CardContent className="pt-6">
+          <CardContent className="grid gap-4 pt-6">
             <p className="text-sm text-muted-foreground">
-              No tienes permisos para administrar aplicaciones externas.
+              Selecciona una organización para administrar sus aplicaciones externas.
             </p>
+            <div className="flex flex-wrap gap-2">
+              {data.organizations.map((organization) => (
+                <Button asChild key={organization.id} variant="outline">
+                  <Link
+                    href={buildExternalAppsHref(basePath, params, {
+                      createApp: undefined,
+                      editApp: undefined,
+                      error: undefined,
+                      notice: undefined,
+                      organizationId: organization.id,
+                    })}
+                  >
+                    {organization.name}
+                  </Link>
+                </Button>
+              ))}
+            </div>
           </CardContent>
         </Card>
       )}
@@ -180,6 +233,8 @@ export default async function ExternalAppAdministrationPage({
         <ExternalAppFormSheet
           action={createExternalAppAction}
           closeHref={closeHref}
+          organizations={data.organizations}
+          selectedOrganizationId={data.organization.id}
           returnTo={createHref}
           successTo={closeHref}
         />
@@ -192,9 +247,12 @@ export default async function ExternalAppAdministrationPage({
             clientId: editingApp.clientId,
             id: editingApp.id,
             name: editingApp.name,
+            organizationId: editingApp.organizationId,
             slug: editingApp.slug,
           }}
           closeHref={closeHref}
+          organizations={data.organizations}
+          selectedOrganizationId={editingApp.organizationId}
           returnTo={buildExternalAppsHref(basePath, params, {
             createApp: undefined,
             editApp: editingApp.id,

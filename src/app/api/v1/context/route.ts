@@ -10,7 +10,10 @@ export async function GET(request: Request) {
     return authResult.response;
   }
 
-  const contextResult = await getApiOperationalContext(authResult.user.id);
+  const contextResult = await getApiOperationalContext(
+    authResult.user.id,
+    authResult.app.organizationId,
+  );
 
   if (!contextResult.ok) {
     return contextResult.response;

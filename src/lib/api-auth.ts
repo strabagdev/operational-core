@@ -3,7 +3,6 @@ import { createHmac, randomBytes, randomUUID } from "node:crypto";
 import { errors, jwtVerify, SignJWT } from "jose";
 
 import {
-  conflict,
   forbidden,
   internalError,
   notFound,
@@ -41,6 +40,7 @@ export type ApiAuthenticatedApp = {
   clientId: string;
   id: string;
   name: string;
+  organizationId: string;
   slug: string;
 };
 
@@ -82,13 +82,15 @@ export type ApiAuthFailureReason =
   | "user-inactive"
   | "app-not-found"
   | "app-inactive"
-  | "app-organization-mismatch"
   | "organization-inactive"
-  | "multiple-organizations";
+  | "membership-not-found";
 
 export type ApiAuthResult =
   | {
       app: ApiAuthenticatedApp;
+      membership: {
+        role: "ADMIN" | "MEMBER";
+      };
       ok: true;
       token: ApiAccessTokenPayload;
       user: ApiAuthenticatedUser;
@@ -101,6 +103,9 @@ export type ApiAuthResult =
 export type ApiUserRequirementResult =
   | {
       app: ApiAuthenticatedApp;
+      membership: {
+        role: "ADMIN" | "MEMBER";
+      };
       ok: true;
       token: ApiAccessTokenPayload;
       user: ApiAuthenticatedUser;
@@ -144,6 +149,13 @@ type ApiOperationalMembershipRow = {
   role: "ADMIN" | "MEMBER";
 };
 
+type ApiAppMembershipRow = {
+  organization: {
+    active: boolean;
+  };
+  role: "ADMIN" | "MEMBER";
+};
+
 export type ApiTokenVerificationResult =
   | {
       ok: true;
@@ -157,6 +169,9 @@ export type ApiTokenVerificationResult =
 export type ApiLoginClientResult =
   | {
       app: ApiAuthenticatedApp;
+      membership: {
+        role: "ADMIN" | "MEMBER";
+      };
       ok: true;
     }
   | {
@@ -183,9 +198,8 @@ export type ApiRefreshFailureReason =
   | "user-inactive"
   | "app-not-found"
   | "app-inactive"
-  | "app-organization-mismatch"
   | "organization-inactive"
-  | "multiple-organizations";
+  | "membership-not-found";
 
 export type ApiRefreshResult =
   | {
@@ -210,12 +224,11 @@ export class ApiAuthConfigurationError extends Error {
 const apiAuthErrorCodes = {
   "app-inactive": "TOKEN_APP_INACTIVE",
   "app-not-found": "TOKEN_APP_INVALID",
-  "app-organization-mismatch": "TOKEN_APP_INVALID",
   "expired-token": "TOKEN_EXPIRED",
   "invalid-authorization-scheme": "INVALID_AUTHORIZATION_SCHEME",
   "invalid-token": "TOKEN_INVALID",
+  "membership-not-found": "TOKEN_APP_INVALID",
   "missing-token": "TOKEN_MISSING",
-  "multiple-organizations": "MULTIPLE_ORGANIZATIONS_NOT_SUPPORTED",
   "organization-inactive": "TOKEN_ORGANIZATION_INACTIVE",
   "user-not-found": "TOKEN_USER_NOT_FOUND",
   "user-inactive": "TOKEN_USER_INACTIVE",
@@ -224,12 +237,11 @@ const apiAuthErrorCodes = {
 const apiRefreshErrorCodes = {
   "app-inactive": "REFRESH_APP_INACTIVE",
   "app-not-found": "REFRESH_APP_INVALID",
-  "app-organization-mismatch": "REFRESH_APP_INVALID",
   "csrf-origin-invalid": "REFRESH_ORIGIN_INVALID",
   "expired-refresh-token": "REFRESH_TOKEN_EXPIRED",
   "invalid-refresh-token": "REFRESH_TOKEN_INVALID",
+  "membership-not-found": "REFRESH_APP_INVALID",
   "missing-refresh-token": "REFRESH_TOKEN_MISSING",
-  "multiple-organizations": "MULTIPLE_ORGANIZATIONS_NOT_SUPPORTED",
   "organization-inactive": "REFRESH_ORGANIZATION_INACTIVE",
   "refresh-token-reused": "REFRESH_TOKEN_REUSED",
   "revoked-refresh-token": "REFRESH_TOKEN_REVOKED",
@@ -244,13 +256,6 @@ function apiAuthFailureResponse(reason: ApiAuthFailureReason) {
 
   if (reason === "organization-inactive") {
     return forbidden("Organizacion inactiva", apiAuthErrorCodes[reason]);
-  }
-
-  if (reason === "multiple-organizations") {
-    return conflict(
-      "El usuario pertenece a multiples organizaciones",
-      apiAuthErrorCodes[reason],
-    );
   }
 
   return unauthorized("Token no valido", apiAuthErrorCodes[reason]);
@@ -281,13 +286,6 @@ export function apiRefreshFailureResponse(reason: ApiRefreshFailureReason) {
 
   if (reason === "csrf-origin-invalid") {
     return forbidden("Origin no autorizado", apiRefreshErrorCodes[reason]);
-  }
-
-  if (reason === "multiple-organizations") {
-    return conflict(
-      "El usuario pertenece a multiples organizaciones",
-      apiRefreshErrorCodes[reason],
-    );
   }
 
   return unauthorized("Refresh token no valido", apiRefreshErrorCodes[reason]);
@@ -407,47 +405,41 @@ export async function verifyApiCredentials(input: {
   };
 }
 
-export async function getApiUserOrganization(userId: string) {
-  const memberships = await withPrismaReadRetry(
-    () => prisma.membership.findMany({
-      orderBy: {
-        organizationId: "asc",
-      },
+export async function getApiUserAppMembership({
+  organizationId,
+  userId,
+}: {
+  organizationId: string;
+  userId: string;
+}) {
+  const membership = await withPrismaReadRetry(
+    () => prisma.membership.findUnique({
       select: {
         organization: {
           select: {
             active: true,
           },
         },
-        organizationId: true,
+        role: true,
       },
       where: {
-        userId,
+        userId_organizationId: {
+          organizationId,
+          userId,
+        },
       },
     }),
-    { context: "api.auth.user.organization" },
-  );
-  const organizationIds = [...new Set(
-    memberships.map((membership) => membership.organizationId),
-  )];
+    { context: "api.auth.user.appMembership" },
+  ) as ApiAppMembershipRow | null;
 
-  if (organizationIds.length === 0) {
+  if (!membership) {
     return {
       ok: false as const,
-      reason: "user-not-found" as const,
+      reason: "membership-not-found" as const,
     };
   }
 
-  if (organizationIds.length > 1) {
-    return {
-      ok: false as const,
-      reason: "multiple-organizations" as const,
-    };
-  }
-
-  const membership = memberships[0];
-
-  if (membership?.organization?.active === false) {
+  if (membership.organization.active === false) {
     return {
       ok: false as const,
       reason: "organization-inactive" as const,
@@ -455,8 +447,10 @@ export async function getApiUserOrganization(userId: string) {
   }
 
   return {
+    membership: {
+      role: membership.role,
+    },
     ok: true as const,
-    organizationId: organizationIds[0],
   };
 }
 
@@ -467,15 +461,6 @@ export async function resolveApiLoginExternalApp({
   clientId: string;
   userId: string;
 }): Promise<ApiLoginClientResult> {
-  const organization = await getApiUserOrganization(userId);
-
-  if (!organization.ok) {
-    return {
-      ok: false,
-      response: apiAuthFailureResponse(organization.reason),
-    };
-  }
-
   const app = await withPrismaReadRetry(
     () => prisma.externalApp.findUnique({
       select: {
@@ -493,7 +478,7 @@ export async function resolveApiLoginExternalApp({
     { context: "api.auth.login.app" },
   );
 
-  if (!app || app.organizationId !== organization.organizationId) {
+  if (!app) {
     return {
       ok: false,
       response: unauthorized("Aplicacion no valida", "INVALID_CLIENT"),
@@ -507,13 +492,34 @@ export async function resolveApiLoginExternalApp({
     };
   }
 
+  const membership = await getApiUserAppMembership({
+    organizationId: app.organizationId,
+    userId,
+  });
+
+  if (!membership.ok) {
+    if (membership.reason === "organization-inactive") {
+      return {
+        ok: false,
+        response: apiAuthFailureResponse(membership.reason),
+      };
+    }
+
+    return {
+      ok: false,
+      response: unauthorized("Aplicacion no valida", "INVALID_CLIENT"),
+    };
+  }
+
   return {
     app: {
       clientId: app.clientId,
       id: app.id,
       name: app.name,
+      organizationId: app.organizationId,
       slug: app.slug,
     },
+    membership: membership.membership,
     ok: true,
   };
 }
@@ -642,19 +648,15 @@ export async function rotateApiRefreshToken(token: string): Promise<ApiRefreshRe
     };
   }
 
-  const organization = await getApiUserOrganization(storedToken.user.id);
+  const membership = await getApiUserAppMembership({
+    organizationId: storedToken.externalApp.organizationId,
+    userId: storedToken.user.id,
+  });
 
-  if (!organization.ok) {
+  if (!membership.ok) {
     return {
       ok: false,
-      reason: organization.reason,
-    };
-  }
-
-  if (storedToken.externalApp.organizationId !== organization.organizationId) {
-    return {
-      ok: false,
-      reason: "app-organization-mismatch",
+      reason: membership.reason,
     };
   }
 
@@ -667,6 +669,7 @@ export async function rotateApiRefreshToken(token: string): Promise<ApiRefreshRe
     clientId: storedToken.externalApp.clientId,
     id: storedToken.externalApp.id,
     name: storedToken.externalApp.name,
+    organizationId: storedToken.externalApp.organizationId,
     slug: storedToken.externalApp.slug,
   };
   const pendingRefreshToken = buildApiRefreshTokenIssue();
@@ -892,15 +895,6 @@ export async function getAuthenticatedApiUser(request: Request): Promise<ApiAuth
     };
   }
 
-  const organization = await getApiUserOrganization(user.id);
-
-  if (!organization.ok) {
-    return {
-      ok: false,
-      reason: organization.reason,
-    };
-  }
-
   const app = await withPrismaReadRetry(
     () => prisma.externalApp.findUnique({
       select: {
@@ -932,10 +926,15 @@ export async function getAuthenticatedApiUser(request: Request): Promise<ApiAuth
     };
   }
 
-  if (app.organizationId !== organization.organizationId) {
+  const membership = await getApiUserAppMembership({
+    organizationId: app.organizationId,
+    userId: user.id,
+  });
+
+  if (!membership.ok) {
     return {
       ok: false,
-      reason: "app-organization-mismatch",
+      reason: membership.reason,
     };
   }
 
@@ -944,8 +943,10 @@ export async function getAuthenticatedApiUser(request: Request): Promise<ApiAuth
       clientId: app.clientId,
       id: app.id,
       name: app.name,
+      organizationId: app.organizationId,
       slug: app.slug,
     },
+    membership: membership.membership,
     ok: true,
     token: verifiedToken.payload,
     user: {
@@ -991,12 +992,13 @@ export async function requireApiUser(
 
 export async function getApiOperationalContext(
   userId: string,
+  organizationId: string,
 ): Promise<ApiOperationalContextResult> {
-  let memberships: ApiOperationalMembershipRow[];
+  let membership: ApiOperationalMembershipRow | null;
 
   try {
-    memberships = await withPrismaReadRetry(
-      () => prisma.membership.findMany({
+    membership = await withPrismaReadRetry(
+      () => prisma.membership.findUnique({
         include: {
           organization: {
             include: {
@@ -1011,15 +1013,14 @@ export async function getApiOperationalContext(
             },
           },
         },
-        orderBy: [
-          { organization: { name: "asc" } },
-          { role: "asc" },
-        ],
         where: {
-          userId,
+          userId_organizationId: {
+            organizationId,
+            userId,
+          },
         },
       }),
-      { context: "api.context.memberships" },
+      { context: "api.context.membership" },
     );
   } catch (error) {
     if (isDatabaseUnavailableError(error)) {
@@ -1032,21 +1033,7 @@ export async function getApiOperationalContext(
     throw error;
   }
 
-  const organizationIds = new Set(
-    memberships.map((membership) => membership.organizationId),
-  );
-
-  if (organizationIds.size > 1) {
-    return {
-      ok: false,
-      response: conflict(
-        "El usuario pertenece a multiples organizaciones",
-        "MULTIPLE_ORGANIZATIONS_NOT_SUPPORTED",
-      ),
-    };
-  }
-
-  if (memberships.length === 0) {
+  if (!membership) {
     return {
       ok: false,
       response: notFound(
@@ -1055,8 +1042,6 @@ export async function getApiOperationalContext(
       ),
     };
   }
-
-  const membership = memberships[0];
 
   if (membership.organization.active === false) {
     return {
@@ -1120,6 +1105,16 @@ export async function requireApiContractAccess(
       return {
         ok: false,
         response: notFound("Contrato no encontrado", "CONTRACT_NOT_FOUND"),
+      };
+    }
+
+    if (contract.organizationId !== userResult.app.organizationId) {
+      return {
+        ok: false,
+        response: forbidden(
+          "No tienes acceso a este contrato",
+          "CONTRACT_FORBIDDEN",
+        ),
       };
     }
 

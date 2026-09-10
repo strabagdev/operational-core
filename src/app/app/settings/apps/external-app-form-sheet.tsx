@@ -18,20 +18,30 @@ type ExternalAppFormValues = {
   clientId?: string;
   id?: string;
   name?: string;
+  organizationId?: string;
   slug?: string;
+};
+
+type OrganizationOption = {
+  id: string;
+  name: string;
 };
 
 export function ExternalAppFormSheet({
   action,
   app,
   closeHref,
+  organizations,
   returnTo,
+  selectedOrganizationId,
   successTo,
 }: {
   action: (formData: FormData) => void | Promise<void>;
   app?: ExternalAppFormValues;
   closeHref: string;
+  organizations: OrganizationOption[];
   returnTo: string;
+  selectedOrganizationId?: string;
   successTo: string;
 }) {
   const router = useRouter();
@@ -59,6 +69,29 @@ export function ExternalAppFormSheet({
           <div className="grid flex-1 content-start gap-4 overflow-y-auto p-5">
             <input name="returnTo" type="hidden" value={returnTo} />
             <input name="successTo" type="hidden" value={successTo} />
+            <label className="grid gap-2 text-sm font-medium">
+              Organización
+              <select
+                className="h-10 rounded-md border border-input bg-background px-3 text-sm outline-none ring-ring focus-visible:ring-2"
+                defaultValue={app?.organizationId ?? selectedOrganizationId ?? organizations[0]?.id ?? ""}
+                disabled={mode === "edit"}
+                name="organizationId"
+                required
+              >
+                {organizations.map((organization) => (
+                  <option key={organization.id} value={organization.id}>
+                    {organization.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {mode === "edit" ? (
+              <input
+                name="organizationId"
+                type="hidden"
+                value={app?.organizationId ?? selectedOrganizationId ?? organizations[0]?.id ?? ""}
+              />
+            ) : null}
             <label className="grid gap-2 text-sm font-medium">
               Nombre
               <input
