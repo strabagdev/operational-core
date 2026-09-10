@@ -614,7 +614,11 @@ export function summarizeAppViewConfig({
 
 export function friendlyAppViewError(error: unknown) {
   if (error instanceof z.ZodError) {
-    return error.issues[0]?.message ?? "Revisa los datos de la vista.";
+    return appViewFieldErrors(error)?.form?.[0] ??
+      appViewFieldErrors(error)?.panelConfig?.[0] ??
+      appViewFieldErrors(error)?.datasets?.[0] ??
+      appViewFieldErrors(error)?.modules?.[0] ??
+      "Revisa los datos de la vista.";
   }
 
   if (error instanceof Error && error.name === "AppViewConfigError") {
@@ -633,12 +637,27 @@ export function friendlyAppViewError(error: unknown) {
 
 export function appViewFieldErrors(error: unknown) {
   if (error instanceof z.ZodError) {
-    return Object.fromEntries(
-      error.issues.map((issue) => [
-        issue.path.join(".") || "form",
-        [issue.message],
-      ]),
-    );
+    const fieldErrors: Record<string, string[]> = {};
+
+    for (const issue of error.issues) {
+      const mapped = panelZodIssueFieldError(issue) ?? {
+        fieldName: issue.path.join(".") || "form",
+        message: humanZodIssueMessage(issue),
+      };
+
+      fieldErrors[mapped.fieldName] = [
+        ...(fieldErrors[mapped.fieldName] ?? []),
+        mapped.message,
+      ];
+    }
+
+    if (Object.keys(fieldErrors).some((key) => panelErrorSection(key))) {
+      fieldErrors.form = [
+        "Revisa la configuración del panel. Hay campos obligatorios o selecciones incompatibles.",
+      ];
+    }
+
+    return fieldErrors;
   }
 
   if (error instanceof AppViewConfigError && error.fieldName) {
@@ -659,6 +678,74 @@ export function appViewFieldErrors(error: unknown) {
   }
 
   return undefined;
+}
+
+function panelZodIssueFieldError(issue: z.core.$ZodIssue) {
+  const path = issue.path.map(String);
+  const dottedPath = path.join(".");
+
+  if (dottedPath === "datasets") {
+    return { fieldName: "datasets", message: "Agrega al menos una fuente de datos." };
+  }
+
+  if (dottedPath.match(/^datasets\.\d+\.transformation\.fieldIds$/)) {
+    return { fieldName: "panelDatasetFields", message: "Selecciona al menos un campo para el dataset." };
+  }
+
+  if (dottedPath === "modules") {
+    return { fieldName: "modules", message: "Agrega al menos un módulo." };
+  }
+
+  if (dottedPath.match(/^modules\.\d+\.visualization\.config\.columns$/)) {
+    return { fieldName: "panelModuleColumns", message: "Selecciona al menos una columna para la tabla." };
+  }
+
+  if (dottedPath.match(/^datasets\.\d+\.transformation\.relationFieldId$/)) {
+    return { fieldName: "panelDatasetRelation", message: "Selecciona el campo relacionado." };
+  }
+
+  if (dottedPath.match(/^datasets\.\d+\.transformation\.orderFieldId$/)) {
+    return { fieldName: "panelDatasetOrder", message: "Selecciona el campo que determina el último registro." };
+  }
+
+  if (dottedPath === "layout" || dottedPath.startsWith("layout.") || dottedPath.match(/^modules\.\d+\.layout/)) {
+    return { fieldName: "layout", message: "Configura un layout válido para el módulo afectado." };
+  }
+
+  return undefined;
+}
+
+function panelErrorSection(fieldName: string) {
+  if (["datasets", "panelDatasetFields", "panelDatasetRelation", "panelDatasetOrder"].includes(fieldName)) {
+    return "fuentes-de-datos";
+  }
+  if (fieldName === "filters") {
+    return "filtros";
+  }
+  if (["modules", "panelModuleColumns"].includes(fieldName)) {
+    return "modulos";
+  }
+  if (fieldName === "layout") {
+    return "diseno";
+  }
+
+  return "";
+}
+
+function humanZodIssueMessage(issue: z.core.$ZodIssue) {
+  if (issue.code === "unrecognized_keys") {
+    return "La configuración contiene propiedades no soportadas.";
+  }
+
+  if (issue.code === "invalid_type") {
+    return "Completa este campo con un valor válido.";
+  }
+
+  if (issue.code === "too_small") {
+    return "Completa esta sección antes de guardar.";
+  }
+
+  return "Revisa este campo antes de guardar.";
 }
 
 async function validateAppViewConfig({

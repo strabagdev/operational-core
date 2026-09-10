@@ -774,6 +774,88 @@ describe("AppViewForm", () => {
       { id: "filter-2", label: "Estado", valueType: "OPTION", fieldId: "status_field", operator: "EQ" },
     ]);
   });
+
+  it("places PANEL validation errors in the affected navigation section and element", () => {
+    const html = renderToStaticMarkup(
+      <AppViewForm
+        action={noopAction}
+        entityTypes={panelEntityTypes()}
+        initialActionState={{
+          success: false,
+          message: "Revisa la configuración del panel. Hay campos obligatorios o selecciones incompatibles.",
+          fieldErrors: {
+            form: ["Revisa la configuración del panel. Hay campos obligatorios o selecciones incompatibles."],
+            panelDatasetFields: ["Selecciona al menos un campo para el dataset."],
+            panelModuleColumns: ["Selecciona al menos una columna para la tabla."],
+          },
+          values: {
+            name: "Panel Test",
+            slug: "panel-test",
+            type: "PANEL",
+            panelConfig: JSON.stringify(panelConfigFixture({
+              datasets: [
+                {
+                  id: "dataset-1",
+                  source: { type: "ENTITY", entityTypeId: "versions" },
+                  transformation: { type: "RECORDS", fieldIds: [] },
+                },
+              ],
+              modules: [
+                {
+                  id: "table-1",
+                  datasetId: "dataset-1",
+                  visualization: { type: "TABLE", config: { columns: [] } },
+                  layout: { x: 0, y: 0, w: 12, h: 6 },
+                },
+              ],
+            })),
+          },
+        }}
+        submitLabel="Guardar experiencia"
+      />,
+    );
+
+    expect(html).toContain('href="#fuentes-de-datos"');
+    expect(html).toContain('href="#modulos"');
+    expect(html).toContain("Selecciona al menos un campo para el dataset.");
+    expect(html).toContain("Selecciona al menos una columna para la tabla.");
+    expect(html).not.toMatch(/Too small|expected array|too_small|ZodError|path|stack/i);
+  });
+
+  it("keeps validation errors independent between PANEL AppViews", () => {
+    const panelTestHtml = renderToStaticMarkup(
+      <AppViewForm
+        action={noopAction}
+        entityTypes={panelEntityTypes()}
+        initialActionState={{
+          success: false,
+          message: "Revisa la configuración del panel. Hay campos obligatorios o selecciones incompatibles.",
+          fieldErrors: {
+            panelModuleColumns: ["Selecciona al menos una columna para la tabla."],
+          },
+          values: {
+            name: "Panel Test",
+            slug: "panel-test",
+            type: "PANEL",
+            panelConfig: JSON.stringify(panelConfigFixture({ modules: [] })),
+          },
+        }}
+        submitLabel="Guardar experiencia"
+      />,
+    );
+    const pilotHtml = renderToStaticMarkup(
+      <AppViewForm
+        action={noopAction}
+        entityTypes={panelEntityTypes()}
+        initialValues={panelInitialValues()}
+        submitLabel="Guardar experiencia"
+      />,
+    );
+
+    expect(panelTestHtml).toContain("Selecciona al menos una columna para la tabla.");
+    expect(pilotHtml).not.toContain("Selecciona al menos una columna para la tabla.");
+    expect(pilotHtml).not.toMatch(/Too small|expected array|too_small|ZodError|path|stack/i);
+  });
 });
 
 async function noopAction(state: AppViewActionState) {

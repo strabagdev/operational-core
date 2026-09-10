@@ -86,11 +86,19 @@ function ActionMessage({ error, notice }: { error?: string; notice?: string }) {
     return null;
   }
 
+  const message = error ? safeActionMessage(error) : notice;
+
   return (
     <Card>
       <CardContent className="pt-6">
-        <p className="text-sm text-muted-foreground">{error ?? notice}</p>
+        <p className="text-sm text-muted-foreground">{message}</p>
       </CardContent>
     </Card>
   );
+}
+
+function safeActionMessage(message: string) {
+  return /ZodError|Prisma|too_small|Too small|expected array|path|stack/i.test(message)
+    ? "Revisa los datos de la experiencia."
+    : message;
 }

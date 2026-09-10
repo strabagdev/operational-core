@@ -2,6 +2,7 @@ import { Prisma } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  appViewFieldErrors,
   createAppView,
   friendlyAppViewError,
   getAppViewAdminData,
@@ -128,6 +129,16 @@ beforeEach(() => {
   entityTypeFindFirst.mockResolvedValue(entityType() as never);
   entityTypeFindMany.mockResolvedValue([entityType()] as never);
 });
+
+function captureError(callback: () => unknown) {
+  try {
+    callback();
+  } catch (error) {
+    return error;
+  }
+
+  throw new Error("Expected callback to throw.");
+}
 
 describe("AppView config validation", () => {
   it("creates a valid RECORDS view", async () => {
@@ -1615,6 +1626,113 @@ describe("AppView administration", () => {
 });
 
 describe("PANEL AppView config", () => {
+  it("maps empty PANEL datasets to a localized field error", () => {
+    const error = captureError(() => parseAppViewConfig({
+      config: panelConfig({ datasets: [] }),
+      type: "PANEL",
+    } as never));
+
+    expect(friendlyAppViewError(error)).toBe("Revisa la configuración del panel. Hay campos obligatorios o selecciones incompatibles.");
+    expect(appViewFieldErrors(error)).toMatchObject({
+      datasets: ["Agrega al menos una fuente de datos."],
+    });
+    expect(JSON.stringify(appViewFieldErrors(error))).not.toMatch(/Too small|expected array|too_small|ZodError|path|stack/i);
+  });
+
+  it("maps empty PANEL dataset fields to a localized field error", () => {
+    const error = captureError(() => parseAppViewConfig({
+      config: panelConfig({
+        datasets: [
+          {
+            ...panelConfig().datasets[0],
+            transformation: {
+              ...panelConfig().datasets[0].transformation,
+              fieldIds: [],
+            },
+          },
+        ],
+      }),
+      type: "PANEL",
+    } as never));
+
+    expect(appViewFieldErrors(error)).toMatchObject({
+      panelDatasetFields: ["Selecciona al menos un campo para el dataset."],
+    });
+    expect(friendlyAppViewError(error)).not.toMatch(/Too small|expected array|too_small|ZodError|path|stack/i);
+  });
+
+  it("maps empty PANEL modules to a localized field error", () => {
+    const error = captureError(() => parseAppViewConfig({
+      config: panelConfig({ modules: [] }),
+      type: "PANEL",
+    } as never));
+
+    expect(appViewFieldErrors(error)).toMatchObject({
+      modules: ["Agrega al menos un módulo."],
+    });
+  });
+
+  it("maps empty PANEL table columns to a localized field error", () => {
+    const error = captureError(() => parseAppViewConfig({
+      config: panelConfig({
+        modules: [
+          {
+            ...panelConfig().modules[0],
+            visualization: { type: "TABLE", config: { columns: [] } },
+          },
+        ],
+      }),
+      type: "PANEL",
+    } as never));
+
+    expect(appViewFieldErrors(error)).toMatchObject({
+      panelModuleColumns: ["Selecciona al menos una columna para la tabla."],
+    });
+  });
+
+  it("maps incomplete LATEST_BY_RELATION config to relation and order field errors", () => {
+    const error = captureError(() => parseAppViewConfig({
+      config: panelConfig({
+        datasets: [
+          {
+            ...panelConfig().datasets[0],
+            transformation: {
+              type: "LATEST_BY_RELATION",
+              relatedEntityTypeId: "procedures",
+              relationFieldId: "",
+              orderFieldId: "",
+              fieldIds: ["procedure_field"],
+            },
+          },
+        ],
+      }),
+      type: "PANEL",
+    } as never));
+
+    expect(appViewFieldErrors(error)).toMatchObject({
+      panelDatasetRelation: ["Selecciona el campo relacionado."],
+      panelDatasetOrder: ["Selecciona el campo que determina el último registro."],
+    });
+  });
+
+  it("maps invalid PANEL layout to a localized design error", () => {
+    const error = captureError(() => parseAppViewConfig({
+      config: panelConfig({
+        modules: [
+          {
+            ...panelConfig().modules[0],
+            layout: { x: 10, y: 0, w: 6, h: 8 },
+          },
+        ],
+      }),
+      type: "PANEL",
+    } as never));
+
+    expect(appViewFieldErrors(error)).toMatchObject({
+      layout: ["Configura un layout válido para el módulo afectado."],
+    });
+  });
+
   it("accepts the visual editor payload and persists the normalized PANEL contract", async () => {
     const config = recordsPanelConfig();
 

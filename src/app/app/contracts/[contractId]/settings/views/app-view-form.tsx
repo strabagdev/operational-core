@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useMemo, useState } from "react";
+import { useActionState, useEffect, useMemo, useState } from "react";
 import type { AppViewType } from "@prisma/client";
 
 import { EntityIcon } from "@/components/entity-icon";
@@ -97,6 +97,17 @@ export function AppViewForm({
     action,
     initialActionState ?? { success: false },
   );
+  useEffect(() => {
+    const url = new URL(window.location.href);
+
+    if (!url.searchParams.has("error") && !url.searchParams.has("notice")) {
+      return;
+    }
+
+    url.searchParams.delete("error");
+    url.searchParams.delete("notice");
+    window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+  }, []);
   const [name, setName] = useState(valueFromState(state, "name", initialValues?.name ?? ""));
   const [slug, setSlug] = useState(valueFromState(state, "slug", initialValues?.slug ?? ""));
   const [slugTouched, setSlugTouched] = useState(Boolean(initialValues?.slug));
@@ -415,7 +426,11 @@ export function AppViewForm({
       {type === "PANEL" ? (
         <nav className="flex flex-wrap gap-2 rounded-md border border-border bg-muted/40 p-2 text-sm" aria-label="Navegación del editor PANEL">
           {["Datos generales", "Fuentes de datos", "Filtros", "Módulos", "Diseño"].map((item) => (
-            <a className="rounded border border-input bg-background px-3 py-1" href={`#${panelSectionId(item)}`} key={item}>
+            <a
+              className={`rounded border px-3 py-1 ${panelSectionHasErrors(panelSectionId(item), state.fieldErrors) ? "border-destructive bg-destructive/10 text-destructive" : "border-input bg-background"}`}
+              href={`#${panelSectionId(item)}`}
+              key={item}
+            >
               {item}
             </a>
           ))}
@@ -724,7 +739,8 @@ function PanelConfigFields({
     <fieldset className="grid gap-4 rounded-md border border-border p-3">
       <legend className="px-1 text-sm font-medium">Configuración del panel</legend>
       <input name="panelConfig" type="hidden" value={JSON.stringify(panelConfigFormValue(config))} />
-      <FieldError errors={fieldErrors?.panelConfig ?? fieldErrors?.datasets ?? fieldErrors?.modules ?? fieldErrors?.filters} />
+      <PanelErrorSummary fieldErrors={fieldErrors} />
+      <FieldError errors={fieldErrors?.panelConfig} />
       {notice ? (
         <p className="rounded-md border border-border bg-muted px-3 py-2 text-sm text-muted-foreground" role="status">
           {notice}
@@ -733,7 +749,7 @@ function PanelConfigFields({
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,3fr)_minmax(320px,2fr)]">
         <div className="grid min-w-0 gap-4">
-      <section className="grid gap-3" id="fuentes-de-datos">
+      <section className={`grid gap-3 ${panelSectionHasErrors("fuentes-de-datos", fieldErrors) ? "rounded-md border border-destructive/30 p-3" : ""}`} id="fuentes-de-datos">
         <div className="flex items-center justify-between gap-3">
           <h3 className="text-sm font-medium">Fuentes de datos</h3>
           <button className="rounded border border-input px-3 py-1 text-sm" onClick={addDataset} type="button">
@@ -741,7 +757,10 @@ function PanelConfigFields({
           </button>
         </div>
         {datasets.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No hay datasets configurados.</p>
+          <div className="grid gap-1">
+            <p className="text-sm text-muted-foreground">No hay datasets configurados.</p>
+            <FieldError errors={fieldErrors?.datasets} />
+          </div>
         ) : (
           <div className="grid gap-3">
             {datasets.map((dataset, index) => (
@@ -752,6 +771,7 @@ function PanelConfigFields({
                 index={index}
                 key={dataset.id}
                 filters={filters}
+                fieldErrors={fieldErrors}
                 modules={modules}
                 setDatasets={setDatasets}
                 setFilters={setFilters}
@@ -763,7 +783,7 @@ function PanelConfigFields({
         )}
       </section>
 
-      <section className="grid gap-3" id="filtros">
+      <section className={`grid gap-3 ${panelSectionHasErrors("filtros", fieldErrors) ? "rounded-md border border-destructive/30 p-3" : ""}`} id="filtros">
         <div className="flex items-center justify-between gap-3">
           <h3 className="text-sm font-medium">Filtros</h3>
           <button className="rounded border border-input px-3 py-1 text-sm" disabled={datasets.length === 0} onClick={addFilter} type="button">
@@ -789,7 +809,7 @@ function PanelConfigFields({
         )}
       </section>
 
-      <section className="grid gap-3" id="modulos">
+      <section className={`grid gap-3 ${panelSectionHasErrors("modulos", fieldErrors) ? "rounded-md border border-destructive/30 p-3" : ""}`} id="modulos">
         <div className="flex items-center justify-between gap-3">
           <h3 className="text-sm font-medium">Módulos</h3>
           <button className="rounded border border-input px-3 py-1 text-sm" disabled={datasets.length === 0} onClick={addModule} type="button">
@@ -800,7 +820,10 @@ function PanelConfigFields({
           <span>KPI, gráficos, tablero, Gantt y texto: próximamente</span>
         </div>
         {modules.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No hay módulos configurados.</p>
+          <div className="grid gap-1">
+            <p className="text-sm text-muted-foreground">No hay módulos configurados.</p>
+            <FieldError errors={fieldErrors?.modules} />
+          </div>
         ) : (
           <div className="grid gap-3">
             {modules.map((module, index) => (
@@ -812,6 +835,7 @@ function PanelConfigFields({
                 layoutColumns={layoutColumns}
                 module={module}
                 modules={modules}
+                fieldErrors={fieldErrors}
                 setModules={setModules}
               />
             ))}
@@ -819,7 +843,7 @@ function PanelConfigFields({
         )}
       </section>
 
-      <section className="grid gap-3" id="diseno">
+      <section className={`grid gap-3 ${panelSectionHasErrors("diseno", fieldErrors) ? "rounded-md border border-destructive/30 p-3" : ""}`} id="diseno">
         <h3 className="text-sm font-medium">Diseño</h3>
         <div className="grid gap-3 sm:grid-cols-2">
           <NumberControl
@@ -837,6 +861,7 @@ function PanelConfigFields({
             value={layoutRowHeight}
           />
         </div>
+        <FieldError errors={fieldErrors?.layout} />
       </section>
         </div>
         <PanelPreview
@@ -854,6 +879,7 @@ function PanelDatasetEditor({
   dataset,
   datasets,
   entityTypes,
+  fieldErrors,
   filters,
   index,
   modules,
@@ -865,6 +891,7 @@ function PanelDatasetEditor({
   dataset: PanelEditorDataset;
   datasets: PanelEditorDataset[];
   entityTypes: AppViewEntityTypeOption[];
+  fieldErrors?: Record<string, string[]>;
   filters: PanelEditorFilter[];
   index: number;
   modules: PanelEditorModule[];
@@ -972,6 +999,7 @@ function PanelDatasetEditor({
               onChange={(relationFieldId) => updateDataset({ ...dataset, transformation: { ...transformation, relationFieldId } })}
               preferredType="RELATION"
               value={transformation.relationFieldId}
+              errors={fieldErrors?.panelDatasetRelation}
             />
             <FieldSelect
               disabled={!transformation.relationFieldId}
@@ -982,6 +1010,7 @@ function PanelDatasetEditor({
               onChange={(orderFieldId) => updateDataset({ ...dataset, transformation: { ...transformation, orderFieldId } })}
               preferredType="DATE"
               value={transformation.orderFieldId}
+              errors={fieldErrors?.panelDatasetOrder}
             />
             <FieldSelect
               disabled={!transformation.orderFieldId}
@@ -1006,6 +1035,7 @@ function PanelDatasetEditor({
         selected={transformation.fieldIds}
         setSelected={(fieldIds) => updateDataset({ ...dataset, transformation: { ...transformation, fieldIds } })}
       />
+      <FieldError errors={fieldErrors?.panelDatasetFields} />
       <div className="flex justify-end">
         <button className="rounded border border-input px-3 py-1 text-sm" onClick={() => setDatasets(datasets.filter((_, itemIndex) => itemIndex !== index))} type="button">
           Eliminar
@@ -1082,6 +1112,7 @@ function PanelModuleEditor({
   layoutColumns,
   module,
   modules,
+  fieldErrors,
   setModules,
 }: {
   datasets: PanelEditorDataset[];
@@ -1090,6 +1121,7 @@ function PanelModuleEditor({
   layoutColumns: number;
   module: PanelEditorModule;
   modules: PanelEditorModule[];
+  fieldErrors?: Record<string, string[]>;
   setModules: (value: PanelEditorModule[]) => void;
 }) {
   const dataset = datasets.find((item) => item.id === module.datasetId);
@@ -1169,6 +1201,7 @@ function PanelModuleEditor({
             </div>
           </div>
         ) : null}
+        <FieldError errors={fieldErrors?.panelModuleColumns} />
         <div className="grid gap-2">
           {datasetFields.map((field) => {
             const columnIndex = columns.findIndex((column) => column.fieldId === field.id);
@@ -1330,6 +1363,27 @@ function PanelPreview({
         </div>
       </div>
     </aside>
+  );
+}
+
+function PanelErrorSummary({ fieldErrors }: { fieldErrors?: Record<string, string[]> }) {
+  const items = panelErrorSummaryItems(fieldErrors);
+
+  if (items.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="grid gap-2 rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive" role="alert">
+      <p className="font-medium">Revisa la configuración del panel.</p>
+      <div className="flex flex-wrap gap-2">
+        {items.map((item) => (
+          <a className="rounded border border-destructive/30 bg-background px-2 py-1" href={`#${item.sectionId}`} key={`${item.sectionId}-${item.message}`}>
+            {item.label}: {item.message}
+          </a>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -2908,6 +2962,62 @@ function nextPanelId(prefix: string, existingIds: string[]) {
 
 function panelSectionId(label: string) {
   return label.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, "-");
+}
+
+function panelSectionHasErrors(sectionId: string, fieldErrors: Record<string, string[]> | undefined) {
+  if (!fieldErrors) {
+    return false;
+  }
+
+  return panelErrorSummaryItems(fieldErrors).some((item) => item.sectionId === sectionId);
+}
+
+function panelErrorSummaryItems(fieldErrors: Record<string, string[]> | undefined) {
+  if (!fieldErrors) {
+    return [];
+  }
+
+  return Object.entries(fieldErrors)
+    .filter(([key]) => key !== "form" && key !== "panelConfig")
+    .flatMap(([fieldName, messages]) => {
+      const sectionId = panelErrorSectionId(fieldName);
+
+      if (!sectionId) {
+        return [];
+      }
+
+      return messages.map((message) => ({
+        label: panelErrorSectionLabel(sectionId),
+        message,
+        sectionId,
+      }));
+    });
+}
+
+function panelErrorSectionId(fieldName: string) {
+  if (["datasets", "panelDatasetFields", "panelDatasetRelation", "panelDatasetOrder"].includes(fieldName)) {
+    return "fuentes-de-datos";
+  }
+  if (fieldName === "filters") {
+    return "filtros";
+  }
+  if (["modules", "panelModuleColumns"].includes(fieldName)) {
+    return "modulos";
+  }
+  if (fieldName === "layout") {
+    return "diseno";
+  }
+
+  return "";
+}
+
+function panelErrorSectionLabel(sectionId: string) {
+  if (sectionId === "fuentes-de-datos") return "Fuentes de datos";
+  if (sectionId === "filtros") return "Filtros";
+  if (sectionId === "modulos") return "Módulos";
+  if (sectionId === "diseno") return "Diseño";
+
+  return "Panel";
 }
 
 function replaceAt<T>(items: T[], index: number, value: T) {
