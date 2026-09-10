@@ -31,8 +31,10 @@ export default async function AppViewDetailPage({
 
   const { error, notice } = await searchParams;
 
+  const isPanel = data.appView.type === "PANEL";
+
   return (
-    <div className="grid max-w-3xl gap-6">
+    <div className={isPanel ? "grid w-full gap-6" : "grid max-w-3xl gap-6"}>
       <header className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold">{data.appView.name}</h1>
@@ -47,7 +49,7 @@ export default async function AppViewDetailPage({
 
       <ActionMessage error={error} notice={notice} />
 
-      <Card>
+      <Card className={isPanel ? "w-full" : undefined}>
         <CardHeader>
           <CardTitle>Datos de la experiencia</CardTitle>
         </CardHeader>

@@ -1936,6 +1936,50 @@ describe("PANEL AppView config", () => {
     ).rejects.toThrow();
   });
 
+  it("names the invalid TABLE column, dataset, and module in PANEL validation errors", async () => {
+    entityTypeFindFirst.mockResolvedValue(panelEntityType() as never);
+    entityTypeFindMany.mockResolvedValue([
+      panelEntityType() as never,
+      entityType({
+        fields: [
+          { id: "number_field", isActive: true, key: "numero", multiple: false, name: "Número", options: [], type: "INTEGER" },
+        ],
+        id: "procedures",
+        name: "Procedimientos",
+      }) as never,
+    ]);
+
+    await expect(
+      createAppView("contract_1", "user_1", panelInput(recordsPanelConfig({
+        datasets: [
+          {
+            id: "version-records",
+            name: "Versionado",
+            source: { type: "ENTITY", entityTypeId: "versions" },
+            transformation: {
+              type: "RECORDS",
+              fieldIds: ["status_field"],
+            },
+          },
+        ],
+        modules: [
+          {
+            id: "version-table",
+            title: "Tabla",
+            datasetId: "version-records",
+            visualization: {
+              type: "TABLE",
+              config: {
+                columns: [{ fieldId: "number_field" }],
+              },
+            },
+            layout: { x: 0, y: 0, w: 12, h: 6 },
+          },
+        ],
+      }))),
+    ).rejects.toThrow("La columna Número no pertenece al dataset Versionado en el módulo Tabla.");
+  });
+
   it("rejects manually submitted PANEL fields that do not belong to the configured entity", async () => {
     entityTypeFindFirst.mockResolvedValue(panelEntityType() as never);
 
@@ -2015,6 +2059,48 @@ describe("PANEL AppView config", () => {
         type: "PANEL",
       }),
     }));
+  });
+
+  it("serializes the Versionado latest-by-relation PANEL configuration as a valid PanelConfig", async () => {
+    const config = panelConfig();
+
+    entityTypeFindFirst
+      .mockResolvedValueOnce(panelEntityType() as never)
+      .mockResolvedValueOnce(entityType({ fields: [], id: "procedures", name: "Procedimientos" }) as never);
+
+    await createAppView("contract_1", "user_1", panelInput(config));
+
+    expect(appViewCreate.mock.calls[0]?.[0].data.config).toEqual(config);
+    expect(appViewCreate.mock.calls[0]?.[0].data.config).toMatchObject({
+      datasets: [
+        {
+          source: { type: "ENTITY", entityTypeId: "versions" },
+          transformation: {
+            type: "LATEST_BY_RELATION",
+            relatedEntityTypeId: "procedures",
+            relationFieldId: "procedure_field",
+            orderFieldId: "date_field",
+            requiredValueFieldId: "status_field",
+            fieldIds: ["procedure_field", "status_field", "revision_field", "date_field"],
+          },
+        },
+      ],
+      modules: [
+        {
+          visualization: {
+            type: "TABLE",
+            config: {
+              columns: [
+                { fieldId: "procedure_field" },
+                { fieldId: "status_field" },
+                { fieldId: "revision_field" },
+                { fieldId: "date_field", format: "DD-MM-YYYY" },
+              ],
+            },
+          },
+        },
+      ],
+    });
   });
 
   it("rejects PANEL relation fields that do not point to relatedEntityTypeId", async () => {

@@ -1,8 +1,15 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { AppViewForm } from "./app-view-form";
+import {
+  AppViewForm,
+  cleanPanelDatasetForEntity,
+  cleanPanelFiltersForEntity,
+  cleanPanelModulesForDatasets,
+  incompatiblePanelColumns,
+} from "./app-view-form";
 import type { AppViewActionState } from "./actions";
+import type { PanelConfig } from "@/lib/app-views";
 
 const entityTypes = [
   {
@@ -535,8 +542,333 @@ describe("AppViewForm", () => {
     expect(html).toContain('value="status_field" selected=""');
     expect(html).toContain('value="present_option" selected=""');
   });
+
+  it("renders PANEL in a full-width editor with separate configuration and preview areas", () => {
+    const html = renderToStaticMarkup(
+      <AppViewForm
+        action={noopAction}
+        entityTypes={panelEntityTypes()}
+        initialValues={panelInitialValues()}
+        submitLabel="Guardar experiencia"
+      />,
+    );
+
+    expect(html).toContain("grid w-full gap-4");
+    expect(html).toContain("Datos generales");
+    expect(html).toContain("Fuentes de datos");
+    expect(html).toContain("Filtros");
+    expect(html).toContain("Módulos");
+    expect(html).toContain("Diseño");
+    expect(html).toContain("Vista previa");
+    expect(html).toContain("Grilla de 12 columnas");
+    expect(html).toContain("Última versión por procedimiento");
+    expect(html).toContain("latest-procedure-status");
+    expect(html).toContain("TABLE");
+    expect(html).toContain("1. Procedimiento");
+    expect(html).toContain("2. Estatus");
+    expect(html).toContain("3. Revisión");
+    expect(html).toContain("4. Fecha");
+  });
+
+  it("keeps non-PANEL AppViews on the existing narrow form layout", () => {
+    const html = renderToStaticMarkup(
+      <AppViewForm
+        action={noopAction}
+        entityTypes={entityTypes}
+        submitLabel="Crear experiencia"
+      />,
+    );
+
+    expect(html).not.toContain("grid w-full gap-4");
+    expect(html).not.toContain("Vista previa");
+  });
+
+  it("shows an action to repair incompatible columns in an existing invalid PANEL config", () => {
+    const html = renderToStaticMarkup(
+      <AppViewForm
+        action={noopAction}
+        entityTypes={panelEntityTypes()}
+        initialValues={panelInitialValues({
+          datasets: [
+            {
+              id: "dataset-1",
+              name: "Versionado",
+              source: { type: "ENTITY", entityTypeId: "versions" },
+              transformation: {
+                type: "RECORDS",
+                fieldIds: ["procedure_field", "status_field"],
+                pagination: { pageSize: 25 },
+              },
+            },
+          ],
+          modules: [
+            {
+              id: "table-1",
+              title: "Tabla",
+              datasetId: "dataset-1",
+              visualization: {
+                type: "TABLE",
+                config: {
+                  columns: [
+                    { fieldId: "number_field" },
+                    { fieldId: "status_field" },
+                  ],
+                  searchable: true,
+                  paginated: true,
+                },
+              },
+              layout: { x: 0, y: 0, w: 12, h: 6 },
+            },
+          ],
+        })}
+        submitLabel="Guardar experiencia"
+      />,
+    );
+
+    expect(html).toContain("La columna Número no pertenece al dataset Versionado.");
+    expect(html).toContain("Quitar columnas incompatibles");
+    expect(html).not.toContain("number_field no pertenece");
+  });
+
+  it("cleans Procedimientos fields and table columns when the dataset entity changes to Versionado", () => {
+    const entities = panelEntityTypes();
+    const versionado = entities.find((entityType) => entityType.id === "versions");
+    const dataset = {
+      id: "dataset-1",
+      name: "Dataset",
+      source: { type: "ENTITY" as const, entityTypeId: "versions" },
+      transformation: {
+        type: "RECORDS" as const,
+        fieldIds: ["number_field", "status_field"],
+        pagination: { pageSize: 25 },
+      },
+    };
+    const cleanedDataset = cleanPanelDatasetForEntity(dataset, versionado, entities);
+    const cleanedModules = cleanPanelModulesForDatasets([
+      {
+        id: "table-1",
+        title: "Tabla",
+        datasetId: "dataset-1",
+        visualization: {
+          type: "TABLE",
+          config: {
+            columns: [{ fieldId: "number_field" }, { fieldId: "status_field" }],
+          },
+        },
+        layout: { x: 0, y: 0, w: 12, h: 6 },
+      },
+    ], [cleanedDataset]);
+
+    expect(cleanedDataset.transformation.fieldIds).toEqual(["status_field"]);
+    expect(cleanedModules[0]?.visualization.config.columns).toEqual([{ fieldId: "status_field" }]);
+  });
+
+  it("keeps fields that are still valid when the PANEL dataset entity changes", () => {
+    const entities = panelEntityTypes();
+    const versionado = entities.find((entityType) => entityType.id === "versions");
+    const cleaned = cleanPanelDatasetForEntity({
+      id: "dataset-1",
+      source: { type: "ENTITY", entityTypeId: "versions" },
+      transformation: {
+        type: "RECORDS",
+        fieldIds: ["status_field", "missing_field", "date_field"],
+      },
+    }, versionado, entities);
+
+    expect(cleaned.transformation.fieldIds).toEqual(["status_field", "date_field"]);
+  });
+
+  it("cleans incompatible transformation properties when switching PANEL transformation modes", () => {
+    const latestConfig = panelInitialValues().config;
+    const dataset = latestConfig.type === "PANEL" ? latestConfig.datasets[0] : undefined;
+    expect(dataset?.transformation.type).toBe("LATEST_BY_RELATION");
+
+    const recordsDataset = {
+      ...dataset!,
+      transformation: {
+        type: "RECORDS" as const,
+        fieldIds: dataset!.transformation.fieldIds,
+        pagination: dataset!.transformation.pagination,
+      },
+    };
+
+    expect(recordsDataset.transformation).not.toHaveProperty("relationFieldId");
+    expect(recordsDataset.transformation).not.toHaveProperty("orderFieldId");
+
+    const latestDataset = {
+      ...recordsDataset,
+      transformation: {
+        type: "LATEST_BY_RELATION" as const,
+        relatedEntityTypeId: "procedures",
+        relationFieldId: "",
+        orderFieldId: "",
+        requiredValueFieldId: undefined,
+        fieldIds: recordsDataset.transformation.fieldIds,
+        pagination: recordsDataset.transformation.pagination,
+      },
+    };
+
+    expect(latestDataset.transformation).not.toHaveProperty("sort");
+    expect(latestDataset.transformation).not.toHaveProperty("filters");
+  });
+
+  it("cleans invalid table columns when a TABLE module changes datasets", () => {
+    const datasets = [
+      {
+        id: "procedures-records",
+        source: { type: "ENTITY" as const, entityTypeId: "procedures" },
+        transformation: { type: "RECORDS" as const, fieldIds: ["number_field"] },
+      },
+      {
+        id: "version-records",
+        source: { type: "ENTITY" as const, entityTypeId: "versions" },
+        transformation: { type: "RECORDS" as const, fieldIds: ["status_field", "date_field"] },
+      },
+    ];
+    const panelModule = {
+      id: "table-1",
+      datasetId: "version-records",
+      visualization: {
+        type: "TABLE" as const,
+        config: {
+          columns: [{ fieldId: "number_field" }, { fieldId: "date_field" }],
+        },
+      },
+      layout: { x: 0, y: 0, w: 12, h: 6 },
+    };
+
+    expect(cleanPanelModulesForDatasets([panelModule], datasets)[0]?.visualization.config.columns).toEqual([
+      { fieldId: "date_field" },
+    ]);
+  });
+
+  it("reports incompatible columns for a module so the UI can repair legacy configs", () => {
+    const datasets = [{
+      id: "version-records",
+      source: { type: "ENTITY" as const, entityTypeId: "versions" },
+      transformation: { type: "RECORDS" as const, fieldIds: ["status_field"] },
+    }];
+    const panelModule = {
+      id: "table-1",
+      datasetId: "version-records",
+      visualization: {
+        type: "TABLE" as const,
+        config: {
+          columns: [{ fieldId: "number_field" }, { fieldId: "status_field" }],
+        },
+      },
+      layout: { x: 0, y: 0, w: 12, h: 6 },
+    };
+
+    expect(incompatiblePanelColumns(panelModule, datasets)).toEqual([{ fieldId: "number_field" }]);
+  });
+
+  it("cleans filter bindings when the target field is not available in the new PANEL entity", () => {
+    const versionado = panelEntityTypes().find((entityType) => entityType.id === "versions");
+
+    expect(cleanPanelFiltersForEntity([
+      { id: "filter-1", label: "Filtro", valueType: "NUMBER", fieldId: "number_field", operator: "EQ" },
+      { id: "filter-2", label: "Estado", valueType: "OPTION", fieldId: "status_field", operator: "EQ" },
+    ], versionado)).toEqual([
+      { id: "filter-1", label: "Filtro", valueType: "TEXT", fieldId: undefined, operator: undefined },
+      { id: "filter-2", label: "Estado", valueType: "OPTION", fieldId: "status_field", operator: "EQ" },
+    ]);
+  });
 });
 
 async function noopAction(state: AppViewActionState) {
   return state;
+}
+
+function panelInitialValues(overrides: Partial<PanelConfig> = {}) {
+  return {
+    active: true,
+    config: panelConfigFixture(overrides),
+    icon: "folder",
+    name: "Panel Procedimientos",
+    slug: "panel-procedimientos",
+    sortOrder: 1,
+    type: "PANEL" as const,
+  };
+}
+
+function panelConfigFixture(overrides: Partial<PanelConfig> = {}): PanelConfig {
+  return {
+    type: "PANEL" as const,
+    schemaVersion: 1 as const,
+    layout: { columns: 12, rowHeight: 8 },
+    filters: [],
+    datasets: [
+      {
+        id: "latest-procedure-status",
+        name: "Versionado",
+        source: { type: "ENTITY" as const, entityTypeId: "versions" },
+        transformation: {
+          type: "LATEST_BY_RELATION" as const,
+          relatedEntityTypeId: "procedures",
+          relationFieldId: "procedure_field",
+          orderFieldId: "date_field",
+          requiredValueFieldId: "status_field",
+          fieldIds: ["procedure_field", "status_field", "revision_field", "date_field"],
+          pagination: { pageSize: 25 },
+        },
+      },
+    ],
+    modules: [
+      {
+        id: "latest-procedure-status-table",
+        title: "Última versión por procedimiento",
+        datasetId: "latest-procedure-status",
+        visualization: {
+          type: "TABLE" as const,
+          config: {
+            columns: [
+              { fieldId: "procedure_field" },
+              { fieldId: "status_field", valueDisplay: "LABEL" as const },
+              { fieldId: "revision_field" },
+              { fieldId: "date_field", format: "DD-MM-YYYY" },
+            ],
+            searchable: true,
+            paginated: true,
+          },
+        },
+        layout: { x: 0, y: 0, w: 12, h: 6 },
+      },
+    ],
+    metrics: [],
+    calculatedFields: [],
+    ...overrides,
+  };
+}
+
+function panelEntityTypes() {
+  return [
+    {
+      fields: [
+        { id: "number_field", isActive: true, key: "numero", name: "Número", options: [], type: "INTEGER" },
+      ],
+      icon: "folder",
+      id: "procedures",
+      name: "Procedimientos",
+    },
+    {
+      fields: [
+        {
+          config: { relationKind: "ONE", targetEntityTypeId: "procedures" },
+          id: "procedure_field",
+          isActive: true,
+          key: "procedimiento",
+          name: "Procedimiento",
+          options: [],
+          type: "RELATION",
+        },
+        { id: "status_field", isActive: true, key: "estatus", name: "Estatus", options: [{ id: "e1", isActive: true, label: "E1", value: "e1" }], type: "SELECT" },
+        { id: "revision_field", isActive: true, key: "revision", name: "Revisión", options: [], type: "TEXT" },
+        { id: "date_field", isActive: true, key: "fecha", name: "Fecha", options: [], type: "DATE" },
+      ],
+      icon: "clipboard-check",
+      id: "versions",
+      name: "Versionado",
+    },
+  ];
 }

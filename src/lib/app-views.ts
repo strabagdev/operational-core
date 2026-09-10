@@ -1500,11 +1500,18 @@ async function validatePanelAppViewConfig({
 }) {
   const filtersById = new Map(config.filters.map((filter) => [filter.id, filter]));
   const datasetFieldIdsById = new Map<string, Set<string>>();
+  const datasetNamesById = new Map<string, string>();
+  const fieldNamesById = new Map<string, string>();
 
   for (const dataset of config.datasets) {
     const entityType = await requireEntityType(client, contractId, dataset.source.entityTypeId);
     const fields = entityType.fields;
     const fieldIds = dataset.transformation.fieldIds;
+
+    datasetNamesById.set(dataset.id, dataset.name ?? entityType.name);
+    for (const field of fields) {
+      fieldNamesById.set(field.id, field.name);
+    }
 
     requireUniqueConfigIds(fieldIds, "No repitas campos en el dataset.", "datasets");
 
@@ -1562,6 +1569,30 @@ async function validatePanelAppViewConfig({
     datasetFieldIdsById.set(dataset.id, new Set(fieldIds));
   }
 
+  const unresolvedColumnFieldIds = config.modules
+    .flatMap((module) => module.visualization.config.columns.map((column) => column.fieldId))
+    .filter((fieldId) => !fieldNamesById.has(fieldId));
+
+  if (unresolvedColumnFieldIds.length > 0) {
+    const entityTypes = await client.entityType.findMany({
+      include: {
+        fields: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+      },
+      where: { contractId },
+    });
+
+    for (const entityType of entityTypes) {
+      for (const field of entityType.fields) {
+        fieldNamesById.set(field.id, field.name);
+      }
+    }
+  }
+
   for (const panelModule of config.modules) {
     const datasetFieldIds = datasetFieldIdsById.get(panelModule.datasetId);
 
@@ -1571,7 +1602,14 @@ async function validatePanelAppViewConfig({
 
     for (const column of panelModule.visualization.config.columns) {
       if (!datasetFieldIds.has(column.fieldId)) {
-        throw new AppViewConfigError("Cada columna TABLE debe existir en el schema del dataset.", "modules");
+        const moduleName = panelModule.title ?? panelModule.id;
+        const columnName = column.label ?? fieldNamesById.get(column.fieldId) ?? column.fieldId;
+        const datasetName = datasetNamesById.get(panelModule.datasetId) ?? panelModule.datasetId;
+
+        throw new AppViewConfigError(
+          `La columna ${columnName} no pertenece al dataset ${datasetName} en el módulo ${moduleName}.`,
+          "modules",
+        );
       }
     }
   }

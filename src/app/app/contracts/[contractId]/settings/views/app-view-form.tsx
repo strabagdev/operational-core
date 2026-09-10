@@ -388,6 +388,7 @@ export function AppViewForm({
   const [panelLayoutRowHeight, setPanelLayoutRowHeight] = useState(
     initialPanelConfig?.layout.rowHeight ?? 8,
   );
+  const [panelNotice, setPanelNotice] = useState("");
   const panelConfig = buildPanelConfig({
     baseConfig: initialPanelConfig,
     datasets: panelDatasets,
@@ -409,75 +410,90 @@ export function AppViewForm({
   }
 
   return (
-    <form action={formAction} className="grid gap-4">
+    <form action={formAction} className={type === "PANEL" ? "grid w-full gap-4" : "grid gap-4"}>
       <ActionErrorSummary state={state} />
-      <label className="grid gap-2 text-sm font-medium">
-        Nombre
-        <input
-          className="h-10 rounded-md border border-input bg-background px-3 text-sm outline-none ring-ring focus-visible:ring-2"
-          name="name"
-          onChange={(event) => {
-            const nextName = event.target.value;
-            setName(nextName);
-
-            if (!slugTouched) {
-              setSlug(suggestedAppViewSlug(nextName));
-            }
-          }}
-          required
-          value={name}
-        />
-        <FieldError errors={state.fieldErrors?.name} />
-      </label>
-
-      <label className="grid gap-2 text-sm font-medium">
-        Slug
-        <input
-          className="h-10 rounded-md border border-input bg-background px-3 text-sm outline-none ring-ring focus-visible:ring-2"
-          name="slug"
-          onChange={(event) => {
-            setSlugTouched(true);
-            setSlug(suggestedAppViewSlug(event.target.value));
-          }}
-          required
-          value={slug}
-        />
-        <FieldError errors={state.fieldErrors?.slug} />
-      </label>
-
-      <label className="grid gap-2 text-sm font-medium">
-        Icono opcional
-        <select
-          className="h-10 rounded-md border border-input bg-background px-3 text-sm font-normal outline-none ring-ring focus-visible:ring-2"
-          defaultValue={valueFromState(state, "icon", initialValues?.icon ?? "")}
-          name="icon"
-        >
-          <option value="">Sin icono</option>
-          {entityIconOptions.map((option) => (
-            <option key={option.key} value={option.key}>
-              {option.label}
-            </option>
+      {type === "PANEL" ? (
+        <nav className="flex flex-wrap gap-2 rounded-md border border-border bg-muted/40 p-2 text-sm" aria-label="Navegación del editor PANEL">
+          {["Datos generales", "Fuentes de datos", "Filtros", "Módulos", "Diseño"].map((item) => (
+            <a className="rounded border border-input bg-background px-3 py-1" href={`#${panelSectionId(item)}`} key={item}>
+              {item}
+            </a>
           ))}
-        </select>
-        <FieldError errors={state.fieldErrors?.icon} />
-      </label>
+        </nav>
+      ) : null}
 
-      <label className="grid gap-2 text-sm font-medium">
-        Tipo
-        <select
-          className="h-10 rounded-md border border-input bg-background px-3 text-sm font-normal outline-none ring-ring focus-visible:ring-2"
-          name="type"
-          onChange={(event) => setType(event.target.value as AppViewType)}
-          value={type}
-        >
-          {appViewTypeOptions.map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label}
-            </option>
-          ))}
-        </select>
-        <FieldError errors={state.fieldErrors?.type} />
-      </label>
+      <section className={type === "PANEL" ? "grid gap-3 rounded-md border border-border p-3" : "contents"} id="datos-generales">
+        {type === "PANEL" ? <h3 className="text-sm font-medium">Datos generales</h3> : null}
+        <div className={type === "PANEL" ? "grid gap-3 md:grid-cols-2 xl:grid-cols-4" : "grid gap-4"}>
+          <label className="grid gap-2 text-sm font-medium">
+            Nombre
+            <input
+              className="h-10 rounded-md border border-input bg-background px-3 text-sm outline-none ring-ring focus-visible:ring-2"
+              name="name"
+              onChange={(event) => {
+                const nextName = event.target.value;
+                setName(nextName);
+
+                if (!slugTouched) {
+                  setSlug(suggestedAppViewSlug(nextName));
+                }
+              }}
+              required
+              value={name}
+            />
+            <FieldError errors={state.fieldErrors?.name} />
+          </label>
+
+          <label className="grid gap-2 text-sm font-medium">
+            Slug
+            <input
+              className="h-10 rounded-md border border-input bg-background px-3 text-sm outline-none ring-ring focus-visible:ring-2"
+              name="slug"
+              onChange={(event) => {
+                setSlugTouched(true);
+                setSlug(suggestedAppViewSlug(event.target.value));
+              }}
+              required
+              value={slug}
+            />
+            <FieldError errors={state.fieldErrors?.slug} />
+          </label>
+
+          <label className="grid gap-2 text-sm font-medium">
+            Icono opcional
+            <select
+              className="h-10 rounded-md border border-input bg-background px-3 text-sm font-normal outline-none ring-ring focus-visible:ring-2"
+              defaultValue={valueFromState(state, "icon", initialValues?.icon ?? "")}
+              name="icon"
+            >
+              <option value="">Sin icono</option>
+              {entityIconOptions.map((option) => (
+                <option key={option.key} value={option.key}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            <FieldError errors={state.fieldErrors?.icon} />
+          </label>
+
+          <label className="grid gap-2 text-sm font-medium">
+            Tipo
+            <select
+              className="h-10 rounded-md border border-input bg-background px-3 text-sm font-normal outline-none ring-ring focus-visible:ring-2"
+              name="type"
+              onChange={(event) => setType(event.target.value as AppViewType)}
+              value={type}
+            >
+              {appViewTypeOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            <FieldError errors={state.fieldErrors?.type} />
+          </label>
+        </div>
+      </section>
 
       {type === "PANEL" ? (
         <PanelConfigFields
@@ -489,11 +505,13 @@ export function AppViewForm({
           layoutColumns={panelLayoutColumns}
           layoutRowHeight={panelLayoutRowHeight}
           modules={panelModules}
+          notice={panelNotice}
           setDatasets={setPanelDatasets}
           setFilters={setPanelFilters}
           setLayoutColumns={setPanelLayoutColumns}
           setLayoutRowHeight={setPanelLayoutRowHeight}
           setModules={setPanelModules}
+          setNotice={setPanelNotice}
         />
       ) : (
         <ConfigFields
@@ -601,9 +619,11 @@ export function AppViewForm({
         </label>
       </div>
 
-      <Button disabled={actionPending} type="submit">
-        {actionPending ? "Guardando..." : submitLabel}
-      </Button>
+      <div className="sticky bottom-0 z-10 flex justify-end border-t border-border bg-background/95 py-3">
+        <Button disabled={actionPending} type="submit">
+          {actionPending ? "Guardando..." : submitLabel}
+        </Button>
+      </div>
     </form>
   );
 }
@@ -617,11 +637,13 @@ function PanelConfigFields({
   layoutColumns,
   layoutRowHeight,
   modules,
+  notice,
   setDatasets,
   setFilters,
   setLayoutColumns,
   setLayoutRowHeight,
   setModules,
+  setNotice,
 }: {
   config: PanelConfig;
   datasets: PanelEditorDataset[];
@@ -631,11 +653,13 @@ function PanelConfigFields({
   layoutColumns: number;
   layoutRowHeight: number;
   modules: PanelEditorModule[];
+  notice: string;
   setDatasets: (value: PanelEditorDataset[]) => void;
   setFilters: (value: PanelEditorFilter[]) => void;
   setLayoutColumns: (value: number) => void;
   setLayoutRowHeight: (value: number) => void;
   setModules: (value: PanelEditorModule[]) => void;
+  setNotice: (value: string) => void;
 }) {
   const addDataset = () => {
     const entityType = entityTypes[0];
@@ -701,8 +725,15 @@ function PanelConfigFields({
       <legend className="px-1 text-sm font-medium">Configuración del panel</legend>
       <input name="panelConfig" type="hidden" value={JSON.stringify(panelConfigFormValue(config))} />
       <FieldError errors={fieldErrors?.panelConfig ?? fieldErrors?.datasets ?? fieldErrors?.modules ?? fieldErrors?.filters} />
+      {notice ? (
+        <p className="rounded-md border border-border bg-muted px-3 py-2 text-sm text-muted-foreground" role="status">
+          {notice}
+        </p>
+      ) : null}
 
-      <section className="grid gap-3">
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,3fr)_minmax(320px,2fr)]">
+        <div className="grid min-w-0 gap-4">
+      <section className="grid gap-3" id="fuentes-de-datos">
         <div className="flex items-center justify-between gap-3">
           <h3 className="text-sm font-medium">Fuentes de datos</h3>
           <button className="rounded border border-input px-3 py-1 text-sm" onClick={addDataset} type="button">
@@ -720,14 +751,19 @@ function PanelConfigFields({
                 entityTypes={entityTypes}
                 index={index}
                 key={dataset.id}
+                filters={filters}
+                modules={modules}
                 setDatasets={setDatasets}
+                setFilters={setFilters}
+                setModules={setModules}
+                setNotice={setNotice}
               />
             ))}
           </div>
         )}
       </section>
 
-      <section className="grid gap-3">
+      <section className="grid gap-3" id="filtros">
         <div className="flex items-center justify-between gap-3">
           <h3 className="text-sm font-medium">Filtros</h3>
           <button className="rounded border border-input px-3 py-1 text-sm" disabled={datasets.length === 0} onClick={addFilter} type="button">
@@ -753,7 +789,7 @@ function PanelConfigFields({
         )}
       </section>
 
-      <section className="grid gap-3">
+      <section className="grid gap-3" id="modulos">
         <div className="flex items-center justify-between gap-3">
           <h3 className="text-sm font-medium">Módulos</h3>
           <button className="rounded border border-input px-3 py-1 text-sm" disabled={datasets.length === 0} onClick={addModule} type="button">
@@ -783,7 +819,7 @@ function PanelConfigFields({
         )}
       </section>
 
-      <section className="grid gap-3">
+      <section className="grid gap-3" id="diseno">
         <h3 className="text-sm font-medium">Diseño</h3>
         <div className="grid gap-3 sm:grid-cols-2">
           <NumberControl
@@ -801,17 +837,15 @@ function PanelConfigFields({
             value={layoutRowHeight}
           />
         </div>
-        <div className="grid gap-2 rounded-md border border-border p-3">
-          <p className="text-sm font-medium">Vista previa</p>
-          <div className="grid gap-2">
-            {modules.map((module, index) => (
-              <div className="rounded border border-border px-3 py-2 text-sm" key={module.id}>
-                {index + 1}. {module.title || module.id} · columnas {module.layout.w} · dataset {module.datasetId || "sin dataset"}
-              </div>
-            ))}
-          </div>
-        </div>
       </section>
+        </div>
+        <PanelPreview
+          datasets={datasets}
+          entityTypes={entityTypes}
+          layoutColumns={layoutColumns}
+          modules={modules}
+        />
+      </div>
     </fieldset>
   );
 }
@@ -820,14 +854,24 @@ function PanelDatasetEditor({
   dataset,
   datasets,
   entityTypes,
+  filters,
   index,
+  modules,
   setDatasets,
+  setFilters,
+  setModules,
+  setNotice,
 }: {
   dataset: PanelEditorDataset;
   datasets: PanelEditorDataset[];
   entityTypes: AppViewEntityTypeOption[];
+  filters: PanelEditorFilter[];
   index: number;
+  modules: PanelEditorModule[];
   setDatasets: (value: PanelEditorDataset[]) => void;
+  setFilters: (value: PanelEditorFilter[]) => void;
+  setModules: (value: PanelEditorModule[]) => void;
+  setNotice: (value: string) => void;
 }) {
   const entityType = entityTypes.find((item) => item.id === dataset.source.entityTypeId);
   const activeFields = entityType?.fields.filter((field) => field.isActive) ?? [];
@@ -848,28 +892,21 @@ function PanelDatasetEditor({
           value={dataset.id}
         />
         <EntitySelect
-          label="Entidad de origen"
+          helpText="Entidad que contiene los registros históricos o transaccionales."
+          label="Entidad con el historial o movimientos"
           name={`panelDatasetEntity:${dataset.id}`}
           onChange={(entityTypeId) => {
             const nextEntity = entityTypes.find((item) => item.id === entityTypeId);
-            const nextFieldIds = transformation.fieldIds.filter((fieldId) =>
-              nextEntity?.fields.some((field) => field.id === fieldId && field.isActive),
-            );
-
-            updateDataset({
+            const nextDataset = cleanPanelDatasetForEntity({
               ...dataset,
               source: { type: "ENTITY", entityTypeId },
-              transformation: transformation.type === "LATEST_BY_RELATION"
-                ? {
-                    ...transformation,
-                    relatedEntityTypeId: relationTargetEntityTypeIds(nextEntity)[0] ?? "",
-                    relationFieldId: "",
-                    orderFieldId: "",
-                    requiredValueFieldId: undefined,
-                    fieldIds: nextFieldIds,
-                  }
-                : { ...transformation, fieldIds: nextFieldIds },
-            });
+            }, nextEntity, entityTypes);
+            const nextDatasets = replaceAt(datasets, index, nextDataset);
+
+            setDatasets(nextDatasets);
+            setFilters(cleanPanelFiltersForEntity(filters, nextEntity));
+            setModules(cleanPanelModulesForDatasets(modules, nextDatasets));
+            setNotice("Actualizamos los campos porque cambiaste la entidad.");
           }}
           options={entityTypes}
           value={dataset.source.entityTypeId}
@@ -878,7 +915,7 @@ function PanelDatasetEditor({
           label="Transformación"
           name={`panelDatasetTransformation:${dataset.id}`}
           onChange={(value) => {
-            updateDataset({
+            const nextDataset: PanelEditorDataset = {
               ...dataset,
               transformation: value === "LATEST_BY_RELATION"
                 ? {
@@ -886,6 +923,7 @@ function PanelDatasetEditor({
                     relatedEntityTypeId: relationTargetEntityTypeIds(entityType)[0] ?? "",
                     relationFieldId: "",
                     orderFieldId: "",
+                    requiredValueFieldId: undefined,
                     fieldIds: transformation.fieldIds,
                     pagination: transformation.pagination,
                   }
@@ -894,7 +932,11 @@ function PanelDatasetEditor({
                     fieldIds: transformation.fieldIds,
                     pagination: transformation.pagination,
                   },
-            });
+            };
+            const nextDatasets = replaceAt(datasets, index, nextDataset);
+
+            setDatasets(nextDatasets);
+            setModules(cleanPanelModulesForDatasets(modules, nextDatasets));
           }}
           options={[
             { label: "Registros", value: "RECORDS" },
@@ -904,7 +946,7 @@ function PanelDatasetEditor({
         />
       </div>
       {transformation.type === "LATEST_BY_RELATION" ? (
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid gap-3">
           <EntitySelect
             label="Entidad relacionada"
             name={`panelDatasetRelatedEntity:${dataset.id}`}
@@ -919,40 +961,47 @@ function PanelDatasetEditor({
             options={entityTypes}
             value={transformation.relatedEntityTypeId}
           />
-          <FieldSelect
-            allowedTypes={["RELATION"]}
-            fields={relationFieldsTargeting(entityType, transformation.relatedEntityTypeId)}
-            label="Campo relacionado"
-            name={`panelDatasetRelation:${dataset.id}`}
-            onChange={(relationFieldId) => updateDataset({ ...dataset, transformation: { ...transformation, relationFieldId } })}
-            preferredType="RELATION"
-            value={transformation.relationFieldId}
-          />
-          <FieldSelect
-            fields={activeFields.filter((field) => reportSortableFieldTypes.has(field.type))}
-            label="Ordenar por"
-            name={`panelDatasetOrder:${dataset.id}`}
-            onChange={(orderFieldId) => updateDataset({ ...dataset, transformation: { ...transformation, orderFieldId } })}
-            preferredType="DATE"
-            value={transformation.orderFieldId}
-          />
-          <FieldSelect
-            fields={activeFields}
-            includeEmpty
-            label="Campo con valor obligatorio"
-            name={`panelDatasetRequired:${dataset.id}`}
-            onChange={(requiredValueFieldId) => updateDataset({
-              ...dataset,
-              transformation: { ...transformation, requiredValueFieldId: requiredValueFieldId || undefined },
-            })}
-            preferredType="SELECT"
-            value={transformation.requiredValueFieldId ?? ""}
-          />
+          <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
+            <FieldSelect
+              allowedTypes={["RELATION"]}
+              disabled={!transformation.relatedEntityTypeId}
+              fields={relationFieldsTargeting(entityType, transformation.relatedEntityTypeId)}
+              helpText="Campo que identifica el elemento del cual se mostrará el último registro."
+              label="Campo que relaciona cada movimiento"
+              name={`panelDatasetRelation:${dataset.id}`}
+              onChange={(relationFieldId) => updateDataset({ ...dataset, transformation: { ...transformation, relationFieldId } })}
+              preferredType="RELATION"
+              value={transformation.relationFieldId}
+            />
+            <FieldSelect
+              disabled={!transformation.relationFieldId}
+              fields={activeFields.filter((field) => reportSortableFieldTypes.has(field.type))}
+              helpText="Campo usado para determinar cuál registro es el más reciente."
+              label="Campo que determina cuál es el último"
+              name={`panelDatasetOrder:${dataset.id}`}
+              onChange={(orderFieldId) => updateDataset({ ...dataset, transformation: { ...transformation, orderFieldId } })}
+              preferredType="DATE"
+              value={transformation.orderFieldId}
+            />
+            <FieldSelect
+              disabled={!transformation.orderFieldId}
+              fields={activeFields}
+              includeEmpty
+              label="Campo que debe tener valor, opcional"
+              name={`panelDatasetRequired:${dataset.id}`}
+              onChange={(requiredValueFieldId) => updateDataset({
+                ...dataset,
+                transformation: { ...transformation, requiredValueFieldId: requiredValueFieldId || undefined },
+              })}
+              preferredType="SELECT"
+              value={transformation.requiredValueFieldId ?? ""}
+            />
+          </div>
         </div>
       ) : null}
       <OrderedFieldChecklist
         fields={activeFields}
-        label={transformation.type === "RECORDS" ? "Campos seleccionados" : "Campos requeridos para la salida"}
+        label="Campos disponibles para mostrar"
         name={`panelDatasetFields:${dataset.id}`}
         selected={transformation.fieldIds}
         setSelected={(fieldIds) => updateDataset({ ...dataset, transformation: { ...transformation, fieldIds } })}
@@ -1047,10 +1096,12 @@ function PanelModuleEditor({
   const datasetFieldIds = dataset?.transformation.fieldIds ?? [];
   const entityType = entityTypes.find((item) => item.id === dataset?.source.entityTypeId);
   const fieldsById = new Map((entityType?.fields ?? []).map((field) => [field.id, field]));
+  const fieldSourcesById = panelFieldSourcesById(entityTypes);
   const datasetFields = datasetFieldIds
     .map((fieldId) => fieldsById.get(fieldId))
     .filter((field): field is AppViewEntityTypeOption["fields"][number] => Boolean(field));
   const columns = module.visualization.config.columns;
+  const incompatibleColumns = incompatiblePanelColumns(module, datasets);
   const updateModule = (next: PanelEditorModule) => setModules(replaceAt(modules, index, next));
   const updateColumns = (nextColumns: PanelModule["visualization"]["config"]["columns"]) => updateModule({
     ...module,
@@ -1071,7 +1122,15 @@ function PanelModuleEditor({
           onChange={(datasetId) => updateModule({
             ...module,
             datasetId,
-            visualization: { type: "TABLE", config: { ...module.visualization.config, columns: [] } },
+            visualization: {
+              type: "TABLE",
+              config: {
+                ...module.visualization.config,
+                columns: module.visualization.config.columns.filter((column) =>
+                  datasetFieldIdsForDataset(datasets.find((item) => item.id === datasetId)).includes(column.fieldId),
+                ),
+              },
+            },
           })}
           options={[{ label: "Selecciona un dataset", value: "" }, ...datasets.map((item) => ({ label: item.name || item.id, value: item.id }))]}
           value={module.datasetId}
@@ -1085,7 +1144,31 @@ function PanelModuleEditor({
         />
       </div>
       <fieldset className="grid gap-2 rounded-md border border-border p-3">
-        <legend className="px-1 text-sm font-medium">Columnas visibles</legend>
+        <legend className="px-1 text-sm font-medium">Columnas y diseño</legend>
+        {incompatibleColumns.length > 0 ? (
+          <div className="grid gap-2 rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm">
+            {incompatibleColumns.map((column) => {
+              const source = fieldSourcesById.get(column.fieldId);
+              const columnName = source?.field.name ?? column.fieldId;
+              const datasetName = entityType?.name ?? dataset?.name ?? module.datasetId;
+
+              return (
+                <p className="text-destructive" key={column.fieldId}>
+                  La columna {columnName} no pertenece al dataset {datasetName}.
+                </p>
+              );
+            })}
+            <div>
+              <button
+                className="rounded border border-input bg-background px-3 py-1 text-sm"
+                onClick={() => updateColumns(columns.filter((column) => datasetFieldIds.includes(column.fieldId)))}
+                type="button"
+              >
+                Quitar columnas incompatibles
+              </button>
+            </div>
+          </div>
+        ) : null}
         <div className="grid gap-2">
           {datasetFields.map((field) => {
             const columnIndex = columns.findIndex((column) => column.fieldId === field.id);
@@ -1109,6 +1192,11 @@ function PanelModuleEditor({
                       type="checkbox"
                     />
                     <span className="truncate">{field.name}</span>
+                    {fieldSourcesById.get(field.id)?.entity.name ? (
+                      <span className="shrink-0 text-xs text-muted-foreground">
+                        {fieldSourcesById.get(field.id)?.entity.name}
+                      </span>
+                    ) : null}
                   </label>
                   {isSelected ? (
                     <div className="flex shrink-0 gap-1">
@@ -1171,6 +1259,77 @@ function PanelModuleEditor({
         </button>
       </div>
     </div>
+  );
+}
+
+function PanelPreview({
+  datasets,
+  entityTypes,
+  layoutColumns,
+  modules,
+}: {
+  datasets: PanelEditorDataset[];
+  entityTypes: AppViewEntityTypeOption[];
+  layoutColumns: number;
+  modules: PanelEditorModule[];
+}) {
+  const fieldSourcesById = panelFieldSourcesById(entityTypes);
+
+  return (
+    <aside className="min-w-0" id="vista-previa-panel">
+      <div className="sticky top-4 grid max-h-[calc(100vh-2rem)] gap-3 overflow-auto rounded-md border border-border p-3">
+        <div>
+          <h3 className="text-sm font-medium">Vista previa</h3>
+          <p className="text-xs text-muted-foreground">Grilla de 12 columnas</p>
+        </div>
+        <div className="grid grid-cols-12 gap-2 rounded-md border border-dashed border-border p-2">
+          {modules.length === 0 ? (
+            <p className="col-span-12 text-sm text-muted-foreground">No hay módulos configurados.</p>
+          ) : modules.map((module) => {
+            const dataset = datasets.find((item) => item.id === module.datasetId);
+            const datasetName = dataset?.name || dataset?.id || "sin dataset";
+            const entityType = entityTypes.find((item) => item.id === dataset?.source.entityTypeId);
+            const warnings = incompatiblePanelColumns(module, datasets);
+            const columnNames = module.visualization.config.columns.map((column) =>
+              fieldSourcesById.get(column.fieldId)?.field.name ?? column.fieldId,
+            );
+
+            return (
+              <div
+                className="grid min-w-0 gap-2 rounded-md border border-border bg-background p-3 text-sm"
+                key={module.id}
+                style={{ gridColumn: `span ${Math.min(Math.max(module.layout.w, 1), layoutColumns || 12)} / span ${Math.min(Math.max(module.layout.w, 1), layoutColumns || 12)}` }}
+              >
+                <div className="min-w-0">
+                  <p className="truncate font-medium">{module.title || module.id}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {datasetName} · TABLE · x{module.layout.x} y{module.layout.y} · {module.layout.w}x{module.layout.h}
+                  </p>
+                  {entityType ? <p className="text-xs text-muted-foreground">{entityType.name}</p> : null}
+                </div>
+                <ol className="grid gap-1 text-xs">
+                  {columnNames.length === 0 ? (
+                    <li className="text-muted-foreground">Sin columnas</li>
+                  ) : columnNames.map((name, index) => (
+                    <li className="truncate" key={`${name}-${index}`}>{index + 1}. {name}</li>
+                  ))}
+                </ol>
+                {warnings.length > 0 ? (
+                  <div className="grid gap-1 rounded border border-destructive/30 bg-destructive/10 p-2 text-xs text-destructive">
+                    {warnings.map((column) => {
+                      const columnName = fieldSourcesById.get(column.fieldId)?.field.name ?? column.fieldId;
+                      const targetName = entityType?.name ?? datasetName;
+
+                      return <span key={column.fieldId}>La columna {columnName} no pertenece al dataset {targetName}.</span>;
+                    })}
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </aside>
   );
 }
 
@@ -2032,6 +2191,7 @@ function NumberControl({
 
 function FieldSelect({
   allowedTypes,
+  disabled = false,
   errors,
   fields,
   helpText,
@@ -2043,6 +2203,7 @@ function FieldSelect({
   value,
 }: {
   allowedTypes?: string[];
+  disabled?: boolean;
   errors?: string[];
   fields: AppViewEntityTypeOption["fields"];
   helpText?: string;
@@ -2062,6 +2223,7 @@ function FieldSelect({
       {label}
       <select
         className="h-10 rounded-md border border-input bg-background px-3 text-sm font-normal outline-none ring-ring focus-visible:ring-2"
+        disabled={disabled}
         name={name}
         onChange={(event) => onChange(event.target.value)}
         required={!includeEmpty}
@@ -2120,12 +2282,14 @@ function OptionSelect({
 }
 
 function SelectControl({
+  disabled = false,
   label,
   name,
   onChange,
   options,
   value,
 }: {
+  disabled?: boolean;
   label: string;
   name: string;
   onChange: (value: string) => void;
@@ -2137,6 +2301,7 @@ function SelectControl({
       {label}
       <select
         className="h-10 rounded-md border border-input bg-background px-3 text-sm font-normal outline-none ring-ring focus-visible:ring-2"
+        disabled={disabled}
         name={name}
         onChange={(event) => onChange(event.target.value)}
         value={value}
@@ -2532,6 +2697,150 @@ function panelEditorFilters(config: PanelConfig | undefined): PanelEditorFilter[
   });
 }
 
+export function cleanPanelDatasetForEntity(
+  dataset: PanelEditorDataset,
+  entityType: AppViewEntityTypeOption | undefined,
+  entityTypes: AppViewEntityTypeOption[],
+): PanelEditorDataset {
+  const activeFieldIds = new Set(entityType?.fields.filter((field) => field.isActive).map((field) => field.id) ?? []);
+  const fieldIds = dataset.transformation.fieldIds.filter((fieldId) => activeFieldIds.has(fieldId));
+
+  if (dataset.transformation.type === "RECORDS") {
+    return {
+      ...dataset,
+      transformation: {
+        type: "RECORDS",
+        fieldIds,
+        pagination: dataset.transformation.pagination,
+      },
+      filters: cleanPanelFilterExpressionsForEntity(dataset.filters, activeFieldIds),
+      sort: cleanPanelSortForEntity(dataset.sort, entityType),
+    };
+  }
+
+  const latestByRelation = dataset.transformation;
+  const relationStillValid = entityType?.fields.some((field) =>
+    field.id === latestByRelation.relationFieldId &&
+    field.isActive &&
+    field.type === "RELATION" &&
+    relationTargetEntityTypeId(field.config) === latestByRelation.relatedEntityTypeId,
+  ) ?? false;
+  const orderStillValid = entityType?.fields.some((field) =>
+    field.id === latestByRelation.orderFieldId &&
+    field.isActive &&
+    reportSortableFieldTypes.has(field.type),
+  ) ?? false;
+  const requiredStillValid = !latestByRelation.requiredValueFieldId ||
+    activeFieldIds.has(latestByRelation.requiredValueFieldId);
+  const nextRelatedEntityTypeId = relationStillValid
+    ? latestByRelation.relatedEntityTypeId
+    : relationTargetEntityTypeIds(entityType)[0] ?? entityTypes[0]?.id ?? "";
+
+  return {
+    ...dataset,
+    transformation: {
+      type: "LATEST_BY_RELATION",
+      relatedEntityTypeId: nextRelatedEntityTypeId,
+      relationFieldId: relationStillValid ? latestByRelation.relationFieldId : "",
+      orderFieldId: orderStillValid ? latestByRelation.orderFieldId : "",
+      requiredValueFieldId: requiredStillValid ? latestByRelation.requiredValueFieldId : undefined,
+      fieldIds,
+      pagination: latestByRelation.pagination,
+    },
+    filters: cleanPanelFilterExpressionsForEntity(dataset.filters, activeFieldIds),
+    sort: cleanPanelSortForEntity(dataset.sort, entityType),
+  };
+}
+
+export function cleanPanelModulesForDatasets(
+  modules: PanelEditorModule[],
+  datasets: PanelEditorDataset[],
+) {
+  return modules.map((module) => {
+    const dataset = datasets.find((item) => item.id === module.datasetId);
+    const datasetFieldIds = datasetFieldIdsForDataset(dataset);
+
+    return {
+      ...module,
+      visualization: {
+        type: "TABLE" as const,
+        config: {
+          ...module.visualization.config,
+          columns: module.visualization.config.columns.filter((column) => datasetFieldIds.includes(column.fieldId)),
+        },
+      },
+    };
+  });
+}
+
+export function cleanPanelFiltersForEntity(
+  filters: PanelEditorFilter[],
+  entityType: AppViewEntityTypeOption | undefined,
+) {
+  const activeFieldIds = new Set(entityType?.fields.filter((field) => field.isActive).map((field) => field.id) ?? []);
+
+  return filters.map((filter) => activeFieldIds.has(filter.fieldId ?? "")
+    ? filter
+    : {
+        ...filter,
+        fieldId: undefined,
+        operator: undefined,
+        valueType: "TEXT" as const,
+      });
+}
+
+export function incompatiblePanelColumns(
+  module: PanelEditorModule,
+  datasets: PanelEditorDataset[],
+) {
+  const dataset = datasets.find((item) => item.id === module.datasetId);
+  const datasetFieldIds = datasetFieldIdsForDataset(dataset);
+
+  return module.visualization.config.columns.filter((column) => !datasetFieldIds.includes(column.fieldId));
+}
+
+function cleanPanelFilterExpressionsForEntity(
+  filters: FilterExpr[] | undefined,
+  activeFieldIds: Set<string>,
+) {
+  const next = filters?.filter((filter) => activeFieldIds.has(filter.fieldId));
+
+  return next?.length ? next : undefined;
+}
+
+function cleanPanelSortForEntity(
+  sort: DatasetDefinition["sort"],
+  entityType: AppViewEntityTypeOption | undefined,
+) {
+  const sortableFieldIds = new Set(
+    entityType?.fields
+      .filter((field) => field.isActive && reportSortableFieldTypes.has(field.type))
+      .map((field) => field.id) ?? [],
+  );
+  const next = sort?.filter((item) => sortableFieldIds.has(item.fieldId));
+
+  return next?.length ? next : undefined;
+}
+
+function datasetFieldIdsForDataset(dataset: PanelEditorDataset | undefined) {
+  return dataset?.transformation.fieldIds ?? [];
+}
+
+function panelFieldSourcesById(entityTypes: AppViewEntityTypeOption[]) {
+  const sources = new Map<string, {
+    entity: AppViewEntityTypeOption;
+    field: AppViewEntityTypeOption["fields"][number];
+  }>();
+
+  for (const entity of entityTypes) {
+    for (const field of entity.fields) {
+      sources.set(field.id, { entity, field });
+    }
+  }
+
+  return sources;
+}
+
 function panelValueTypeForField(field: AppViewEntityTypeOption["fields"][number] | undefined): PanelFilter["valueType"] {
   if (!field) {
     return "TEXT";
@@ -2595,6 +2904,10 @@ function nextPanelId(prefix: string, existingIds: string[]) {
   }
 
   return id;
+}
+
+function panelSectionId(label: string) {
+  return label.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, "-");
 }
 
 function replaceAt<T>(items: T[], index: number, value: T) {
@@ -2732,6 +3045,7 @@ const reportSortableFieldTypes = new Set([
 
 function EntitySelect({
   errors,
+  helpText,
   label,
   name,
   onChange,
@@ -2739,6 +3053,7 @@ function EntitySelect({
   value,
 }: {
   errors?: string[];
+  helpText?: string;
   label: string;
   name: string;
   onChange: (value: string) => void;
@@ -2762,6 +3077,7 @@ function EntitySelect({
           </option>
         ))}
       </select>
+      {helpText ? <span className="text-xs font-normal text-muted-foreground">{helpText}</span> : null}
       <FieldError errors={errors} />
     </label>
   );
