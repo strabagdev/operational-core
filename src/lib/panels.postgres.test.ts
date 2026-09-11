@@ -16,16 +16,20 @@ const ids = {
   panelView: "panel_pg_view",
   procedure1: "panel_pg_procedure_1",
   procedure2: "panel_pg_procedure_2",
+  procedure3: "panel_pg_procedure_3",
   procedureField: "panel_pg_procedure",
   procedures: "panel_pg_procedures",
   reportView: "panel_pg_report",
   revisionField: "panel_pg_revision",
   statusCurrentOption: "panel_pg_status_current",
   statusField: "panel_pg_status",
+  statusPreviousOption: "panel_pg_status_previous",
   user: "panel_pg_user",
   version1: "panel_pg_version_1",
   version2: "panel_pg_version_2",
   version3MissingStatus: "panel_pg_version_3_missing_status",
+  version4Previous: "panel_pg_version_4_previous",
+  version5Current: "panel_pg_version_5_current",
   versionTieA: "panel_pg_version_tie_a",
   versionTieB: "panel_pg_version_tie_b",
   versions: "panel_pg_versions",
@@ -72,10 +76,10 @@ describePostgres("PANEL PostgreSQL integration", () => {
     expect(dataset?.pagination).toEqual({
       page: 1,
       pageSize: 1,
-      total: 2,
+      total: 3,
       hasMore: true,
     });
-    expect(dataset?.rows.map((row) => row.id)).toEqual([ids.versionTieA]);
+    expect(dataset?.rows.map((row) => row.id)).toEqual([ids.version5Current]);
     expect(result.data.modules[0]?.visualization.type).toBe("TABLE");
     if (result.data.modules[0]?.visualization.type !== "TABLE") return;
     expect(result.data.modules[0].visualization.config.columns.map((column) => column.fieldId)).toEqual([
@@ -91,6 +95,7 @@ describePostgres("PANEL PostgreSQL integration", () => {
       ids.dateField,
     ]);
     expect(dataset?.schema.fields.find((field) => field.id === ids.statusField)?.options).toEqual([
+      { id: ids.statusPreviousOption, label: "Histórico", value: "historico" },
       { id: ids.statusCurrentOption, label: "Vigente", value: "vigente" },
     ]);
     expect(dataset?.schema.fields.find((field) => field.id === ids.dateField)?.type).toBe("DATE");
@@ -113,10 +118,10 @@ describePostgres("PANEL PostgreSQL integration", () => {
     expect(first.ok).toBe(true);
     expect(second.ok).toBe(true);
     if (!first.ok || !second.ok) return;
-    expect(first.data.datasets[0]?.rows.map((row) => row.id)).toEqual([ids.versionTieA]);
-    expect(second.data.datasets[0]?.rows.map((row) => row.id)).toEqual([ids.version2]);
-    expect(first.data.datasets[0]?.pagination.total).toBe(2);
-    expect(second.data.datasets[0]?.pagination.total).toBe(2);
+    expect(first.data.datasets[0]?.rows.map((row) => row.id)).toEqual([ids.version5Current]);
+    expect(second.data.datasets[0]?.rows.map((row) => row.id)).toEqual([ids.versionTieA]);
+    expect(first.data.datasets[0]?.pagination.total).toBe(3);
+    expect(second.data.datasets[0]?.pagination.total).toBe(3);
   });
 
   it("applies search before grouping and does not let an ineligible newest row displace the latest eligible row", async () => {
@@ -179,16 +184,39 @@ describePostgres("PANEL PostgreSQL integration", () => {
     expect(result.data.datasets[0]?.pagination).toMatchObject({
       page: 1,
       pageSize: 1,
-      total: 4,
+      total: 5,
       hasMore: true,
     });
     expect(Object.fromEntries(result.data.metrics.map((metric) => [metric.id, metric.value]))).toEqual({
-      "raw-all": 5,
-      "raw-current": 4,
-      "raw-revision-sum": 9,
-      "raw-revision-avg": 1.8,
+      "raw-all": 7,
+      "raw-current": 5,
+      "raw-revision-sum": 18,
+      "raw-revision-avg": 18 / 7,
       "raw-date-min": "2026-09-01",
       "raw-date-max": "2026-09-04",
+    });
+  });
+
+  it("applies metric conditions after latest-by-relation and before aggregation", async () => {
+    const result = await getApiPanel({
+      appViewId: ids.panelView,
+      contractId: ids.contract,
+      query: { datasetId: "latest-procedures", page: "1", pageSize: "1" },
+      userId: ids.user,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.datasets[0]?.rows).toHaveLength(1);
+    expect(result.data.datasets[0]?.pagination).toMatchObject({
+      page: 1,
+      pageSize: 1,
+      total: 3,
+      hasMore: true,
+    });
+    expect(Object.fromEntries(result.data.metrics.map((metric) => [metric.id, metric.value]))).toMatchObject({
+      "latest-previous": 0,
+      "latest-current-condition": 3,
     });
   });
 
@@ -301,21 +329,32 @@ async function seedPanelData() {
       },
     ],
   });
-  await prisma.fieldOption.create({
-    data: {
-      entityFieldId: ids.statusField,
-      id: ids.statusCurrentOption,
-      label: "Vigente",
-      value: "vigente",
-    },
+  await prisma.fieldOption.createMany({
+    data: [
+      {
+        entityFieldId: ids.statusField,
+        id: ids.statusCurrentOption,
+        label: "Vigente",
+        value: "vigente",
+      },
+      {
+        entityFieldId: ids.statusField,
+        id: ids.statusPreviousOption,
+        label: "Histórico",
+        value: "historico",
+      },
+    ],
   });
   await prisma.entityRecord.createMany({
     data: [
       { displayName: "Procedimiento Uno", entityTypeId: ids.procedures, id: ids.procedure1 },
       { displayName: "Procedimiento Dos", entityTypeId: ids.procedures, id: ids.procedure2 },
+      { displayName: "Procedimiento Tres", entityTypeId: ids.procedures, id: ids.procedure3 },
       { displayName: "Version Uno antigua", entityTypeId: ids.versions, id: ids.version1 },
       { displayName: "Version Uno elegible", entityTypeId: ids.versions, id: ids.version2 },
       { displayName: "Version Uno mas reciente sin estatus", entityTypeId: ids.versions, id: ids.version3MissingStatus },
+      { displayName: "Z Version Tres historica", entityTypeId: ids.versions, id: ids.version4Previous },
+      { displayName: "Z Version Tres vigente", entityTypeId: ids.versions, id: ids.version5Current },
       { displayName: "Version Dos empate A", entityTypeId: ids.versions, id: ids.versionTieA },
       { displayName: "Version Dos empate B", entityTypeId: ids.versions, id: ids.versionTieB },
     ],
@@ -325,6 +364,8 @@ async function seedPanelData() {
       { sourceFieldId: ids.procedureField, sourceRecordId: ids.version1, targetRecordId: ids.procedure1 },
       { sourceFieldId: ids.procedureField, sourceRecordId: ids.version2, targetRecordId: ids.procedure1 },
       { sourceFieldId: ids.procedureField, sourceRecordId: ids.version3MissingStatus, targetRecordId: ids.procedure1 },
+      { sourceFieldId: ids.procedureField, sourceRecordId: ids.version4Previous, targetRecordId: ids.procedure3 },
+      { sourceFieldId: ids.procedureField, sourceRecordId: ids.version5Current, targetRecordId: ids.procedure3 },
       { sourceFieldId: ids.procedureField, sourceRecordId: ids.versionTieA, targetRecordId: ids.procedure2 },
       { sourceFieldId: ids.procedureField, sourceRecordId: ids.versionTieB, targetRecordId: ids.procedure2 },
     ],
@@ -334,6 +375,8 @@ async function seedPanelData() {
       ...versionValues(ids.version1, "vigente", 1, "2026-09-01"),
       ...versionValues(ids.version2, "vigente", 2, "2026-09-02"),
       ...versionValues(ids.version3MissingStatus, null, 3, "2026-09-03"),
+      ...versionValues(ids.version4Previous, "historico", 4, "2026-09-01"),
+      ...versionValues(ids.version5Current, "vigente", 5, "2026-09-04"),
       ...versionValues(ids.versionTieA, "vigente", 1, "2026-09-04"),
       ...versionValues(ids.versionTieB, "vigente", 2, "2026-09-04"),
     ],
@@ -427,6 +470,8 @@ function panelConfig() {
     ],
     metrics: [
       { id: "latest-current", name: "Últimos vigentes", datasetId: "latest-procedures", aggregation: "COUNT", fieldId: null, filterIds: ["status"] },
+      { id: "latest-previous", name: "Últimos históricos", datasetId: "latest-procedures", aggregation: "COUNT", fieldId: null, filterIds: [], conditions: [{ fieldId: ids.statusField, operator: "EQUALS", value: { type: "OPTION", optionId: ids.statusPreviousOption } }] },
+      { id: "latest-current-condition", name: "Últimos vigentes por condición", datasetId: "latest-procedures", aggregation: "COUNT", fieldId: null, filterIds: [], conditions: [{ fieldId: ids.statusField, operator: "EQUALS", value: { type: "OPTION", optionId: ids.statusCurrentOption } }] },
       { id: "raw-all", name: "Registros", datasetId: "raw-records", aggregation: "COUNT", fieldId: null, filterIds: [] },
       { id: "raw-current", name: "Registros vigentes", datasetId: "raw-records", aggregation: "COUNT", fieldId: null, filterIds: ["status"] },
       { id: "raw-revision-sum", name: "Suma revisión", datasetId: "raw-records", aggregation: "SUM", fieldId: ids.revisionField, filterIds: [] },
@@ -492,7 +537,7 @@ async function cleanup() {
     where: { id: { in: panelRecordIds() } },
   });
   await prisma.fieldOption.deleteMany({
-    where: { id: ids.statusCurrentOption },
+    where: { id: { in: [ids.statusCurrentOption, ids.statusPreviousOption] } },
   });
   await prisma.entityField.deleteMany({
     where: { id: { in: [ids.procedureField, ids.statusField, ids.revisionField, ids.dateField] } },
@@ -525,9 +570,12 @@ function panelRecordIds() {
   return [
     ids.procedure1,
     ids.procedure2,
+    ids.procedure3,
     ids.version1,
     ids.version2,
     ids.version3MissingStatus,
+    ids.version4Previous,
+    ids.version5Current,
     ids.versionTieA,
     ids.versionTieB,
   ];

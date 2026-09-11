@@ -2588,6 +2588,179 @@ describe("PANEL AppView config", () => {
     ).rejects.toThrow("Selecciona un campo activo válido para campos del dataset.");
   });
 
+  it("accepts PANEL metrics without conditions for compatibility", () => {
+    const config = parseAppViewConfig({
+      config: recordsPanelConfig({
+        metrics: [
+          {
+            id: "total",
+            name: "Total",
+            datasetId: "version-records",
+            aggregation: "COUNT",
+            fieldId: null,
+            filterIds: [],
+          },
+        ],
+      }),
+      type: "PANEL",
+    } as never);
+
+    expect(config.type).toBe("PANEL");
+    if (config.type !== "PANEL") return;
+    expect(config.metrics[0]).not.toHaveProperty("conditions");
+  });
+
+  it("rejects PANEL metric condition operators with invalid value combinations", () => {
+    const baseMetric = {
+      id: "bad-condition",
+      name: "Condición inválida",
+      datasetId: "version-records",
+      aggregation: "COUNT",
+      fieldId: null,
+      filterIds: [],
+    };
+
+    expect(() => parseAppViewConfig({
+      config: recordsPanelConfig({
+        metrics: [
+          {
+            ...baseMetric,
+            conditions: [
+              {
+                fieldId: "status_field",
+                operator: "EQUALS",
+                value: { type: "OPTION", optionId: "status_ok" },
+                values: [{ type: "OPTION", optionId: "status_ok" }],
+              },
+            ],
+          },
+        ],
+      }),
+      type: "PANEL",
+    } as never)).toThrow();
+
+    expect(() => parseAppViewConfig({
+      config: recordsPanelConfig({
+        metrics: [
+          {
+            ...baseMetric,
+            conditions: [
+              {
+                fieldId: "status_field",
+                operator: "IN",
+                value: { type: "OPTION", optionId: "status_ok" },
+                values: [{ type: "OPTION", optionId: "status_ok" }],
+              },
+            ],
+          },
+        ],
+      }),
+      type: "PANEL",
+    } as never)).toThrow();
+
+    expect(() => parseAppViewConfig({
+      config: recordsPanelConfig({
+        metrics: [
+          {
+            ...baseMetric,
+            conditions: [
+              {
+                fieldId: "status_field",
+                operator: "IS_EMPTY",
+                values: [{ type: "OPTION", optionId: "status_ok" }],
+              },
+            ],
+          },
+        ],
+      }),
+      type: "PANEL",
+    } as never)).toThrow();
+  });
+
+  it("rejects PANEL metric conditions with unknown option ids", async () => {
+    entityTypeFindFirst.mockResolvedValue(panelEntityType() as never);
+
+    await expect(
+      createAppView("contract_1", "user_1", panelInput(recordsPanelConfig({
+        metrics: [
+          {
+            id: "bad-status",
+            name: "Estado inválido",
+            datasetId: "version-records",
+            aggregation: "COUNT",
+            fieldId: null,
+            filterIds: [],
+            conditions: [
+              { fieldId: "status_field", operator: "EQUALS", value: { type: "OPTION", optionId: "missing_option" } },
+            ],
+          },
+        ],
+      }))),
+    ).rejects.toThrow("El valor de la condición de la métrica Estado inválido no es compatible con Estatus.");
+  });
+
+  it("rejects PANEL metric conditions outside the dataset schema", async () => {
+    entityTypeFindFirst.mockResolvedValue(panelEntityType() as never);
+
+    await expect(
+      createAppView("contract_1", "user_1", panelInput(recordsPanelConfig({
+        datasets: [
+          {
+            ...recordsPanelConfig().datasets[0],
+            transformation: {
+              type: "RECORDS",
+              fieldIds: ["procedure_field", "status_field"],
+            },
+          },
+        ],
+        metrics: [
+          {
+            id: "bad-field",
+            name: "Campo inválido",
+            datasetId: "version-records",
+            aggregation: "COUNT",
+            fieldId: null,
+            filterIds: [],
+            conditions: [
+              { fieldId: "decimal_field", operator: "EQUALS", value: { type: "NUMBER", value: 10 } },
+            ],
+          },
+        ],
+      }))),
+    ).rejects.toThrow("La condición de la métrica Campo inválido referencia un campo fuera del dataset.");
+  });
+
+  it("rejects unsupported PANEL metric condition operators for relation fields", async () => {
+    entityTypeFindFirst.mockResolvedValue(panelEntityType() as never);
+
+    await expect(
+      createAppView("contract_1", "user_1", panelInput(recordsPanelConfig({
+        datasets: [
+          {
+            ...recordsPanelConfig().datasets[0],
+            transformation: {
+              type: "RECORDS",
+              fieldIds: ["procedure_field", "status_field"],
+            },
+          },
+        ],
+        metrics: [
+          {
+            id: "bad-relation",
+            name: "Relación",
+            datasetId: "version-records",
+            aggregation: "COUNT",
+            fieldId: null,
+            filterIds: [],
+            conditions: [
+              { fieldId: "procedure_field", operator: "IS_NOT_EMPTY" },
+            ],
+          },
+        ],
+      }))),
+    ).rejects.toThrow("El operador de la condición de la métrica Relación no es compatible con Procedimiento.");
+  });
+
   it("rejects duplicate PANEL datasets, filters, and modules from manual payloads", async () => {
     await expect(
       createAppView("contract_1", "user_1", panelInput(recordsPanelConfig({

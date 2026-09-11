@@ -17,6 +17,9 @@ import {
   type PanelKpiFormat,
   type PanelMetric,
   type PanelMetricAggregation,
+  type PanelMetricCondition,
+  type PanelMetricConditionOperator,
+  type PanelMetricConditionValue,
   type PanelModule,
   type PanelPercentScale,
   type ReportSelectValueDisplay,
@@ -765,6 +768,7 @@ function PanelConfigFields({
         aggregation: "COUNT",
         fieldId: null,
         filterIds: [],
+        conditions: [],
       },
     ]);
   };
@@ -1242,11 +1246,32 @@ function PanelMetricEditor({
   const dataset = datasets.find((item) => item.id === metric.datasetId);
   const fields = fieldsForPanelDataset(dataset, entityTypes);
   const compatibleFields = fields.filter((field) => panelMetricAggregationTargetsField(metric.aggregation, field.type));
+  const conditionFields = fields.filter((field) => panelMetricConditionTargetsField(field.type));
   const availableFilterIds = new Set(dataset?.filters
     ?.filter((filter) => filter.type === "PANEL_FILTER")
     .map((filter) => filter.filterId) ?? []);
   const applicableFilters = filters.filter((filter) => availableFilterIds.has(filter.id));
   const updateMetric = (next: PanelEditorMetric) => setMetrics(replaceAt(metrics, index, next));
+  const conditions = metric.conditions ?? [];
+  const addCondition = () => {
+    const field = conditionFields[0];
+
+    if (!field) {
+      return;
+    }
+
+    updateMetric({
+      ...metric,
+      conditions: [
+        ...conditions,
+        cleanPanelMetricConditionForField({
+          fieldId: field.id,
+          operator: "EQUALS",
+          value: defaultPanelMetricConditionValue(field),
+        }, field),
+      ],
+    });
+  };
 
   return (
     <div className="grid gap-3 rounded-md border border-border p-3">
@@ -1308,12 +1333,186 @@ function PanelMetricEditor({
           </div>
         </fieldset>
       ) : null}
+      <fieldset className="grid gap-3 rounded-md border border-border p-3">
+        <div className="flex items-center justify-between gap-3">
+          <legend className="px-1 text-sm font-medium">Condiciones</legend>
+          <button className="rounded border border-input px-3 py-1 text-sm disabled:opacity-40" disabled={conditionFields.length === 0} onClick={addCondition} type="button">
+            Agregar condición
+          </button>
+        </div>
+        {conditions.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Sin condiciones específicas.</p>
+        ) : (
+          <div className="grid gap-3">
+            {conditions.map((condition, conditionIndex) => {
+              const field = conditionFields.find((item) => item.id === condition.fieldId) ?? conditionFields[0];
+              const operatorOptions = panelMetricConditionOperatorOptions(field);
+              const conditionWithValidField = field && condition.fieldId !== field.id
+                ? cleanPanelMetricConditionForField({ ...condition, fieldId: field.id }, field)
+                : condition;
+
+              return (
+                <div className="grid gap-3 rounded border border-border p-3" key={`${condition.fieldId}:${conditionIndex}`}>
+                  <p className="text-xs text-muted-foreground">{panelMetricConditionSummary(conditionWithValidField, field)}</p>
+                  <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(160px,220px)_minmax(0,1fr)_auto]">
+                    <SelectControl
+                      label="Campo"
+                      name={`panelMetricConditionField:${metric.id}:${conditionIndex}`}
+                      onChange={(fieldId) => {
+                        const nextField = conditionFields.find((item) => item.id === fieldId);
+                        if (!nextField) return;
+                        updateMetric({
+                          ...metric,
+                          conditions: replaceAt(conditions, conditionIndex, cleanPanelMetricConditionForField({
+                            ...condition,
+                            fieldId,
+                          }, nextField)),
+                        });
+                      }}
+                      options={conditionFields.map((item) => ({ label: item.name, value: item.id }))}
+                      value={field?.id ?? ""}
+                    />
+                    <SelectControl
+                      label="Operador"
+                      name={`panelMetricConditionOperator:${metric.id}:${conditionIndex}`}
+                      onChange={(operator) => {
+                        if (!field) return;
+                        updateMetric({
+                          ...metric,
+                          conditions: replaceAt(conditions, conditionIndex, cleanPanelMetricConditionForField({
+                            ...conditionWithValidField,
+                            operator: operator as PanelMetricConditionOperator,
+                          }, field)),
+                        });
+                      }}
+                      options={operatorOptions}
+                      value={operatorOptions.some((option) => option.value === conditionWithValidField.operator) ? conditionWithValidField.operator : operatorOptions[0]?.value ?? "EQUALS"}
+                    />
+                    <PanelMetricConditionValueControl
+                      condition={conditionWithValidField}
+                      field={field}
+                      metricId={metric.id}
+                      onChange={(nextCondition) => updateMetric({
+                        ...metric,
+                        conditions: replaceAt(conditions, conditionIndex, nextCondition),
+                      })}
+                      index={conditionIndex}
+                    />
+                    <div className="flex items-end gap-2">
+                      <button aria-label="Subir condición" className="rounded border border-input px-2 py-1 text-sm disabled:opacity-40" disabled={conditionIndex === 0} onClick={() => updateMetric({ ...metric, conditions: moveAt(conditions, conditionIndex, -1) })} type="button">
+                        Subir
+                      </button>
+                      <button aria-label="Bajar condición" className="rounded border border-input px-2 py-1 text-sm disabled:opacity-40" disabled={conditionIndex === conditions.length - 1} onClick={() => updateMetric({ ...metric, conditions: moveAt(conditions, conditionIndex, 1) })} type="button">
+                        Bajar
+                      </button>
+                      <button className="rounded border border-input px-2 py-1 text-sm" onClick={() => updateMetric({ ...metric, conditions: conditions.filter((_, itemIndex) => itemIndex !== conditionIndex) })} type="button">
+                        Eliminar
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </fieldset>
       <div className="flex justify-end">
         <button className="rounded border border-input px-3 py-1 text-sm" onClick={() => setMetrics(metrics.filter((_, itemIndex) => itemIndex !== index))} type="button">
           Eliminar
         </button>
       </div>
     </div>
+  );
+}
+
+function PanelMetricConditionValueControl({
+  condition,
+  field,
+  index,
+  metricId,
+  onChange,
+}: {
+  condition: PanelMetricCondition;
+  field: AppViewEntityTypeOption["fields"][number] | undefined;
+  index: number;
+  metricId: string;
+  onChange: (condition: PanelMetricCondition) => void;
+}) {
+  if (!field || condition.operator === "IS_EMPTY" || condition.operator === "IS_NOT_EMPTY") {
+    return <div className="text-sm text-muted-foreground">Sin valor</div>;
+  }
+
+  const isMultiValue = condition.operator === "IN" || condition.operator === "NOT_IN";
+  const values = isMultiValue
+    ? condition.values ?? []
+    : condition.value
+      ? [condition.value]
+      : [];
+  const updateValues = (nextValues: PanelMetricConditionValue[]) => {
+    onChange(isMultiValue
+      ? { ...condition, values: nextValues, value: undefined }
+      : { ...condition, value: nextValues[0], values: undefined });
+  };
+  const firstValue = values[0] ?? defaultPanelMetricConditionValue(field);
+
+  if (field.type === "SELECT" || field.type === "MULTISELECT") {
+    const selectedOptionIds = values
+      .filter((value): value is Extract<PanelMetricConditionValue, { type: "OPTION" }> => value.type === "OPTION")
+      .map((value) => value.optionId);
+
+    return (
+      <label className="grid gap-2 text-sm font-medium">
+        Valor
+        <select
+          className="min-h-10 rounded-md border border-input bg-background px-3 py-2 text-sm font-normal outline-none ring-ring focus-visible:ring-2"
+          multiple={isMultiValue}
+          name={`panelMetricConditionValue:${metricId}:${index}`}
+          onChange={(event) => {
+            const optionIds = Array.from(event.target.selectedOptions).map((option) => option.value).filter(Boolean);
+            updateValues(optionIds.map((optionId) => ({ type: "OPTION", optionId })));
+          }}
+          value={isMultiValue ? selectedOptionIds : selectedOptionIds[0] ?? ""}
+        >
+          {!isMultiValue ? <option value="">Selecciona una opción</option> : null}
+          {field.options.filter((option) => option.isActive).map((option) => (
+            <option key={option.id} value={option.id}>{option.label}</option>
+          ))}
+        </select>
+      </label>
+    );
+  }
+
+  if (field.type === "BOOLEAN") {
+    return (
+      <SelectControl
+        label="Valor"
+        name={`panelMetricConditionValue:${metricId}:${index}`}
+        onChange={(value) => updateValues([{ type: "BOOLEAN", value: value === "true" }])}
+        options={[
+          { label: "Sí", value: "true" },
+          { label: "No", value: "false" },
+        ]}
+        value={firstValue.type === "BOOLEAN" ? String(firstValue.value) : "true"}
+      />
+    );
+  }
+
+  const valueType = panelMetricConditionValueTypeForField(field);
+  const inputType = valueType === "NUMBER" ? "number" : valueType === "DATE" ? "date" : valueType === "DATETIME" ? "datetime-local" : "text";
+  const inputValue = panelMetricConditionInputValue(firstValue, valueType);
+
+  return (
+    <label className="grid gap-2 text-sm font-medium">
+      Valor
+      <input
+        className="h-10 rounded-md border border-input bg-background px-3 text-sm font-normal outline-none ring-ring focus-visible:ring-2"
+        name={`panelMetricConditionValue:${metricId}:${index}`}
+        onChange={(event) => updateValues([panelMetricConditionValueFromInput(event.target.value, valueType)])}
+        step={valueType === "NUMBER" ? "any" : undefined}
+        type={inputType}
+        value={inputValue}
+      />
+    </label>
   );
 }
 
@@ -3257,6 +3456,7 @@ function cleanPanelMetricForDataset(
     ...metric,
     fieldId: metric.fieldId && datasetFieldIds.includes(metric.fieldId) ? metric.fieldId : null,
     filterIds: metric.filterIds.filter((filterId) => datasetFilterIds.has(filterId)),
+    conditions: metric.conditions?.filter((condition) => datasetFieldIds.includes(condition.fieldId)),
   };
 }
 
@@ -3273,6 +3473,148 @@ function cleanPanelMetricForAggregation(
   return field && panelMetricAggregationTargetsField(metric.aggregation, field.type)
     ? metric
     : { ...metric, fieldId: fields.find((item) => panelMetricAggregationTargetsField(metric.aggregation, item.type))?.id ?? null };
+}
+
+export function cleanPanelMetricConditionForField(
+  condition: PanelMetricCondition,
+  field: AppViewEntityTypeOption["fields"][number],
+): PanelMetricCondition {
+  const operatorOptions = panelMetricConditionOperatorOptions(field);
+  const fallbackOperator = operatorOptions[0]?.value ?? "EQUALS";
+  const operator = operatorOptions.some((option) => option.value === condition.operator)
+    ? condition.operator
+    : fallbackOperator;
+
+  if (operator === "IS_EMPTY" || operator === "IS_NOT_EMPTY") {
+    return { fieldId: field.id, operator };
+  }
+
+  if (operator === "IN" || operator === "NOT_IN") {
+    const values = (condition.values ?? (condition.value ? [condition.value] : []))
+      .filter((value) => panelMetricConditionValueMatchesField(value, field));
+
+    return {
+      fieldId: field.id,
+      operator,
+      values: values.length ? values : [defaultPanelMetricConditionValue(field)],
+    };
+  }
+
+  const value = condition.value && panelMetricConditionValueMatchesField(condition.value, field)
+    ? condition.value
+    : defaultPanelMetricConditionValue(field);
+
+  return { fieldId: field.id, operator, value };
+}
+
+function panelMetricConditionTargetsField(fieldType: string) {
+  return ["SELECT", "MULTISELECT", "BOOLEAN", "TEXT", "TEXTAREA", "INTEGER", "DECIMAL", "MONEY", "DATE", "DATETIME"].includes(fieldType);
+}
+
+function panelMetricConditionOperatorOptions(field: AppViewEntityTypeOption["fields"][number] | undefined) {
+  const all = [
+    { label: "es", value: "EQUALS" },
+    { label: "no es", value: "NOT_EQUALS" },
+    { label: "está en", value: "IN" },
+    { label: "no está en", value: "NOT_IN" },
+    { label: "está vacío", value: "IS_EMPTY" },
+    { label: "tiene valor", value: "IS_NOT_EMPTY" },
+  ] as const satisfies Array<{ label: string; value: PanelMetricConditionOperator }>;
+
+  return field && panelMetricConditionTargetsField(field.type) ? [...all] : [];
+}
+
+function defaultPanelMetricConditionValue(field: AppViewEntityTypeOption["fields"][number]): PanelMetricConditionValue {
+  if (field.type === "SELECT" || field.type === "MULTISELECT") {
+    return { type: "OPTION", optionId: field.options.find((option) => option.isActive)?.id ?? "" };
+  }
+  if (field.type === "BOOLEAN") {
+    return { type: "BOOLEAN", value: true };
+  }
+  if (field.type === "INTEGER" || field.type === "DECIMAL" || field.type === "MONEY") {
+    return { type: "NUMBER", value: 0 };
+  }
+  if (field.type === "DATE") {
+    return { type: "DATE", value: "" };
+  }
+  if (field.type === "DATETIME") {
+    return { type: "DATETIME", value: "" };
+  }
+
+  return { type: "TEXT", value: "" };
+}
+
+function panelMetricConditionValueMatchesField(
+  value: PanelMetricConditionValue,
+  field: AppViewEntityTypeOption["fields"][number],
+) {
+  if (field.type === "SELECT" || field.type === "MULTISELECT") {
+    return value.type === "OPTION" && field.options.some((option) => option.id === value.optionId && option.isActive);
+  }
+  if (field.type === "BOOLEAN") return value.type === "BOOLEAN";
+  if (field.type === "INTEGER" || field.type === "DECIMAL" || field.type === "MONEY") return value.type === "NUMBER";
+  if (field.type === "DATE") return value.type === "DATE";
+  if (field.type === "DATETIME") return value.type === "DATETIME";
+
+  return value.type === "TEXT";
+}
+
+function panelMetricConditionValueTypeForField(field: AppViewEntityTypeOption["fields"][number]) {
+  if (field.type === "INTEGER" || field.type === "DECIMAL" || field.type === "MONEY") return "NUMBER";
+  if (field.type === "DATE") return "DATE";
+  if (field.type === "DATETIME") return "DATETIME";
+
+  return "TEXT";
+}
+
+function panelMetricConditionValueFromInput(value: string, valueType: "TEXT" | "NUMBER" | "DATE" | "DATETIME"): PanelMetricConditionValue {
+  if (valueType === "NUMBER") return { type: "NUMBER", value: Number(value) };
+  if (valueType === "DATE") return { type: "DATE", value };
+  if (valueType === "DATETIME") return { type: "DATETIME", value: value ? new Date(value).toISOString() : "" };
+
+  return { type: "TEXT", value };
+}
+
+function panelMetricConditionInputValue(value: PanelMetricConditionValue, valueType: "TEXT" | "NUMBER" | "DATE" | "DATETIME") {
+  if (valueType === "NUMBER") return value.type === "NUMBER" ? String(value.value) : "0";
+  if (valueType === "DATE") return value.type === "DATE" ? value.value : "";
+  if (valueType === "DATETIME") return value.type === "DATETIME" && value.value ? value.value.slice(0, 16) : "";
+  if (value.type === "TEXT") return value.value;
+
+  return "";
+}
+
+function panelMetricConditionSummary(
+  condition: PanelMetricCondition,
+  field: AppViewEntityTypeOption["fields"][number] | undefined,
+) {
+  const fieldName = field?.name ?? condition.fieldId;
+  const operator = panelMetricConditionOperatorOptions(field).find((option) => option.value === condition.operator)?.label ?? condition.operator;
+
+  if (condition.operator === "IS_EMPTY" || condition.operator === "IS_NOT_EMPTY") {
+    return `${fieldName} ${operator}`;
+  }
+
+  const values = condition.operator === "IN" || condition.operator === "NOT_IN"
+    ? condition.values ?? []
+    : condition.value
+      ? [condition.value]
+      : [];
+  const labels = values.map((value) => panelMetricConditionValueLabel(value, field)).join(", ");
+
+  return `${fieldName} ${operator} ${labels || "sin valor"}`;
+}
+
+function panelMetricConditionValueLabel(
+  value: PanelMetricConditionValue,
+  field: AppViewEntityTypeOption["fields"][number] | undefined,
+) {
+  if (value.type === "OPTION") {
+    return field?.options.find((option) => option.id === value.optionId)?.label ?? "Opción no disponible";
+  }
+  if (value.type === "BOOLEAN") return value.value ? "Sí" : "No";
+
+  return String(value.value);
 }
 
 export function cleanPanelFiltersForEntity(

@@ -6,6 +6,7 @@ import {
   cleanPanelDatasetForEntity,
   cleanPanelFiltersForEntity,
   cleanPanelKpiConfigForFormat,
+  cleanPanelMetricConditionForField,
   cleanPanelMetricsForDatasets,
   cleanPanelModulesForDatasets,
   incompatiblePanelColumns,
@@ -858,6 +859,124 @@ describe("AppViewForm", () => {
     expect(html).toContain("Porcentaje completo: 25 → 25 %");
     expect(html).toContain("$");
     expect(html).toContain("25 %");
+  });
+
+  it("renders PANEL metric conditions with labels and serialized typed values", () => {
+    const html = renderToStaticMarkup(
+      <AppViewForm
+        action={noopAction}
+        entityTypes={panelEntityTypes()}
+        initialValues={panelInitialValues({
+          metrics: [
+            {
+              id: "procedimientos-e1",
+              name: "Procedimientos E1",
+              datasetId: "latest-procedure-status",
+              aggregation: "COUNT",
+              fieldId: null,
+              filterIds: [],
+              conditions: [
+                {
+                  fieldId: "status_field",
+                  operator: "EQUALS",
+                  value: { type: "OPTION", optionId: "e1" },
+                },
+              ],
+            },
+          ],
+        })}
+        submitLabel="Guardar experiencia"
+      />,
+    );
+
+    expect(html).toContain("Condiciones");
+    expect(html).toContain("Agregar condición");
+    expect(html).toContain("Estatus es E1");
+    expect(html).toContain("value=\"e1\" selected=\"\"");
+    expect(html).toContain("&quot;conditions&quot;:[{&quot;fieldId&quot;:&quot;status_field&quot;,&quot;operator&quot;:&quot;EQUALS&quot;,&quot;value&quot;:{&quot;type&quot;:&quot;OPTION&quot;,&quot;optionId&quot;:&quot;e1&quot;}}]");
+    expect(html).not.toContain("status_field</option>");
+  });
+
+  it("cleans metric conditions when a PANEL dataset changes", () => {
+    const entities = panelEntityTypes();
+    const versionado = entities.find((entityType) => entityType.id === "versions");
+    const dataset = {
+      id: "dataset-1",
+      name: "Versionado",
+      source: { type: "ENTITY" as const, entityTypeId: "versions" },
+      transformation: {
+        type: "RECORDS" as const,
+        fieldIds: ["status_field"],
+        pagination: { pageSize: 25 },
+      },
+    };
+    const cleanedDataset = cleanPanelDatasetForEntity({
+      ...dataset,
+      transformation: {
+        type: "RECORDS",
+        fieldIds: ["date_field"],
+        pagination: { pageSize: 25 },
+      },
+    }, versionado, entities);
+
+    expect(cleanPanelMetricsForDatasets([
+      {
+        id: "metric-1",
+        name: "Métrica",
+        datasetId: "dataset-1",
+        aggregation: "COUNT",
+        fieldId: null,
+        filterIds: [],
+        conditions: [
+          { fieldId: "status_field", operator: "EQUALS", value: { type: "OPTION", optionId: "e1" } },
+          { fieldId: "date_field", operator: "IS_NOT_EMPTY" },
+        ],
+      },
+    ], [cleanedDataset])).toEqual([
+      {
+        id: "metric-1",
+        name: "Métrica",
+        datasetId: "dataset-1",
+        aggregation: "COUNT",
+        fieldId: null,
+        filterIds: [],
+        conditions: [
+          { fieldId: "date_field", operator: "IS_NOT_EMPTY" },
+        ],
+      },
+    ]);
+  });
+
+  it("cleans metric condition values when field or operator changes", () => {
+    const statusField = panelEntityTypes()
+      .flatMap((entityType) => entityType.fields)
+      .find((field) => field.id === "status_field");
+    const dateField = panelEntityTypes()
+      .flatMap((entityType) => entityType.fields)
+      .find((field) => field.id === "date_field");
+
+    expect(statusField).toBeTruthy();
+    expect(dateField).toBeTruthy();
+    if (!statusField || !dateField) return;
+
+    expect(cleanPanelMetricConditionForField({
+      fieldId: "status_field",
+      operator: "EQUALS",
+      value: { type: "TEXT", value: "E1" },
+    }, statusField)).toEqual({
+      fieldId: "status_field",
+      operator: "EQUALS",
+      value: { type: "OPTION", optionId: "e1" },
+    });
+
+    expect(cleanPanelMetricConditionForField({
+      fieldId: "date_field",
+      operator: "IS_EMPTY",
+      value: { type: "DATE", value: "2026-09-01" },
+    }, dateField)).toEqual({
+      fieldId: "date_field",
+      operator: "IS_EMPTY",
+    });
   });
 
   it("cleans incompatible KPI presentation properties when format changes", () => {

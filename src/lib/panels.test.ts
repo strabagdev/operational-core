@@ -498,6 +498,223 @@ describe("getApiPanel", () => {
     expect(entityRecordFindMany).toHaveBeenCalledTimes(1);
   });
 
+  it("applies SELECT metric conditions without changing TABLE rows", async () => {
+    appViewFindFirst.mockResolvedValueOnce({
+      active: true,
+      config: panelConfig({
+        metrics: [
+          {
+            id: "status-e1",
+            name: "E1",
+            datasetId: "records",
+            aggregation: "COUNT",
+            fieldId: null,
+            filterIds: [],
+            conditions: [
+              { fieldId: "status_field", operator: "EQUALS", value: { type: "OPTION", optionId: "status_e1" } },
+            ],
+          },
+        ],
+      }),
+      contractId: "contract_1",
+      icon: null,
+      id: "panel_1",
+      name: "Panel Operativo",
+      slug: "panel-operativo",
+      sortOrder: 1,
+      type: "PANEL",
+    } as never);
+    entityRecordFindMany.mockResolvedValueOnce([
+      panelRecord("record_e1", "2026-09-01", 1, "e1"),
+      panelRecord("record_e2", "2026-09-02", 2, "e2"),
+    ] as never);
+
+    const result = await getApiPanel({
+      appViewId: "panel_1",
+      contractId: "contract_1",
+      query: {},
+      userId: "user_1",
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.datasets[0]?.pagination.total).toBe(2);
+    expect(result.data.metrics[0]).toMatchObject({ id: "status-e1", value: 1 });
+  });
+
+  it("applies KPI conditions after LATEST_BY_RELATION grouping", async () => {
+    appViewFindFirst.mockResolvedValueOnce({
+      active: true,
+      config: latestByRelationPanelConfig({
+        metrics: [
+          {
+            id: "procedures-e1",
+            name: "E1",
+            datasetId: "latest-procedures",
+            aggregation: "COUNT",
+            fieldId: null,
+            filterIds: [],
+            conditions: [
+              { fieldId: "status_field", operator: "EQUALS", value: { type: "OPTION", optionId: "status_e1" } },
+            ],
+          },
+          {
+            id: "procedures-e2",
+            name: "E2",
+            datasetId: "latest-procedures",
+            aggregation: "COUNT",
+            fieldId: null,
+            filterIds: [],
+            conditions: [
+              { fieldId: "status_field", operator: "EQUALS", value: { type: "OPTION", optionId: "status_e2" } },
+            ],
+          },
+        ],
+      }),
+      contractId: "contract_1",
+      icon: null,
+      id: "panel_1",
+      name: "Panel Operativo",
+      slug: "panel-operativo",
+      sortOrder: 1,
+      type: "PANEL",
+    } as never);
+    entityRecordFindMany.mockResolvedValueOnce([
+      latestPanelRecord("version_old_e1", "procedure_1", "2026-09-01", undefined, "e1"),
+      latestPanelRecord("version_latest_e2", "procedure_1", "2026-09-02", undefined, "e2"),
+    ] as never);
+
+    const result = await getApiPanel({
+      appViewId: "panel_1",
+      contractId: "contract_1",
+      query: { datasetId: "latest-procedures" },
+      userId: "user_1",
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.datasets[0]?.rows.map((row) => row.id)).toEqual(["version_latest_e2"]);
+    expect(Object.fromEntries(result.data.metrics.map((metric) => [metric.id, metric.value]))).toEqual({
+      "procedures-e1": 0,
+      "procedures-e2": 1,
+    });
+    expect(entityRecordFindMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("supports metric condition operators, empty semantics, typed zero, and false", async () => {
+    appViewFindFirst.mockResolvedValueOnce({
+      active: true,
+      config: panelConfig({
+        datasets: [
+          {
+            id: "records",
+            source: { type: "ENTITY", entityTypeId: "versions" },
+            transformation: {
+              type: "RECORDS",
+              fieldIds: ["status_field", "revision_field", "boolean_field", "date_field"],
+              pagination: { pageSize: 2 },
+            },
+          },
+        ],
+        metrics: [
+          { id: "eq-e1", name: "EQ", datasetId: "records", aggregation: "COUNT", fieldId: null, filterIds: [], conditions: [{ fieldId: "status_field", operator: "EQUALS", value: { type: "OPTION", optionId: "status_e1" } }] },
+          { id: "neq-e1", name: "NEQ", datasetId: "records", aggregation: "COUNT", fieldId: null, filterIds: [], conditions: [{ fieldId: "status_field", operator: "NOT_EQUALS", value: { type: "OPTION", optionId: "status_e1" } }] },
+          { id: "in-status", name: "IN", datasetId: "records", aggregation: "COUNT", fieldId: null, filterIds: [], conditions: [{ fieldId: "status_field", operator: "IN", values: [{ type: "OPTION", optionId: "status_e1" }, { type: "OPTION", optionId: "status_e2" }] }] },
+          { id: "not-in-status", name: "NOT IN", datasetId: "records", aggregation: "COUNT", fieldId: null, filterIds: [], conditions: [{ fieldId: "status_field", operator: "NOT_IN", values: [{ type: "OPTION", optionId: "status_e1" }] }] },
+          { id: "empty-status", name: "Empty", datasetId: "records", aggregation: "COUNT", fieldId: null, filterIds: [], conditions: [{ fieldId: "status_field", operator: "IS_EMPTY" }] },
+          { id: "zero-revision", name: "Zero", datasetId: "records", aggregation: "COUNT", fieldId: null, filterIds: [], conditions: [{ fieldId: "revision_field", operator: "EQUALS", value: { type: "NUMBER", value: 0 } }] },
+          { id: "false-flag", name: "False", datasetId: "records", aggregation: "COUNT", fieldId: null, filterIds: [], conditions: [{ fieldId: "boolean_field", operator: "EQUALS", value: { type: "BOOLEAN", value: false } }] },
+          { id: "date-match", name: "Date", datasetId: "records", aggregation: "COUNT", fieldId: null, filterIds: [], conditions: [{ fieldId: "date_field", operator: "EQUALS", value: { type: "DATE", value: "2026-09-02" } }] },
+        ],
+      }),
+      contractId: "contract_1",
+      icon: null,
+      id: "panel_1",
+      name: "Panel Operativo",
+      slug: "panel-operativo",
+      sortOrder: 1,
+      type: "PANEL",
+    } as never);
+    entityRecordFindMany.mockResolvedValueOnce([
+      panelRecord("record_e1", "2026-09-01", 0, "e1", new Prisma.Decimal("1.2"), false),
+      panelRecord("record_e2", "2026-09-02", 2, "e2"),
+      panelRecord("record_empty", "2026-09-03", 3, null),
+    ] as never);
+
+    const result = await getApiPanel({
+      appViewId: "panel_1",
+      contractId: "contract_1",
+      query: { page: "1", pageSize: "2" },
+      userId: "user_1",
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.datasets[0]?.rows).toHaveLength(2);
+    expect(Object.fromEntries(result.data.metrics.map((metric) => [metric.id, metric.value]))).toEqual({
+      "eq-e1": 1,
+      "neq-e1": 2,
+      "in-status": 2,
+      "not-in-status": 2,
+      "empty-status": 1,
+      "zero-revision": 1,
+      "false-flag": 1,
+      "date-match": 1,
+    });
+  });
+
+  it("supports MULTISELECT metric conditions", async () => {
+    appViewFindFirst.mockResolvedValueOnce({
+      active: true,
+      config: panelConfig({
+        datasets: [
+          {
+            id: "records",
+            source: { type: "ENTITY", entityTypeId: "versions" },
+            transformation: {
+              type: "RECORDS",
+              fieldIds: ["tags_field", "date_field"],
+              pagination: { pageSize: 25 },
+            },
+          },
+        ],
+        metrics: [
+          { id: "tag-a", name: "Tag A", datasetId: "records", aggregation: "COUNT", fieldId: null, filterIds: [], conditions: [{ fieldId: "tags_field", operator: "EQUALS", value: { type: "OPTION", optionId: "tag_a" } }] },
+          { id: "tag-b-in", name: "Tag B", datasetId: "records", aggregation: "COUNT", fieldId: null, filterIds: [], conditions: [{ fieldId: "tags_field", operator: "IN", values: [{ type: "OPTION", optionId: "tag_b" }] }] },
+        ],
+      }),
+      contractId: "contract_1",
+      icon: null,
+      id: "panel_1",
+      name: "Panel Operativo",
+      slug: "panel-operativo",
+      sortOrder: 1,
+      type: "PANEL",
+    } as never);
+    const recordA = panelRecord("record_a");
+    const recordAB = panelRecord("record_ab");
+
+    entityRecordFindMany.mockResolvedValueOnce([
+      { ...recordA, values: [...recordA.values, { entityFieldId: "tags_field", jsonValue: ["a"] }] },
+      { ...recordAB, values: [...recordAB.values, { entityFieldId: "tags_field", jsonValue: ["a", "b"] }] },
+      panelRecord("record_empty_tags"),
+    ] as never);
+
+    const result = await getApiPanel({
+      appViewId: "panel_1",
+      contractId: "contract_1",
+      query: {},
+      userId: "user_1",
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(Object.fromEntries(result.data.metrics.map((metric) => [metric.id, metric.value]))).toEqual({
+      "tag-a": 2,
+      "tag-b-in": 1,
+    });
+  });
+
   it("applies PANEL_FILTER bindings before pagination", async () => {
     appViewFindFirst.mockResolvedValueOnce({
       active: true,
@@ -814,6 +1031,8 @@ function panelEntityType() {
         name: "Estatus",
         options: [
           { id: "status_current", isActive: true, label: "Vigente", sortOrder: 1, value: "vigente" },
+          { id: "status_e1", isActive: true, label: "E1", sortOrder: 2, value: "e1" },
+          { id: "status_e2", isActive: true, label: "E2", sortOrder: 3, value: "e2" },
         ],
         sortOrder: 1,
         type: "SELECT",
@@ -859,13 +1078,26 @@ function panelEntityType() {
         type: "BOOLEAN",
       },
       {
+        config: null,
+        id: "tags_field",
+        isActive: true,
+        key: "tags",
+        name: "Tags",
+        options: [
+          { id: "tag_a", isActive: true, label: "A", sortOrder: 1, value: "a" },
+          { id: "tag_b", isActive: true, label: "B", sortOrder: 2, value: "b" },
+        ],
+        sortOrder: 6,
+        type: "MULTISELECT",
+      },
+      {
         config: { targetEntityTypeId: "procedures", relationKind: "ONE" },
         id: "procedure_field",
         isActive: true,
         key: "procedimiento",
         name: "Procedimiento",
         options: [],
-        sortOrder: 6,
+        sortOrder: 7,
         type: "RELATION",
       },
     ],

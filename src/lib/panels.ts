@@ -6,6 +6,8 @@ import {
   type DatasetDefinition,
   type FilterExpr,
   type PanelConfig,
+  type PanelMetricCondition,
+  type PanelMetricConditionValue,
   type PanelMetric,
   type PanelMetricAggregation,
   parseAppViewConfig,
@@ -834,6 +836,38 @@ function calculatePanelMetrics({
   const requiredPanelFilterIds = new Set(config.filters
     .filter((filter) => filter.required)
     .map((filter) => filter.id));
+  const transformedRecordsByDatasetAndFilters = new Map<string, PanelRecord[]>();
+
+  function metricTransformedRecords(metric: PanelMetric, execution: {
+    dataset: DatasetDefinition;
+    fieldsById: Map<string, PanelField>;
+    records: PanelRecord[];
+  }) {
+    const filterIds = metric.filterIds
+      .filter((filterId) => !requiredPanelFilterIds.has(filterId))
+      .sort();
+    const cacheKey = `${metric.datasetId}:${JSON.stringify(filterIds)}`;
+    const cached = transformedRecordsByDatasetAndFilters.get(cacheKey);
+
+    if (cached) {
+      return cached;
+    }
+
+    const records = transformPanelDatasetRecords({
+      dataset: execution.dataset,
+      fieldsById: execution.fieldsById,
+      records: applyPanelFiltersToRecords({
+        fieldsById: execution.fieldsById,
+        filterIds: new Set(filterIds),
+        filters: execution.dataset.filters ?? [],
+        panelFilterValues,
+        records: execution.records,
+      }),
+    });
+
+    transformedRecordsByDatasetAndFilters.set(cacheKey, records);
+    return records;
+  }
 
   return config.metrics
     .filter((metric) => executionsByDatasetId.has(metric.datasetId))
@@ -841,16 +875,10 @@ function calculatePanelMetrics({
       const execution = executionsByDatasetId.get(metric.datasetId);
       const field = metric.fieldId ? execution?.fieldsById.get(metric.fieldId) : undefined;
       const filteredRecords = execution
-        ? transformPanelDatasetRecords({
-            dataset: execution.dataset,
+        ? applyPanelMetricConditions({
             fieldsById: execution.fieldsById,
-            records: applyPanelFiltersToRecords({
-              fieldsById: execution.fieldsById,
-              filterIds: new Set(metric.filterIds.filter((filterId) => !requiredPanelFilterIds.has(filterId))),
-              filters: execution.dataset.filters ?? [],
-              panelFilterValues,
-              records: execution.records,
-            }),
+            conditions: metric.conditions ?? [],
+            records: metricTransformedRecords(metric, execution),
           })
         : [];
 
@@ -862,6 +890,111 @@ function calculatePanelMetrics({
         calculatedAt,
       };
     });
+}
+
+function applyPanelMetricConditions({
+  conditions,
+  fieldsById,
+  records,
+}: {
+  conditions: PanelMetricCondition[];
+  fieldsById: Map<string, PanelField>;
+  records: PanelRecord[];
+}) {
+  if (conditions.length === 0) {
+    return records;
+  }
+
+  return records.filter((record) => conditions.every((condition) => {
+    const field = fieldsById.get(condition.fieldId);
+
+    return field ? panelRecordMatchesMetricCondition({ condition, field, record }) : false;
+  }));
+}
+
+function panelRecordMatchesMetricCondition({
+  condition,
+  field,
+  record,
+}: {
+  condition: PanelMetricCondition;
+  field: PanelField;
+  record: PanelRecord;
+}) {
+  const recordValues = panelMetricConditionRecordValues(record, field);
+
+  if (condition.operator === "IS_EMPTY") {
+    return recordValues.length === 0;
+  }
+  if (condition.operator === "IS_NOT_EMPTY") {
+    return recordValues.length > 0;
+  }
+
+  const conditionValues = condition.operator === "IN" || condition.operator === "NOT_IN"
+    ? condition.values ?? []
+    : condition.value
+      ? [condition.value]
+      : [];
+  const comparableValues = conditionValues
+    .map((value) => panelMetricConditionComparableValue(value, field))
+    .filter((value): value is string | number | boolean => value !== undefined);
+  const matches = comparableValues.length > 0 &&
+    recordValues.some((recordValue) => comparableValues.some((conditionValue) => Object.is(recordValue, conditionValue)));
+
+  if (condition.operator === "EQUALS" || condition.operator === "IN") {
+    return matches;
+  }
+
+  return !matches;
+}
+
+function panelMetricConditionRecordValues(record: PanelRecord, field: PanelField): Array<string | number | boolean> {
+  if (field.type === "RELATION") {
+    return record.outgoingRelations
+      .filter((relation) => relation.sourceFieldId === field.id)
+      .map((relation) => relation.targetRecordId);
+  }
+
+  const value = record.values.find((item) => item.entityFieldId === field.id);
+
+  if (!value) return [];
+  if (value.integerValue !== null && value.integerValue !== undefined) return [value.integerValue];
+  if (value.decimalValue !== null && value.decimalValue !== undefined) return [value.decimalValue.toNumber()];
+  if (value.booleanValue !== null && value.booleanValue !== undefined) return [value.booleanValue];
+  if (value.dateValue !== null && value.dateValue !== undefined) {
+    return [field.type === "DATETIME" ? value.dateValue.toISOString() : formatDateOnly(value.dateValue)];
+  }
+  if (value.textValue !== null && value.textValue !== undefined && value.textValue !== "") return [value.textValue];
+  if (Array.isArray(value.jsonValue)) {
+    return value.jsonValue
+      .filter((item): item is string | number | boolean =>
+        typeof item === "string" || typeof item === "number" || typeof item === "boolean",
+      );
+  }
+  if (value.jsonValue !== null && value.jsonValue !== undefined) {
+    if (typeof value.jsonValue === "string" || typeof value.jsonValue === "number" || typeof value.jsonValue === "boolean") {
+      return [value.jsonValue];
+    }
+  }
+
+  return [];
+}
+
+function panelMetricConditionComparableValue(value: PanelMetricConditionValue, field: PanelField) {
+  if ((field.type === "SELECT" || field.type === "MULTISELECT") && value.type === "OPTION") {
+    return field.options.find((option) => option.id === value.optionId)?.value;
+  }
+  if (field.type === "BOOLEAN" && value.type === "BOOLEAN") return value.value;
+  if ((field.type === "TEXT" || field.type === "TEXTAREA") && value.type === "TEXT") return value.value;
+  if ((field.type === "INTEGER" || field.type === "DECIMAL" || field.type === "MONEY") && value.type === "NUMBER") return value.value;
+  if (field.type === "DATE" && value.type === "DATE") {
+    const date = dateOnlyToUtcDate(value.value);
+
+    return date ? formatDateOnly(date) : undefined;
+  }
+  if (field.type === "DATETIME" && value.type === "DATETIME") return new Date(value.value).toISOString();
+
+  return undefined;
 }
 
 function aggregatePanelMetric(

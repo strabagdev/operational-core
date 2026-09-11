@@ -2,6 +2,7 @@ import { Prisma, type AppView, type AppViewType } from "@prisma/client";
 import { z } from "zod";
 
 import { getAuthorizedContractAdmin } from "./contracts";
+import { dateOnlyToUtcDate } from "./date-only";
 import { isEntityIconKey } from "./entity-icons";
 import { getRelationConfig } from "./field-validation";
 import { slugify } from "./format";
@@ -85,6 +86,29 @@ export type PanelMetricAggregation =
   | "MIN"
   | "MAX";
 
+export type PanelMetricConditionOperator =
+  | "EQUALS"
+  | "NOT_EQUALS"
+  | "IN"
+  | "NOT_IN"
+  | "IS_EMPTY"
+  | "IS_NOT_EMPTY";
+
+export type PanelMetricConditionValue =
+  | { type: "OPTION"; optionId: string }
+  | { type: "BOOLEAN"; value: boolean }
+  | { type: "TEXT"; value: string }
+  | { type: "NUMBER"; value: number }
+  | { type: "DATE"; value: string }
+  | { type: "DATETIME"; value: string };
+
+export type PanelMetricCondition = {
+  fieldId: string;
+  operator: PanelMetricConditionOperator;
+  value?: PanelMetricConditionValue;
+  values?: PanelMetricConditionValue[];
+};
+
 export type PanelKpiFormat =
   | "NUMBER"
   | "INTEGER"
@@ -126,6 +150,7 @@ export type PanelMetric = {
   aggregation: PanelMetricAggregation;
   fieldId?: string | null;
   filterIds: string[];
+  conditions?: PanelMetricCondition[];
 };
 
 export type PanelFilter = {
@@ -1254,6 +1279,75 @@ const panelSortSchema = z.object({
   direction: z.enum(["asc", "desc"]),
 });
 const panelMetricAggregationSchema = z.enum(["COUNT", "COUNT_VALUES", "COUNT_DISTINCT", "SUM", "AVG", "MIN", "MAX"]);
+const panelMetricConditionOperatorSchema = z.enum(["EQUALS", "NOT_EQUALS", "IN", "NOT_IN", "IS_EMPTY", "IS_NOT_EMPTY"]);
+const panelMetricConditionValueSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("OPTION"), optionId: z.string().trim().min(1) }).strict(),
+  z.object({ type: z.literal("BOOLEAN"), value: z.boolean() }).strict(),
+  z.object({ type: z.literal("TEXT"), value: z.string() }).strict(),
+  z.object({ type: z.literal("NUMBER"), value: z.number().finite() }).strict(),
+  z.object({ type: z.literal("DATE"), value: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/) }).strict(),
+  z.object({ type: z.literal("DATETIME"), value: z.string().trim().datetime({ offset: true }) }).strict(),
+]);
+const panelMetricConditionSchema = z.object({
+  fieldId: z.string().trim().min(1),
+  operator: panelMetricConditionOperatorSchema,
+  value: panelMetricConditionValueSchema.optional(),
+  values: z.array(panelMetricConditionValueSchema).optional(),
+}).strict().superRefine((condition, ctx) => {
+  const hasValue = condition.value !== undefined;
+  const hasValues = condition.values !== undefined;
+
+  if (condition.operator === "IS_EMPTY" || condition.operator === "IS_NOT_EMPTY") {
+    if (hasValue) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Este operador no acepta valor.",
+        path: ["value"],
+      });
+    }
+    if (hasValues) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Este operador no acepta valores.",
+        path: ["values"],
+      });
+    }
+    return;
+  }
+
+  if (condition.operator === "IN" || condition.operator === "NOT_IN") {
+    if (hasValue) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Este operador usa values, no value.",
+        path: ["value"],
+      });
+    }
+    if (!condition.values?.length) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Selecciona al menos un valor.",
+        path: ["values"],
+      });
+    }
+    return;
+  }
+
+  if (hasValues) {
+    ctx.addIssue({
+      code: "custom",
+      message: "Este operador usa value, no values.",
+      path: ["values"],
+    });
+  }
+  if (!hasValue) {
+    ctx.addIssue({
+      code: "custom",
+      message: "Selecciona un valor.",
+      path: ["value"],
+    });
+  }
+});
 const panelPercentScaleSchema = z.enum(["RATIO", "WHOLE"]);
 const panelDatasetSchema = z.object({
   id: panelIdSchema,
@@ -1337,6 +1431,7 @@ const panelMetricSchema = z.object({
     z.string().trim().optional().transform((value) => value || undefined),
   ),
   filterIds: z.array(z.string().trim().min(1)).default([]),
+  conditions: z.array(panelMetricConditionSchema).optional(),
 }).strict();
 const panelModuleSchema = z.object({
   id: panelIdSchema,
@@ -1879,6 +1974,16 @@ async function validatePanelAppViewConfig({
       }
     }
 
+    for (const condition of metric.conditions ?? []) {
+      const conditionField = datasetFields.get(condition.fieldId);
+
+      if (!datasetFieldIds.has(condition.fieldId) || !conditionField?.isActive) {
+        throw new AppViewConfigError(`La condición de la métrica ${metricName} referencia un campo fuera del dataset.`, "metrics");
+      }
+
+      validatePanelMetricConditionForField(condition, conditionField, metricName);
+    }
+
     if (metric.aggregation === "COUNT") {
       if (metric.fieldId) {
         throw new AppViewConfigError(`La métrica ${metricName} no debe seleccionar campo para COUNT.`, "metrics");
@@ -2014,6 +2119,73 @@ function panelMetricAggregationTargetsField(aggregation: PanelMetricAggregation,
   }
 
   return aggregation === "COUNT";
+}
+
+function validatePanelMetricConditionForField(
+  condition: PanelMetricCondition,
+  field: { name: string; options?: Array<{ id: string; isActive: boolean }>; type: string },
+  metricName: string,
+) {
+  if (!panelMetricConditionOperatorTargetsField(condition.operator, field.type)) {
+    throw new AppViewConfigError(
+      `El operador de la condición de la métrica ${metricName} no es compatible con ${field.name}.`,
+      "metrics",
+    );
+  }
+
+  const values = condition.operator === "IN" || condition.operator === "NOT_IN"
+    ? condition.values ?? []
+    : condition.value
+      ? [condition.value]
+      : [];
+
+  for (const value of values) {
+    if (!panelMetricConditionValueTargetsField(value, field)) {
+      throw new AppViewConfigError(
+        `El valor de la condición de la métrica ${metricName} no es compatible con ${field.name}.`,
+        "metrics",
+      );
+    }
+  }
+}
+
+function panelMetricConditionOperatorTargetsField(operator: PanelMetricConditionOperator, fieldType: string) {
+  if (fieldType === "RELATION") {
+    return false;
+  }
+  if (operator === "IS_EMPTY" || operator === "IS_NOT_EMPTY") {
+    return true;
+  }
+
+  return ["SELECT", "MULTISELECT", "BOOLEAN", "TEXT", "TEXTAREA", "INTEGER", "DECIMAL", "MONEY", "DATE", "DATETIME"].includes(fieldType);
+}
+
+function panelMetricConditionValueTargetsField(
+  value: PanelMetricConditionValue,
+  field: { options?: Array<{ id: string; isActive: boolean }>; type: string },
+) {
+  if (field.type === "SELECT" || field.type === "MULTISELECT") {
+    return value.type === "OPTION" && (field.options ?? []).some((option) => option.id === value.optionId && option.isActive);
+  }
+  if (field.type === "BOOLEAN") {
+    return value.type === "BOOLEAN";
+  }
+  if (field.type === "TEXT" || field.type === "TEXTAREA") {
+    return value.type === "TEXT";
+  }
+  if (field.type === "INTEGER" || field.type === "DECIMAL" || field.type === "MONEY") {
+    return value.type === "NUMBER";
+  }
+  if (field.type === "DATE") {
+    const date = value.type === "DATE" ? dateOnlyToUtcDate(value.value) : null;
+
+    return Boolean(date && !Number.isNaN(date.getTime()));
+  }
+  if (field.type === "DATETIME") {
+    return value.type === "DATETIME" && !Number.isNaN(Date.parse(value.value));
+  }
+
+  return false;
 }
 
 function panelKpiFormatTargetsMetric(
