@@ -9,6 +9,9 @@ import {
   cleanPanelMetricsForDatasets,
   cleanPanelModulesForDatasets,
   incompatiblePanelColumns,
+  packPanelModules,
+  panelModuleLayoutOverlaps,
+  sortPanelModulesByLayout,
 } from "./app-view-form";
 import type { AppViewActionState } from "./actions";
 import type { PanelConfig } from "@/lib/app-views";
@@ -615,6 +618,176 @@ describe("AppViewForm", () => {
     expect(html).toContain("Indicador");
     expect(html).toContain("Valor de ejemplo en vista previa");
     expect(html).not.toContain("<textarea");
+  });
+
+  it("orders PANEL modules by layout position independently of array order", () => {
+    const modules = [
+      {
+        id: "kpi-1",
+        title: "Indicador",
+        datasetId: "latest-procedure-status",
+        visualization: {
+          type: "KPI" as const,
+          config: { metricId: "metric-1", label: "Indicador", format: "NUMBER" as const },
+        },
+        layout: { x: 0, y: 2, w: 4, h: 2 },
+      },
+      {
+        id: "table-1",
+        title: "Tabla",
+        datasetId: "latest-procedure-status",
+        visualization: panelConfigFixture().modules[0]?.visualization ?? {
+          type: "TABLE" as const,
+          config: { columns: [{ fieldId: "procedure_field" }], searchable: true, paginated: true },
+        },
+        layout: { x: 0, y: 0, w: 12, h: 6 },
+      },
+    ];
+
+    expect(sortPanelModulesByLayout(modules).map((module) => module.id)).toEqual(["table-1", "kpi-1"]);
+  });
+
+  it("renders preview in spatial order and serializes PANEL modules in the same order", () => {
+    const html = renderToStaticMarkup(
+      <AppViewForm
+        action={noopAction}
+        entityTypes={panelEntityTypes()}
+        initialValues={panelInitialValues({
+          metrics: [
+            {
+              id: "metric-1",
+              name: "Indicador",
+              datasetId: "latest-procedure-status",
+              aggregation: "COUNT",
+              fieldId: null,
+              filterIds: [],
+            },
+          ],
+          modules: [
+            {
+              id: "kpi-1",
+              title: "Indicador",
+              datasetId: "latest-procedure-status",
+              visualization: {
+                type: "KPI",
+                config: { metricId: "metric-1", label: "Indicador", format: "NUMBER" },
+              },
+              layout: { x: 0, y: 2, w: 4, h: 2 },
+            },
+            {
+              ...panelConfigFixture().modules[0],
+              id: "table-1",
+              title: "Tabla",
+              layout: { x: 0, y: 0, w: 12, h: 6 },
+            },
+          ],
+        })}
+        submitLabel="Guardar experiencia"
+      />,
+    );
+
+    expect(html.indexOf("x0 y0 · 12x6")).toBeLessThan(html.indexOf("x0 y2 · 4x2"));
+    expect(html.indexOf("&quot;id&quot;:&quot;table-1&quot;")).toBeLessThan(
+      html.indexOf("&quot;id&quot;:&quot;kpi-1&quot;"),
+    );
+    expect(html).toContain("x0 y0 · 12x6");
+    expect(html).toContain("x0 y2 · 4x2");
+  });
+
+  it("packs moved PANEL modules deterministically without overlaps", () => {
+    const kpi = {
+      id: "kpi-1",
+      title: "Indicador",
+      layout: { x: 0, y: 2, w: 4, h: 2 },
+    };
+    const table = {
+      id: "table-1",
+      title: "Tabla",
+      layout: { x: 0, y: 0, w: 12, h: 6 },
+    };
+
+    expect(packPanelModules([kpi, table], 12).map((module) => module.layout)).toEqual([
+      { x: 0, y: 0, w: 4, h: 2 },
+      { x: 0, y: 2, w: 12, h: 6 },
+    ]);
+    expect(panelModuleLayoutOverlaps(packPanelModules([kpi, table], 12))).toEqual([]);
+  });
+
+  it("packs three KPI modules in the same row and sends a full-width module to the next row", () => {
+    const kpi = (id: string) => ({ id, layout: { x: 0, y: 0, w: 4, h: 2 } });
+    const table = { id: "table-1", layout: { x: 0, y: 0, w: 12, h: 6 } };
+
+    expect(packPanelModules([kpi("kpi-1"), kpi("kpi-2"), kpi("kpi-3"), table], 12).map((module) => module.layout)).toEqual([
+      { x: 0, y: 0, w: 4, h: 2 },
+      { x: 4, y: 0, w: 4, h: 2 },
+      { x: 8, y: 0, w: 4, h: 2 },
+      { x: 0, y: 2, w: 12, h: 6 },
+    ]);
+  });
+
+  it("detects and warns about overlapping PANEL modules in preview", () => {
+    const modules = [
+      {
+        id: "kpi-1",
+        title: "Indicador",
+        layout: { x: 0, y: 1, w: 4, h: 2 },
+      },
+      {
+        id: "table-1",
+        title: "Tabla",
+        layout: { x: 0, y: 0, w: 12, h: 6 },
+      },
+    ];
+
+    expect(panelModuleLayoutOverlaps(modules).map((overlap) => [
+      overlap.left.title,
+      overlap.right.title,
+    ])).toEqual([["Indicador", "Tabla"]]);
+
+    const html = renderToStaticMarkup(
+      <AppViewForm
+        action={noopAction}
+        entityTypes={panelEntityTypes()}
+        initialValues={panelInitialValues({
+          metrics: [
+            {
+              id: "metric-1",
+              name: "Indicador",
+              datasetId: "latest-procedure-status",
+              aggregation: "COUNT",
+              fieldId: null,
+              filterIds: [],
+            },
+          ],
+          modules: [
+            {
+              id: "kpi-1",
+              title: "Indicador",
+              datasetId: "latest-procedure-status",
+              visualization: {
+                type: "KPI",
+                config: { metricId: "metric-1", label: "Indicador", format: "NUMBER" },
+              },
+              layout: { x: 0, y: 1, w: 4, h: 2 },
+            },
+            {
+              ...panelConfigFixture().modules[0],
+              id: "table-1",
+              title: "Tabla",
+              layout: { x: 0, y: 0, w: 12, h: 6 },
+            },
+          ],
+        })}
+        submitLabel="Guardar experiencia"
+      />,
+    );
+
+    expect(html).toContain("Se solapa con Tabla.");
+    expect(html).toContain("Se solapa con Indicador.");
+    expect(html).toContain("Los módulos Indicador y Tabla se solapan en el layout.");
+    expect(html).toContain("Organizar automáticamente");
+    expect(html).toContain("x0 y0 · 12x6");
+    expect(html).toContain("x0 y1 · 4x2");
   });
 
   it("renders explicit MONEY and PERCENT KPI presentation controls", () => {

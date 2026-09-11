@@ -782,7 +782,12 @@ function panelZodIssueFieldError(issue: z.core.$ZodIssue) {
   }
 
   if (dottedPath === "layout" || dottedPath.startsWith("layout.") || dottedPath.match(/^modules\.\d+\.layout/)) {
-    return { fieldName: "layout", message: "Configura un layout válido para el módulo afectado." };
+    return {
+      fieldName: "layout",
+      message: issue.message.startsWith("Los módulos ")
+        ? issue.message
+        : "Configura un layout válido para el módulo afectado.",
+    };
   }
 
   return undefined;
@@ -1419,6 +1424,44 @@ const panelConfigInputSchema = z.object({
   }
 });
 
+function panelModuleLayoutOverlaps(modules: Array<Pick<PanelModule, "id" | "title" | "layout">>) {
+  const overlaps: Array<{
+    left: string;
+    leftIndex: number;
+    right: string;
+  }> = [];
+
+  for (let leftIndex = 0; leftIndex < modules.length; leftIndex += 1) {
+    const left = modules[leftIndex];
+    if (!left) continue;
+
+    for (let rightIndex = leftIndex + 1; rightIndex < modules.length; rightIndex += 1) {
+      const right = modules[rightIndex];
+      if (!right) continue;
+
+      if (panelModuleLayoutsOverlap(left.layout, right.layout)) {
+        overlaps.push({
+          left: left.title || left.id,
+          leftIndex,
+          right: right.title || right.id,
+        });
+      }
+    }
+  }
+
+  return overlaps;
+}
+
+function panelModuleLayoutsOverlap(
+  left: Pick<PanelModule["layout"], "x" | "y" | "w" | "h">,
+  right: Pick<PanelModule["layout"], "x" | "y" | "w" | "h">,
+) {
+  return left.x < right.x + right.w &&
+    left.x + left.w > right.x &&
+    left.y < right.y + right.h &&
+    left.y + left.h > right.y;
+}
+
 function parseRecordsConfigInput(rawConfig: unknown) {
   return recordsConfigInputSchema.parse(rawConfig);
 }
@@ -1738,6 +1781,14 @@ async function validatePanelAppViewConfig({
   const datasetFiltersById = new Map<string, Set<string>>();
   const datasetNamesById = new Map<string, string>();
   const fieldNamesById = new Map<string, string>();
+  const layoutOverlap = panelModuleLayoutOverlaps(config.modules)[0];
+
+  if (layoutOverlap) {
+    throw new AppViewConfigError(
+      `Los módulos ${layoutOverlap.left} y ${layoutOverlap.right} se solapan en el layout.`,
+      "layout",
+    );
+  }
 
   for (const dataset of config.datasets) {
     const entityType = await requireEntityType(client, contractId, dataset.source.entityTypeId);

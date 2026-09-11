@@ -1733,6 +1733,66 @@ describe("PANEL AppView config", () => {
     });
   });
 
+  it("parses legacy PANEL module layouts with overlaps for read compatibility", () => {
+    const config = parseAppViewConfig({
+      config: panelConfig({
+        modules: [
+          {
+            ...panelConfig().modules[0],
+            id: "module-table",
+            title: "Tabla",
+            layout: { x: 0, y: 0, w: 12, h: 6 },
+          },
+          {
+            ...panelConfig().modules[0],
+            id: "module-kpi",
+            title: "Indicador",
+            layout: { x: 0, y: 1, w: 4, h: 2 },
+          },
+        ],
+      }),
+      type: "PANEL",
+    } as never);
+
+    expect(config.type).toBe("PANEL");
+    if (config.type !== "PANEL") return;
+    expect(config.modules.map((module) => module.layout)).toEqual([
+      { x: 0, y: 0, w: 12, h: 6 },
+      { x: 0, y: 1, w: 4, h: 2 },
+    ]);
+  });
+
+  it("rejects overlapping PANEL module layouts when saving", async () => {
+    const config = panelConfig({
+      modules: [
+        {
+          ...panelConfig().modules[0],
+          id: "module-table",
+          title: "Tabla",
+          layout: { x: 0, y: 0, w: 12, h: 6 },
+        },
+        {
+          ...panelConfig().modules[0],
+          id: "module-kpi",
+          title: "Indicador",
+          layout: { x: 0, y: 1, w: 4, h: 2 },
+        },
+      ],
+    });
+    entityTypeFindFirst.mockResolvedValue(panelEntityType() as never);
+
+    let error: unknown;
+    try {
+      await createAppView("contract_1", "user_1", panelInput(config));
+    } catch (caughtError) {
+      error = caughtError;
+    }
+
+    expect(appViewFieldErrors(error)).toMatchObject({
+      layout: ["Los módulos Tabla y Indicador se solapan en el layout."],
+    });
+  });
+
   it("accepts the visual editor payload and persists the normalized PANEL contract", async () => {
     const config = recordsPanelConfig();
 
@@ -1785,7 +1845,10 @@ describe("PANEL AppView config", () => {
           },
           layout: { x: 0, y: 0, w: 8, h: 6 },
         },
-        recordsPanelConfig().modules[0],
+        {
+          ...recordsPanelConfig().modules[0],
+          layout: { x: 0, y: 6, w: 12, h: 6 },
+        },
       ],
     });
 
@@ -1840,7 +1903,7 @@ describe("PANEL AppView config", () => {
               ],
             },
           },
-          layout: { x: 0, y: 1, w: 6, h: 4 },
+          layout: { x: 0, y: 6, w: 6, h: 4 },
         },
       ],
     });
@@ -1984,7 +2047,7 @@ describe("PANEL AppView config", () => {
                 format: "NUMBER",
               },
             },
-            layout: { x: 0, y: 1, w: 4, h: 2 },
+            layout: { x: 0, y: 6, w: 4, h: 2 },
           },
         ],
       }),

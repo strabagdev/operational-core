@@ -693,6 +693,7 @@ function PanelConfigFields({
   setModules: (value: PanelEditorModule[]) => void;
   setNotice: (value: string) => void;
 }) {
+  const layoutOverlaps = panelModuleLayoutOverlaps(modules);
   const addDataset = () => {
     const entityType = entityTypes[0];
     const fieldId = entityType?.fields.find((field) => field.isActive)?.id ?? "";
@@ -733,7 +734,7 @@ function PanelConfigFields({
     const dataset = datasets[0];
     const id = nextPanelId("table", modules.map((module) => module.id));
 
-    setModules([
+    setModules(packPanelModules([
       ...modules,
       {
         id,
@@ -749,7 +750,7 @@ function PanelConfigFields({
         },
         layout: { x: 0, y: modules.length, w: Math.min(12, layoutColumns), h: 6 },
       },
-    ]);
+    ], layoutColumns));
   };
   const addMetric = () => {
     const dataset = datasets[0];
@@ -772,7 +773,7 @@ function PanelConfigFields({
     const metric = metrics[0];
     const id = nextPanelId("kpi", modules.map((module) => module.id));
 
-    setModules([
+    setModules(packPanelModules([
       ...modules,
       {
         id,
@@ -788,7 +789,7 @@ function PanelConfigFields({
         },
         layout: { x: 0, y: modules.length, w: Math.min(4, layoutColumns), h: 2 },
       },
-    ]);
+    ], layoutColumns));
   };
 
   return (
@@ -912,11 +913,11 @@ function PanelConfigFields({
           </div>
         ) : (
           <div className="grid gap-3">
-            {modules.map((module, index) => (
+            {sortPanelModulesByLayout(modules).map((module, spatialIndex, spatialModules) => (
               <PanelModuleEditor
                 datasets={datasets}
                 entityTypes={entityTypes}
-                index={index}
+                index={modules.findIndex((item) => item.id === module.id)}
                 key={module.id}
                 layoutColumns={layoutColumns}
                 module={module}
@@ -924,6 +925,8 @@ function PanelConfigFields({
                 metrics={metrics}
                 fieldErrors={fieldErrors}
                 setModules={setModules}
+                spatialIndex={spatialIndex}
+                spatialModules={spatialModules}
               />
             ))}
           </div>
@@ -931,7 +934,26 @@ function PanelConfigFields({
       </section>
 
       <section className={`grid gap-3 ${panelSectionHasErrors("diseno", fieldErrors) ? "rounded-md border border-destructive/30 p-3" : ""}`} id="diseno">
-        <h3 className="text-sm font-medium">Diseño</h3>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h3 className="text-sm font-medium">Diseño</h3>
+          <button
+            className="rounded border border-input px-3 py-1 text-sm disabled:opacity-40"
+            disabled={layoutOverlaps.length === 0}
+            onClick={() => setModules(packPanelModules(modules, layoutColumns))}
+            type="button"
+          >
+            Organizar automáticamente
+          </button>
+        </div>
+        {layoutOverlaps.length > 0 ? (
+          <div className="grid gap-1 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+            {layoutOverlaps.map((overlap) => (
+              <span key={`${overlap.left.id}:${overlap.right.id}`}>
+                Los módulos {overlap.left.title || overlap.left.id} y {overlap.right.title || overlap.right.id} se solapan en el layout.
+              </span>
+            ))}
+          </div>
+        ) : null}
         <div className="grid gap-3 sm:grid-cols-2">
           <NumberControl
             label="Columnas de grilla"
@@ -955,6 +977,7 @@ function PanelConfigFields({
           datasets={datasets}
           entityTypes={entityTypes}
           layoutColumns={layoutColumns}
+          layoutRowHeight={layoutRowHeight}
           metrics={metrics}
           modules={modules}
         />
@@ -1304,6 +1327,8 @@ function PanelModuleEditor({
   modules,
   fieldErrors,
   setModules,
+  spatialIndex,
+  spatialModules,
 }: {
   datasets: PanelEditorDataset[];
   entityTypes: AppViewEntityTypeOption[];
@@ -1314,6 +1339,8 @@ function PanelModuleEditor({
   modules: PanelEditorModule[];
   fieldErrors?: Record<string, string[]>;
   setModules: (value: PanelEditorModule[]) => void;
+  spatialIndex: number;
+  spatialModules: PanelEditorModule[];
 }) {
   const dataset = datasets.find((item) => item.id === module.datasetId);
   const datasetFieldIds = dataset?.transformation.fieldIds ?? [];
@@ -1326,6 +1353,9 @@ function PanelModuleEditor({
   const columns = module.visualization.type === "TABLE" ? module.visualization.config.columns : [];
   const incompatibleColumns = incompatiblePanelColumns(module, datasets);
   const updateModule = (next: PanelEditorModule) => setModules(replaceAt(modules, index, next));
+  const moveModuleSpatially = (direction: -1 | 1) => {
+    setModules(packPanelModules(moveAt(spatialModules, spatialIndex, direction), layoutColumns));
+  };
   const updateColumns = (nextColumns: PanelTableColumns) => updateModule({
     ...module,
     visualization: {
@@ -1582,10 +1612,10 @@ function PanelModuleEditor({
         <NumberControl label="Orden" max={99} min={0} onChange={(y) => updateModule({ ...module, layout: { ...module.layout, y } })} value={module.layout.y} />
       </div>
       <div className="flex justify-end gap-2">
-        <button aria-label={`Subir módulo ${module.title || module.id}`} className="rounded border border-input px-3 py-1 text-sm disabled:opacity-40" disabled={index === 0} onClick={() => setModules(moveAt(modules, index, -1))} type="button">
+        <button aria-label={`Subir módulo ${module.title || module.id}`} className="rounded border border-input px-3 py-1 text-sm disabled:opacity-40" disabled={spatialIndex === 0} onClick={() => moveModuleSpatially(-1)} type="button">
           Subir
         </button>
-        <button aria-label={`Bajar módulo ${module.title || module.id}`} className="rounded border border-input px-3 py-1 text-sm disabled:opacity-40" disabled={index === modules.length - 1} onClick={() => setModules(moveAt(modules, index, 1))} type="button">
+        <button aria-label={`Bajar módulo ${module.title || module.id}`} className="rounded border border-input px-3 py-1 text-sm disabled:opacity-40" disabled={spatialIndex === spatialModules.length - 1} onClick={() => moveModuleSpatially(1)} type="button">
           Bajar
         </button>
         <button className="rounded border border-input px-3 py-1 text-sm" onClick={() => setModules(modules.filter((_, itemIndex) => itemIndex !== index))} type="button">
@@ -1600,32 +1630,54 @@ function PanelPreview({
   datasets,
   entityTypes,
   layoutColumns,
+  layoutRowHeight,
   metrics,
   modules,
 }: {
   datasets: PanelEditorDataset[];
   entityTypes: AppViewEntityTypeOption[];
   layoutColumns: number;
+  layoutRowHeight: number;
   metrics: PanelEditorMetric[];
   modules: PanelEditorModule[];
 }) {
   const fieldSourcesById = panelFieldSourcesById(entityTypes);
+  const layoutOverlaps = panelModuleLayoutOverlaps(modules);
+  const overlapWarningsByModuleId = new Map<string, string[]>();
+
+  for (const overlap of layoutOverlaps) {
+    overlapWarningsByModuleId.set(overlap.left.id, [
+      ...(overlapWarningsByModuleId.get(overlap.left.id) ?? []),
+      `Se solapa con ${overlap.right.title || overlap.right.id}.`,
+    ]);
+    overlapWarningsByModuleId.set(overlap.right.id, [
+      ...(overlapWarningsByModuleId.get(overlap.right.id) ?? []),
+      `Se solapa con ${overlap.left.title || overlap.left.id}.`,
+    ]);
+  }
 
   return (
     <aside className="min-w-0" id="vista-previa-panel">
       <div className="sticky top-4 grid max-h-[calc(100vh-2rem)] gap-3 overflow-auto rounded-md border border-border p-3">
         <div>
           <h3 className="text-sm font-medium">Vista previa</h3>
-          <p className="text-xs text-muted-foreground">Grilla de 12 columnas</p>
+          <p className="text-xs text-muted-foreground">Grilla de {layoutColumns} columnas</p>
         </div>
-        <div className="grid grid-cols-12 gap-2 rounded-md border border-dashed border-border p-2">
+        <div
+          className="grid gap-2 rounded-md border border-dashed border-border p-2"
+          style={{
+            gridAutoRows: `${Math.max(layoutRowHeight * 4, 32)}px`,
+            gridTemplateColumns: `repeat(${Math.max(layoutColumns, 1)}, minmax(0, 1fr))`,
+          }}
+        >
           {modules.length === 0 ? (
             <p className="col-span-12 text-sm text-muted-foreground">No hay módulos configurados.</p>
-          ) : modules.map((module) => {
+          ) : sortPanelModulesByLayout(modules).map((module) => {
             const dataset = datasets.find((item) => item.id === module.datasetId);
             const datasetName = dataset?.name || dataset?.id || "sin dataset";
             const entityType = entityTypes.find((item) => item.id === dataset?.source.entityTypeId);
             const warnings = incompatiblePanelColumns(module, datasets);
+            const overlapWarnings = overlapWarningsByModuleId.get(module.id) ?? [];
             const columnNames = module.visualization.type === "TABLE"
               ? module.visualization.config.columns.map((column) =>
                   fieldSourcesById.get(column.fieldId)?.field.name ?? column.fieldId,
@@ -1638,9 +1690,14 @@ function PanelPreview({
 
             return (
               <div
-                className="grid min-w-0 gap-2 rounded-md border border-border bg-background p-3 text-sm"
+                className={`grid min-w-0 gap-2 overflow-hidden rounded-md border bg-background p-3 text-sm ${
+                  overlapWarnings.length > 0 ? "border-destructive/60" : "border-border"
+                }`}
                 key={module.id}
-                style={{ gridColumn: `span ${Math.min(Math.max(module.layout.w, 1), layoutColumns || 12)} / span ${Math.min(Math.max(module.layout.w, 1), layoutColumns || 12)}` }}
+                style={{
+                  gridColumn: `${Math.max(module.layout.x, 0) + 1} / span ${Math.min(Math.max(module.layout.w, 1), layoutColumns || 12)}`,
+                  gridRow: `${Math.max(module.layout.y, 0) + 1} / span ${Math.max(module.layout.h, 1)}`,
+                }}
               >
                 <div className="min-w-0">
                   <p className="truncate font-medium">{module.title || module.id}</p>
@@ -1672,6 +1729,11 @@ function PanelPreview({
 
                       return <span key={column.fieldId}>La columna {columnName} no pertenece al dataset {targetName}.</span>;
                     })}
+                  </div>
+                ) : null}
+                {overlapWarnings.length > 0 ? (
+                  <div className="grid gap-1 rounded border border-destructive/30 bg-destructive/10 p-2 text-xs text-destructive">
+                    {overlapWarnings.map((warning) => <span key={warning}>{warning}</span>)}
                   </div>
                 ) : null}
               </div>
@@ -3027,7 +3089,10 @@ function panelFilterConfig(filter: PanelEditorFilter): PanelFilter {
 }
 
 function panelConfigFormValue(config: PanelConfig) {
-  const value = { ...config } as Record<string, unknown>;
+  const value = {
+    ...config,
+    modules: sortPanelModulesByLayout(config.modules),
+  } as Record<string, unknown>;
 
   delete value.type;
 
@@ -3292,6 +3357,84 @@ function panelFieldSourcesById(entityTypes: AppViewEntityTypeOption[]) {
   }
 
   return sources;
+}
+
+export function sortPanelModulesByLayout<T extends { layout: { x: number; y: number }; id: string }>(modules: T[]) {
+  return [...modules].sort((left, right) =>
+    left.layout.y - right.layout.y ||
+    left.layout.x - right.layout.x ||
+    left.id.localeCompare(right.id),
+  );
+}
+
+export function packPanelModules<T extends { layout: { x: number; y: number; w: number; h: number } }>(
+  modules: T[],
+  layoutColumns: number,
+) {
+  const columns = Math.max(layoutColumns, 1);
+  let cursorX = 0;
+  let cursorY = 0;
+  let rowHeight = 0;
+
+  return modules.map((module) => {
+    const width = Math.min(Math.max(module.layout.w, 1), columns);
+    const height = Math.max(module.layout.h, 1);
+
+    if (cursorX > 0 && cursorX + width > columns) {
+      cursorX = 0;
+      cursorY += rowHeight;
+      rowHeight = 0;
+    }
+
+    const layout = {
+      ...module.layout,
+      x: cursorX,
+      y: cursorY,
+      w: width,
+      h: height,
+    };
+
+    cursorX += width;
+    rowHeight = Math.max(rowHeight, height);
+
+    return { ...module, layout };
+  });
+}
+
+export function panelModuleLayoutOverlaps<T extends {
+  id: string;
+  title?: string;
+  layout: { x: number; y: number; w: number; h: number };
+}>(modules: T[]) {
+  const overlaps: Array<{ left: T; right: T }> = [];
+
+  for (let leftIndex = 0; leftIndex < modules.length; leftIndex += 1) {
+    const left = modules[leftIndex];
+
+    if (!left) {
+      continue;
+    }
+
+    for (let rightIndex = leftIndex + 1; rightIndex < modules.length; rightIndex += 1) {
+      const right = modules[rightIndex];
+
+      if (right && panelModuleLayoutsOverlap(left.layout, right.layout)) {
+        overlaps.push({ left, right });
+      }
+    }
+  }
+
+  return overlaps;
+}
+
+function panelModuleLayoutsOverlap(
+  left: { x: number; y: number; w: number; h: number },
+  right: { x: number; y: number; w: number; h: number },
+) {
+  return left.x < right.x + right.w &&
+    left.x + left.w > right.x &&
+    left.y < right.y + right.h &&
+    left.y + left.h > right.y;
 }
 
 function panelValueTypeForField(field: AppViewEntityTypeOption["fields"][number] | undefined): PanelFilter["valueType"] {

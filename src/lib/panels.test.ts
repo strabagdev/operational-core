@@ -90,6 +90,51 @@ describe("getApiPanel", () => {
     expect(result.data.metrics).toEqual([]);
   });
 
+  it("executes legacy PANEL configs with overlapping modules for read compatibility", async () => {
+    appViewFindFirst.mockResolvedValueOnce({
+      active: true,
+      config: panelConfig({
+        modules: [
+          {
+            id: "kpi-1",
+            title: "Indicador",
+            datasetId: "records",
+            visualization: {
+              type: "KPI",
+              config: { metricId: "total-registros", label: "Total", format: "NUMBER" },
+            },
+            layout: { x: 0, y: 1, w: 4, h: 2 },
+          },
+          panelConfig().modules[0],
+        ],
+        metrics: [
+          { id: "total-registros", name: "Total", datasetId: "records", aggregation: "COUNT", fieldId: null, filterIds: [] },
+        ],
+      }),
+      contractId: "contract_1",
+      icon: null,
+      id: "panel_1",
+      name: "Panel Operativo",
+      slug: "panel-operativo",
+      sortOrder: 1,
+      type: "PANEL",
+    } as never);
+
+    const result = await getApiPanel({
+      appViewId: "panel_1",
+      contractId: "contract_1",
+      query: { page: "1", pageSize: "10" },
+      userId: "user_1",
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.modules.map((module) => module.layout)).toEqual([
+      { x: 0, y: 1, w: 4, h: 2 },
+      { x: 0, y: 0, w: 12, h: 6 },
+    ]);
+  });
+
   it("calculates COUNT metrics for RECORDS over all filtered rows instead of the visible page", async () => {
     appViewFindFirst.mockResolvedValueOnce({
       active: true,
@@ -118,7 +163,7 @@ describe("getApiPanel", () => {
               type: "KPI",
               config: { metricId: "total-registros", label: "Total", format: "NUMBER" },
             },
-            layout: { x: 0, y: 1, w: 4, h: 2 },
+            layout: { x: 0, y: 6, w: 4, h: 2 },
           },
           {
             id: "total-kpi-copy",
@@ -128,7 +173,7 @@ describe("getApiPanel", () => {
               type: "KPI",
               config: { metricId: "total-registros", label: "Total", format: "NUMBER" },
             },
-            layout: { x: 4, y: 1, w: 4, h: 2 },
+            layout: { x: 4, y: 6, w: 4, h: 2 },
           },
         ],
       }),
@@ -239,7 +284,7 @@ describe("getApiPanel", () => {
               type: "KPI",
               config: { metricId: "procedures-current", label: "Procedimientos", format: "INTEGER" },
             },
-            layout: { x: 0, y: 1, w: 4, h: 2 },
+            layout: { x: 0, y: 6, w: 4, h: 2 },
           },
         ],
       }),
