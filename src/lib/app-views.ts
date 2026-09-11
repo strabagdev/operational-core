@@ -94,6 +94,31 @@ export type PanelKpiFormat =
   | "DATE"
   | "DATETIME";
 
+export type PanelPercentScale = "RATIO" | "WHOLE";
+
+export type PanelKpiConfig =
+  | {
+      metricId: string;
+      label: string;
+      format: Exclude<PanelKpiFormat, "MONEY" | "PERCENT">;
+      currencyCode?: never;
+      percentScale?: never;
+    }
+  | {
+      metricId: string;
+      label: string;
+      format: "MONEY";
+      currencyCode: string;
+      percentScale?: never;
+    }
+  | {
+      metricId: string;
+      label: string;
+      format: "PERCENT";
+      percentScale: PanelPercentScale;
+      currencyCode?: never;
+    };
+
 export type PanelMetric = {
   id: string;
   name: string;
@@ -180,11 +205,7 @@ export type PanelModule = {
       }
     | {
         type: "KPI";
-        config: {
-          metricId: string;
-          label: string;
-          format: PanelKpiFormat;
-        };
+        config: PanelKpiConfig;
       };
   layout: {
     x: number;
@@ -740,6 +761,14 @@ function panelZodIssueFieldError(issue: z.core.$ZodIssue) {
     return { fieldName: "panelKpiMetric", message: "Selecciona una métrica para el KPI." };
   }
 
+  if (dottedPath.match(/^modules\.\d+\.visualization\.config\.currencyCode$/)) {
+    return { fieldName: "panelKpiMetric", message: "Ingresa un código de moneda ISO 4217 de tres letras." };
+  }
+
+  if (dottedPath.match(/^modules\.\d+\.visualization\.config\.percentScale$/)) {
+    return { fieldName: "panelKpiMetric", message: "Selecciona cómo interpretar el porcentaje." };
+  }
+
   if (dottedPath === "metrics" || dottedPath.startsWith("metrics.")) {
     return { fieldName: "metrics", message: "Revisa la configuración de métricas." };
   }
@@ -1220,7 +1249,7 @@ const panelSortSchema = z.object({
   direction: z.enum(["asc", "desc"]),
 });
 const panelMetricAggregationSchema = z.enum(["COUNT", "COUNT_VALUES", "COUNT_DISTINCT", "SUM", "AVG", "MIN", "MAX"]);
-const panelKpiFormatSchema = z.enum(["NUMBER", "INTEGER", "DECIMAL", "MONEY", "PERCENT", "DATE", "DATETIME"]);
+const panelPercentScaleSchema = z.enum(["RATIO", "WHOLE"]);
 const panelDatasetSchema = z.object({
   id: panelIdSchema,
   name: z.string().trim().min(1).optional(),
@@ -1268,13 +1297,30 @@ const panelTableModuleVisualizationSchema = z.object({
     paginated: z.boolean().optional(),
   }).strict(),
 }).strict();
+const panelKpiConfigBaseSchema = {
+  metricId: z.string().trim().min(1, "Selecciona una métrica para el KPI."),
+  label: z.string().trim().min(1, "Escribe una etiqueta para el KPI."),
+};
 const panelKpiModuleVisualizationSchema = z.object({
   type: z.literal("KPI"),
-  config: z.object({
-    metricId: z.string().trim().min(1, "Selecciona una métrica para el KPI."),
-    label: z.string().trim().min(1, "Escribe una etiqueta para el KPI."),
-    format: panelKpiFormatSchema,
-  }).strict(),
+  config: z.discriminatedUnion("format", [
+    z.object({
+      ...panelKpiConfigBaseSchema,
+      format: z.enum(["NUMBER", "INTEGER", "DECIMAL", "DATE", "DATETIME"]),
+    }).strict(),
+    z.object({
+      ...panelKpiConfigBaseSchema,
+      format: z.literal("MONEY"),
+      currencyCode: z.string()
+        .trim()
+        .regex(/^[A-Z]{3}$/, "Ingresa un código de moneda ISO 4217 de tres letras."),
+    }).strict(),
+    z.object({
+      ...panelKpiConfigBaseSchema,
+      format: z.literal("PERCENT"),
+      percentScale: panelPercentScaleSchema,
+    }).strict(),
+  ]),
 }).strict();
 const panelMetricSchema = z.object({
   id: panelIdSchema,

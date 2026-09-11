@@ -13,10 +13,12 @@ import {
   type FilterExpr,
   type PanelConfig,
   type PanelFilter,
+  type PanelKpiConfig,
   type PanelKpiFormat,
   type PanelMetric,
   type PanelMetricAggregation,
   type PanelModule,
+  type PanelPercentScale,
   type ReportSelectValueDisplay,
   suggestedAppViewSlug,
 } from "@/lib/app-views";
@@ -1421,14 +1423,54 @@ function PanelModuleEditor({
               name={`panelKpiFormat:${module.id}`}
               onChange={(format) => updateModule({
                 ...module,
-	                visualization: {
-	                  type: "KPI",
-	                  config: { ...kpiVisualization.config, format: format as PanelKpiFormat },
-	                },
-	              })}
-	              options={panelKpiFormatOptions()}
-	              value={kpiVisualization.config.format}
-	            />
+                visualization: {
+                  type: "KPI",
+                  config: cleanPanelKpiConfigForFormat(kpiVisualization.config, format as PanelKpiFormat),
+                },
+              })}
+              options={panelKpiFormatOptions()}
+              value={kpiVisualization.config.format}
+            />
+            {kpiVisualization.config.format === "MONEY" ? (
+              <SelectControl
+                label="Moneda"
+                name={`panelKpiCurrency:${module.id}`}
+                onChange={(currencyCode) => updateModule({
+                  ...module,
+                  visualization: {
+                    type: "KPI",
+                    config: {
+                      metricId: kpiVisualization.config.metricId,
+                      label: kpiVisualization.config.label,
+                      format: "MONEY",
+                      currencyCode,
+                    },
+                  },
+                })}
+                options={panelCurrencyCodeOptions()}
+                value={kpiVisualization.config.currencyCode}
+              />
+            ) : null}
+            {kpiVisualization.config.format === "PERCENT" ? (
+              <SelectControl
+                label="Escala del porcentaje"
+                name={`panelKpiPercentScale:${module.id}`}
+                onChange={(percentScale) => updateModule({
+                  ...module,
+                  visualization: {
+                    type: "KPI",
+                    config: {
+                      metricId: kpiVisualization.config.metricId,
+                      label: kpiVisualization.config.label,
+                      format: "PERCENT",
+                      percentScale: percentScale as PanelPercentScale,
+                    },
+                  },
+                })}
+                options={panelPercentScaleOptions()}
+                value={kpiVisualization.config.percentScale}
+              />
+            ) : null}
           </div>
           <FieldError errors={fieldErrors?.panelKpiMetric} />
         </fieldset>
@@ -1610,7 +1652,7 @@ function PanelPreview({
                 {module.visualization.type === "KPI" ? (
                   <div className="grid gap-1 rounded border border-dashed border-border p-2">
                     <p className="truncate text-xs text-muted-foreground">{metric?.name ?? "Métrica sin seleccionar"}</p>
-                    <p className="text-2xl font-semibold">--</p>
+                    <p className="text-2xl font-semibold">{panelKpiPreviewValue(module.visualization.config)}</p>
                     <p className="text-xs text-muted-foreground">Valor de ejemplo en vista previa</p>
                   </div>
                 ) : (
@@ -3327,6 +3369,80 @@ function panelKpiFormatOptions() {
     { label: "Fecha", value: "DATE" },
     { label: "Fecha y hora", value: "DATETIME" },
   ];
+}
+
+function panelCurrencyCodeOptions() {
+  return [
+    { label: "CLP", value: "CLP" },
+    { label: "USD", value: "USD" },
+    { label: "EUR", value: "EUR" },
+  ];
+}
+
+function panelPercentScaleOptions() {
+  return [
+    { label: "Proporción: 0,25 → 25 %", value: "RATIO" },
+    { label: "Porcentaje completo: 25 → 25 %", value: "WHOLE" },
+  ];
+}
+
+export function cleanPanelKpiConfigForFormat(
+  config: PanelKpiConfig,
+  format: PanelKpiFormat,
+): PanelKpiConfig {
+  const base = {
+    metricId: config.metricId,
+    label: config.label,
+  };
+
+  if (format === "MONEY") {
+    return {
+      ...base,
+      format,
+      currencyCode: config.format === "MONEY" ? config.currencyCode : "CLP",
+    };
+  }
+
+  if (format === "PERCENT") {
+    return {
+      ...base,
+      format,
+      percentScale: config.format === "PERCENT" ? config.percentScale : "RATIO",
+    };
+  }
+
+  return { ...base, format };
+}
+
+function panelKpiPreviewValue(config: PanelKpiConfig) {
+  if (config.format === "MONEY") {
+    return new Intl.NumberFormat("es-CL", {
+      currency: config.currencyCode,
+      style: "currency",
+    }).format(1234);
+  }
+
+  if (config.format === "PERCENT") {
+    return config.percentScale === "RATIO" ? "25 %" : "25 %";
+  }
+
+  if (config.format === "DATE") {
+    return "31-12-2026";
+  }
+
+  if (config.format === "DATETIME") {
+    return "31-12-2026 15:30";
+  }
+
+  if (config.format === "INTEGER") {
+    return "1.234";
+  }
+
+  if (config.format === "DECIMAL") {
+    return "1.234,56";
+  }
+
+  return "1.234";
 }
 
 function panelMetricAggregationTargetsField(aggregation: PanelMetricAggregation, fieldType: string) {

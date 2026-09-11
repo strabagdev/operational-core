@@ -660,6 +660,8 @@ KPI modules reference metrics by stable id:
 }
 ```
 
+KPI presentation config is explicit by `format`. `MONEY` requires `currencyCode`, an ISO 4217 code of three uppercase letters, for example `"CLP"`. `PERCENT` requires `percentScale`: `"RATIO"` means `0.25` is rendered as `25 %`, and `"WHOLE"` means `25` is rendered as `25 %`. `currencyCode` is not accepted for non-`MONEY` formats, and `percentScale` is not accepted for non-`PERCENT` formats.
+
 Metrics are calculated server-side for the executed dataset only. If `datasetId` is omitted, Core executes the first configured dataset and returns only metrics attached to that dataset; if `datasetId` is provided, Core returns only metrics attached to the requested dataset. Core does not execute other datasets to satisfy metrics. Static dataset filters, required panel filters, metric-selected optional panel filters, and search are applied before aggregation. For `LATEST_BY_RELATION`, filtering happens before grouping and aggregation happens after grouping. Response pagination only affects `datasets[].rows`, never metric values. The configuration never accepts SQL, JavaScript, expressions, or field names as logic; all references use ids.
 
 Metric value rules are intentionally narrow: `COUNT` counts result rows; `COUNT_VALUES` excludes `null` and empty text but counts `0` and `false`; `COUNT_DISTINCT` deduplicates normalized typed values; `SUM` and `AVG` operate only on numeric field types; `MIN` and `MAX` compare numeric values numerically and `DATE`/`DATETIME` values by canonical ISO representations. Metric responses include `valueType = NUMBER`, `DATE`, or `DATETIME` according to the aggregation and field type.

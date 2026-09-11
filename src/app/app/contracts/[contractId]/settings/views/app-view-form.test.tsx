@@ -5,6 +5,7 @@ import {
   AppViewForm,
   cleanPanelDatasetForEntity,
   cleanPanelFiltersForEntity,
+  cleanPanelKpiConfigForFormat,
   cleanPanelMetricsForDatasets,
   cleanPanelModulesForDatasets,
   incompatiblePanelColumns,
@@ -614,6 +615,112 @@ describe("AppViewForm", () => {
     expect(html).toContain("Indicador");
     expect(html).toContain("Valor de ejemplo en vista previa");
     expect(html).not.toContain("<textarea");
+  });
+
+  it("renders explicit MONEY and PERCENT KPI presentation controls", () => {
+    const html = renderToStaticMarkup(
+      <AppViewForm
+        action={noopAction}
+        entityTypes={panelEntityTypes()}
+        initialValues={panelInitialValues({
+          metrics: [
+            {
+              id: "monto-total",
+              name: "Monto total",
+              datasetId: "latest-procedure-status",
+              aggregation: "SUM",
+              fieldId: "revision_field",
+              filterIds: [],
+            },
+            {
+              id: "avance",
+              name: "Avance",
+              datasetId: "latest-procedure-status",
+              aggregation: "AVG",
+              fieldId: "revision_field",
+              filterIds: [],
+            },
+          ],
+          modules: [
+            {
+              id: "monto-kpi",
+              title: "Monto",
+              datasetId: "latest-procedure-status",
+              visualization: {
+                type: "KPI",
+                config: {
+                  metricId: "monto-total",
+                  label: "Monto total",
+                  format: "MONEY",
+                  currencyCode: "CLP",
+                },
+              },
+              layout: { x: 0, y: 0, w: 4, h: 2 },
+            },
+            {
+              id: "avance-kpi",
+              title: "Avance",
+              datasetId: "latest-procedure-status",
+              visualization: {
+                type: "KPI",
+                config: {
+                  metricId: "avance",
+                  label: "Avance",
+                  format: "PERCENT",
+                  percentScale: "RATIO",
+                },
+              },
+              layout: { x: 4, y: 0, w: 4, h: 2 },
+            },
+          ],
+        })}
+        submitLabel="Guardar experiencia"
+      />,
+    );
+
+    expect(html).toContain("Moneda");
+    expect(html).toContain("CLP");
+    expect(html).toContain("Escala del porcentaje");
+    expect(html).toContain("Proporción: 0,25 → 25 %");
+    expect(html).toContain("Porcentaje completo: 25 → 25 %");
+    expect(html).toContain("$");
+    expect(html).toContain("25 %");
+  });
+
+  it("cleans incompatible KPI presentation properties when format changes", () => {
+    expect(cleanPanelKpiConfigForFormat({
+      metricId: "monto-total",
+      label: "Monto total",
+      format: "MONEY",
+      currencyCode: "CLP",
+    }, "NUMBER")).toEqual({
+      metricId: "monto-total",
+      label: "Monto total",
+      format: "NUMBER",
+    });
+
+    expect(cleanPanelKpiConfigForFormat({
+      metricId: "avance",
+      label: "Avance",
+      format: "PERCENT",
+      percentScale: "WHOLE",
+    }, "MONEY")).toEqual({
+      metricId: "avance",
+      label: "Avance",
+      format: "MONEY",
+      currencyCode: "CLP",
+    });
+
+    expect(cleanPanelKpiConfigForFormat({
+      metricId: "avance",
+      label: "Avance",
+      format: "NUMBER",
+    }, "PERCENT")).toEqual({
+      metricId: "avance",
+      label: "Avance",
+      format: "PERCENT",
+      percentScale: "RATIO",
+    });
   });
 
   it("keeps non-PANEL AppViews on the existing narrow form layout", () => {

@@ -2003,6 +2003,220 @@ describe("PANEL AppView config", () => {
     expect(config.modules[1]?.visualization.type).toBe("KPI");
   });
 
+  it("parses MONEY KPI configs with an explicit ISO currency code", () => {
+    const config = parseAppViewConfig({
+      config: recordsPanelConfig({
+        metrics: [
+          {
+            id: "monto-total",
+            name: "Monto total",
+            datasetId: "version-records",
+            aggregation: "SUM",
+            fieldId: "revision_field",
+            filterIds: [],
+          },
+        ],
+        modules: [
+          {
+            id: "monto-kpi",
+            title: "Monto total",
+            datasetId: "version-records",
+            visualization: {
+              type: "KPI",
+              config: {
+                metricId: "monto-total",
+                label: "Monto total",
+                format: "MONEY",
+                currencyCode: "CLP",
+              },
+            },
+            layout: { x: 0, y: 0, w: 4, h: 2 },
+          },
+        ],
+      }),
+      type: "PANEL",
+    } as never);
+
+    expect(config.type).toBe("PANEL");
+    if (config.type !== "PANEL") return;
+    expect(config.modules[0]?.visualization).toMatchObject({
+      type: "KPI",
+      config: { format: "MONEY", currencyCode: "CLP" },
+    });
+  });
+
+  it("rejects MONEY KPI configs without a valid ISO currency code", () => {
+    const config = recordsPanelConfig({
+      modules: [
+        {
+          id: "monto-kpi",
+          datasetId: "version-records",
+          visualization: {
+            type: "KPI",
+            config: {
+              metricId: "monto-total",
+              label: "Monto total",
+              format: "MONEY",
+            },
+          },
+          layout: { x: 0, y: 0, w: 4, h: 2 },
+        },
+      ],
+    });
+
+    expect(() => parseAppViewConfig({ config, type: "PANEL" } as never)).toThrow();
+
+    let invalidCurrencyError: unknown;
+    try {
+      parseAppViewConfig({
+      config: recordsPanelConfig({
+        modules: [
+          {
+            id: "monto-kpi",
+            datasetId: "version-records",
+            visualization: {
+              type: "KPI",
+              config: {
+                metricId: "monto-total",
+                label: "Monto total",
+                format: "MONEY",
+                currencyCode: "clp",
+              },
+            },
+            layout: { x: 0, y: 0, w: 4, h: 2 },
+          },
+        ],
+      }),
+      type: "PANEL",
+      } as never);
+    } catch (error) {
+      invalidCurrencyError = error;
+    }
+
+    expect(appViewFieldErrors(invalidCurrencyError)?.panelKpiMetric).toContain(
+      "Ingresa un código de moneda ISO 4217 de tres letras.",
+    );
+  });
+
+  it("parses PERCENT KPI configs with explicit ratio and whole scales", () => {
+    for (const percentScale of ["RATIO", "WHOLE"] as const) {
+      const config = parseAppViewConfig({
+        config: recordsPanelConfig({
+          metrics: [
+            {
+              id: `avance-${percentScale.toLowerCase()}`,
+              name: "Avance",
+              datasetId: "version-records",
+              aggregation: "AVG",
+              fieldId: "revision_field",
+              filterIds: [],
+            },
+          ],
+          modules: [
+            {
+              id: `avance-${percentScale.toLowerCase()}-kpi`,
+              title: "Avance",
+              datasetId: "version-records",
+              visualization: {
+                type: "KPI",
+                config: {
+                  metricId: `avance-${percentScale.toLowerCase()}`,
+                  label: "Avance",
+                  format: "PERCENT",
+                  percentScale,
+                },
+              },
+              layout: { x: 0, y: 0, w: 4, h: 2 },
+            },
+          ],
+        }),
+        type: "PANEL",
+      } as never);
+
+      expect(config.type).toBe("PANEL");
+      if (config.type !== "PANEL") return;
+      expect(config.modules[0]?.visualization).toMatchObject({
+        type: "KPI",
+        config: { format: "PERCENT", percentScale },
+      });
+    }
+  });
+
+  it("rejects PERCENT KPI configs without percentScale", () => {
+    const config = recordsPanelConfig({
+      modules: [
+        {
+          id: "avance-kpi",
+          datasetId: "version-records",
+          visualization: {
+            type: "KPI",
+            config: {
+              metricId: "avance",
+              label: "Avance",
+              format: "PERCENT",
+            },
+          },
+          layout: { x: 0, y: 0, w: 4, h: 2 },
+        },
+      ],
+    });
+
+    let error: unknown;
+    try {
+      parseAppViewConfig({ config, type: "PANEL" } as never);
+    } catch (caughtError) {
+      error = caughtError;
+    }
+
+    expect(appViewFieldErrors(error)?.panelKpiMetric).toContain("Selecciona cómo interpretar el porcentaje.");
+  });
+
+  it("rejects MONEY and PERCENT properties on incompatible KPI formats", () => {
+    expect(() => parseAppViewConfig({
+      config: recordsPanelConfig({
+        modules: [
+          {
+            id: "total-kpi",
+            datasetId: "version-records",
+            visualization: {
+              type: "KPI",
+              config: {
+                metricId: "total-registros",
+                label: "Total",
+                format: "NUMBER",
+                currencyCode: "CLP",
+              },
+            },
+            layout: { x: 0, y: 0, w: 4, h: 2 },
+          },
+        ],
+      }),
+      type: "PANEL",
+    } as never)).toThrow("La configuración del panel contiene propiedades no soportadas.");
+
+    expect(() => parseAppViewConfig({
+      config: recordsPanelConfig({
+        modules: [
+          {
+            id: "total-kpi",
+            datasetId: "version-records",
+            visualization: {
+              type: "KPI",
+              config: {
+                metricId: "total-registros",
+                label: "Total",
+                format: "DECIMAL",
+                percentScale: "RATIO",
+              },
+            },
+            layout: { x: 0, y: 0, w: 4, h: 2 },
+          },
+        ],
+      }),
+      type: "PANEL",
+    } as never)).toThrow("La configuración del panel contiene propiedades no soportadas.");
+  });
+
   it("rejects unsupported PANEL visualization and reserved formula surfaces in v1", () => {
     expect(() => parseAppViewConfig({
       config: {
@@ -2123,7 +2337,7 @@ describe("PANEL AppView config", () => {
             datasetId: "version-records",
             visualization: {
               type: "KPI",
-              config: { metricId: "latest-date", label: "Fecha", format: "MONEY" },
+              config: { metricId: "latest-date", label: "Fecha", format: "NUMBER" },
             },
             layout: { x: 0, y: 0, w: 4, h: 2 },
           },
