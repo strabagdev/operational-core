@@ -1,10 +1,38 @@
 "use client";
 
 import { useActionState, useEffect, useMemo, useState } from "react";
+import type { ReactNode } from "react";
 import type { AppViewType } from "@prisma/client";
+import {
+  AlertCircle,
+  ArrowDown,
+  ArrowUp,
+  BarChart3,
+  CheckCircle2,
+  Database,
+  Eye,
+  EyeOff,
+  Filter,
+  Grid3X3,
+  LayoutDashboard,
+  Maximize2,
+  Monitor,
+  Pencil,
+  Plus,
+  Settings2,
+  Smartphone,
+  Trash2,
+} from "lucide-react";
 
 import { EntityIcon } from "@/components/entity-icon";
 import { Button } from "@/components/ui/button";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import {
   appViewTypeOptions,
   appViewWorkflowOptions,
@@ -26,8 +54,10 @@ import {
   suggestedAppViewSlug,
 } from "@/lib/app-views";
 import { entityIconOptions } from "@/lib/entity-icons";
+import { cn } from "@/lib/utils";
 
 import type { AppViewActionState } from "./actions";
+import { PanelEditorSheet, PanelEditorTopBar } from "./panel-editor-chrome";
 
 type AppViewEntityTypeOption = {
   fields: Array<{
@@ -95,6 +125,21 @@ type AppViewFormProps = {
 
 const stateUpdateStateFieldTypes = new Set(["SELECT", "TEXT", "INTEGER", "DECIMAL", "MONEY", "BOOLEAN", "DATE"]);
 
+type PanelEditorSectionId =
+  | "datos-generales"
+  | "fuentes-de-datos"
+  | "filtros"
+  | "metricas"
+  | "modulos"
+  | "diseno";
+
+type PanelEditorSheetKind = "dataset" | "filter" | "metric" | "module";
+
+type PanelEditorSheetState = {
+  index: number | null;
+  kind: PanelEditorSheetKind;
+} | null;
+
 export function AppViewForm({
   action,
   appViews = [],
@@ -124,6 +169,7 @@ export function AppViewForm({
   const [type, setType] = useState<AppViewType>(
     valueFromState(state, "type", initialValues?.type ?? "RECORDS") as AppViewType,
   );
+  const [icon, setIcon] = useState(valueFromState(state, "icon", initialValues?.icon ?? ""));
   const [entityTypeId, setEntityTypeId] = useState(
     valueFromState(state, "entityTypeId") ||
     (initialValues?.config.type === "RECORDS" || initialValues?.config.type === "BOARD" ||
@@ -413,6 +459,16 @@ export function AppViewForm({
     initialPanelConfig?.layout.rowHeight ?? 8,
   );
   const [panelNotice, setPanelNotice] = useState("");
+  const [activePanelSection, setActivePanelSection] = useState<PanelEditorSectionId>(
+    firstPanelErrorSection(state.fieldErrors) ?? "datos-generales",
+  );
+  const [previewExpanded, setPreviewExpanded] = useState(true);
+  const [active, setActive] = useState(
+    state.values ? valueFromState(state, "active") === "on" : initialValues?.active ?? true,
+  );
+  const [sortOrder, setSortOrder] = useState(
+    valueFromState(state, "sortOrder", String(initialValues?.sortOrder ?? 0)),
+  );
   const panelConfig = buildPanelConfig({
     baseConfig: initialPanelConfig,
     datasets: panelDatasets,
@@ -422,6 +478,42 @@ export function AppViewForm({
     columns: panelLayoutColumns,
     rowHeight: panelLayoutRowHeight,
   });
+  const normalizedInitialPanelConfig = initialValues?.config.type === "PANEL"
+    ? buildPanelConfig({
+        baseConfig: initialValues.config,
+        datasets: initialValues.config.datasets,
+        filters: panelEditorFilters(initialValues.config),
+        metrics: initialValues.config.metrics,
+        modules: initialValues.config.modules,
+        columns: initialValues.config.layout.columns,
+        rowHeight: initialValues.config.layout.rowHeight ?? 8,
+      })
+    : undefined;
+  const initialPanelSnapshot = normalizedInitialPanelConfig
+    ? JSON.stringify(panelConfigFormValue(normalizedInitialPanelConfig))
+    : "";
+  const panelDirty = type === "PANEL" && (
+    name !== (initialValues?.name ?? "") ||
+    slug !== (initialValues?.slug ?? "") ||
+    icon !== (initialValues?.icon ?? "") ||
+    active !== (initialValues?.active ?? true) ||
+    sortOrder !== String(initialValues?.sortOrder ?? 0) ||
+    JSON.stringify(panelConfigFormValue(panelConfig)) !== initialPanelSnapshot
+  );
+
+  useEffect(() => {
+    if (type !== "PANEL") {
+      return;
+    }
+
+    const nextSection = firstPanelErrorSection(state.fieldErrors);
+
+    if (nextSection && nextSection !== activePanelSection) {
+      const timeoutId = window.setTimeout(() => setActivePanelSection(nextSection), 0);
+
+      return () => window.clearTimeout(timeoutId);
+    }
+  }, [activePanelSection, state.fieldErrors, type]);
   function toggleDashboardEntity(entityTypeId: string, checked: boolean) {
     const next = new Set(dashboardEntityTypeIds);
 
@@ -434,30 +526,27 @@ export function AppViewForm({
     setDashboardEntityTypeIds(next);
   }
 
-  return (
-    <form action={formAction} className={type === "PANEL" ? "grid w-full gap-4" : "grid gap-4"}>
-      <ActionErrorSummary state={state} />
+  const generalSection = (
+    <section
+      aria-labelledby={type === "PANEL" ? "panel-section-datos-generales" : undefined}
+      className={type === "PANEL" ? "grid gap-4" : "contents"}
+      data-panel-section={type === "PANEL" ? "datos-generales" : undefined}
+      id="datos-generales"
+    >
       {type === "PANEL" ? (
-        <nav className="flex flex-wrap gap-2 rounded-md border border-border bg-muted/40 p-2 text-sm" aria-label="Navegación del editor PANEL">
-          {["Datos generales", "Fuentes de datos", "Filtros", "Métricas", "Módulos", "Diseño"].map((item) => (
-            <a
-              className={`rounded border px-3 py-1 ${panelSectionHasErrors(panelSectionId(item), state.fieldErrors) ? "border-destructive bg-destructive/10 text-destructive" : "border-input bg-background"}`}
-              href={`#${panelSectionId(item)}`}
-              key={item}
-            >
-              {item}
-            </a>
-          ))}
-        </nav>
+        <PanelSectionHeader
+          description="Define la identidad del panel y su estado general."
+          id="panel-section-datos-generales"
+          title="Datos generales"
+          tone="general"
+        />
       ) : null}
-
-      <section className={type === "PANEL" ? "grid gap-3 rounded-md border border-border p-3" : "contents"} id="datos-generales">
-        {type === "PANEL" ? <h3 className="text-sm font-medium">Datos generales</h3> : null}
-        <div className={type === "PANEL" ? "grid gap-3 md:grid-cols-2 xl:grid-cols-4" : "grid gap-4"}>
-          <label className="grid gap-2 text-sm font-medium">
+      <div className={type === "PANEL" ? "grid gap-4" : "grid gap-4"}>
+        <div className={type === "PANEL" ? "grid min-w-0 gap-3 lg:grid-cols-2" : "grid gap-4"}>
+          <label className="grid min-w-0 gap-2 text-sm font-medium">
             Nombre
             <input
-              className="h-10 rounded-md border border-input bg-background px-3 text-sm outline-none ring-ring focus-visible:ring-2"
+              className="h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 text-sm outline-none ring-ring focus-visible:ring-2"
               name="name"
               onChange={(event) => {
                 const nextName = event.target.value;
@@ -473,10 +562,10 @@ export function AppViewForm({
             <FieldError errors={state.fieldErrors?.name} />
           </label>
 
-          <label className="grid gap-2 text-sm font-medium">
+          <label className="grid min-w-0 gap-2 text-sm font-medium">
             Slug
             <input
-              className="h-10 rounded-md border border-input bg-background px-3 text-sm outline-none ring-ring focus-visible:ring-2"
+              className="h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 text-sm outline-none ring-ring focus-visible:ring-2"
               name="slug"
               onChange={(event) => {
                 setSlugTouched(true);
@@ -487,13 +576,16 @@ export function AppViewForm({
             />
             <FieldError errors={state.fieldErrors?.slug} />
           </label>
+        </div>
 
-          <label className="grid gap-2 text-sm font-medium">
+        <div className={type === "PANEL" ? "grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_7rem_minmax(10rem,auto)]" : "grid gap-4"}>
+          <label className="grid min-w-0 gap-2 text-sm font-medium">
             Icono opcional
             <select
-              className="h-10 rounded-md border border-input bg-background px-3 text-sm font-normal outline-none ring-ring focus-visible:ring-2"
-              defaultValue={valueFromState(state, "icon", initialValues?.icon ?? "")}
+              className="h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 text-sm font-normal outline-none ring-ring focus-visible:ring-2"
               name="icon"
+              onChange={(event) => setIcon(event.target.value)}
+              value={icon}
             >
               <option value="">Sin icono</option>
               {entityIconOptions.map((option) => (
@@ -505,10 +597,10 @@ export function AppViewForm({
             <FieldError errors={state.fieldErrors?.icon} />
           </label>
 
-          <label className="grid gap-2 text-sm font-medium">
+          <label className="grid min-w-0 gap-2 text-sm font-medium">
             Tipo
             <select
-              className="h-10 rounded-md border border-input bg-background px-3 text-sm font-normal outline-none ring-ring focus-visible:ring-2"
+              className="h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 text-sm font-normal outline-none ring-ring focus-visible:ring-2"
               name="type"
               onChange={(event) => setType(event.target.value as AppViewType)}
               value={type}
@@ -521,21 +613,94 @@ export function AppViewForm({
             </select>
             <FieldError errors={state.fieldErrors?.type} />
           </label>
+
+          {type === "PANEL" ? (
+            <>
+              <label className="grid min-w-0 gap-2 text-sm font-medium">
+                Orden
+                <input
+                  className="h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 text-sm outline-none ring-ring focus-visible:ring-2"
+                  min={0}
+                  name="sortOrder"
+                  onChange={(event) => setSortOrder(event.target.value)}
+                  type="number"
+                  value={sortOrder}
+                />
+              </label>
+              <label
+                className="grid min-w-0 cursor-pointer gap-2 rounded-md border border-border bg-muted/20 px-3 py-2 text-sm font-medium"
+                data-panel-active-control="true"
+              >
+                Estado de la experiencia
+                <span className="flex min-w-0 items-center justify-between gap-3">
+                  <span className="truncate text-sm font-normal">{active ? "Activa" : "Inactiva"}</span>
+                  <span className={cn(
+                    "relative h-6 w-11 shrink-0 rounded-full border transition-colors",
+                    active ? "border-emerald-300 bg-emerald-100" : "border-slate-300 bg-slate-100",
+                  )}>
+                    {!active ? <input name="active" type="hidden" value="false" /> : null}
+                    <input
+                      checked={active}
+                      className="peer sr-only"
+                      name="active"
+                      onChange={(event) => setActive(event.target.checked)}
+                      type="checkbox"
+                    />
+                    <span className={cn(
+                      "absolute top-0.5 h-5 w-5 rounded-full bg-background shadow-sm transition-transform",
+                      active ? "translate-x-5" : "translate-x-0.5",
+                    )} />
+                  </span>
+                </span>
+              </label>
+            </>
+          ) : null}
         </div>
-      </section>
+      </div>
+    </section>
+  );
+
+  return (
+    <form action={formAction} className={type === "PANEL" ? "grid w-full gap-4" : "grid gap-4"}>
+      <ActionErrorSummary state={state} />
+      {type === "PANEL" ? (
+        <PanelEditorTopBar
+          actionPending={actionPending}
+          active={active}
+          dirty={panelDirty}
+          name={name || "Panel sin nombre"}
+          submitLabel={submitLabel}
+        />
+      ) : null}
+      {type === "PANEL" && activePanelSection !== "datos-generales" ? (
+        <PanelHiddenGeneralFields
+          active={active}
+          icon={icon}
+          name={name}
+          slug={slug}
+          sortOrder={sortOrder}
+          type={type}
+        />
+      ) : null}
+
+      {type !== "PANEL" ? generalSection : null}
 
       {type === "PANEL" ? (
         <PanelConfigFields
+          activeSection={activePanelSection}
           config={panelConfig}
           datasets={panelDatasets}
           entityTypes={entityTypes}
           fieldErrors={state.fieldErrors}
           filters={panelFilters}
+          generalSection={generalSection}
           layoutColumns={panelLayoutColumns}
           layoutRowHeight={panelLayoutRowHeight}
           modules={panelModules}
           metrics={panelMetrics}
           notice={panelNotice}
+          previewExpanded={previewExpanded}
+          setActiveSection={setActivePanelSection}
           setDatasets={setPanelDatasets}
           setFilters={setPanelFilters}
           setLayoutColumns={setPanelLayoutColumns}
@@ -543,6 +708,7 @@ export function AppViewForm({
           setModules={setPanelModules}
           setMetrics={setPanelMetrics}
           setNotice={setPanelNotice}
+          setPreviewExpanded={setPreviewExpanded}
         />
       ) : (
         <ConfigFields
@@ -628,27 +794,32 @@ export function AppViewForm({
         />
       )}
 
-      <div className="grid gap-4 sm:grid-cols-2">
-        <label className="grid gap-2 text-sm font-medium">
-          Orden
-          <input
-            className="h-10 rounded-md border border-input bg-background px-3 text-sm outline-none ring-ring focus-visible:ring-2"
-            defaultValue={valueFromState(state, "sortOrder", String(initialValues?.sortOrder ?? 0))}
-            min={0}
-            name="sortOrder"
-            type="number"
-          />
-        </label>
-        <label className="flex items-end gap-2 pb-2 text-sm font-medium">
-          <input
-            className="h-4 w-4"
-            defaultChecked={state.values ? valueFromState(state, "active") === "on" : initialValues?.active ?? true}
-            name="active"
-            type="checkbox"
-          />
-          Activa
-        </label>
-      </div>
+      {type !== "PANEL" ? (
+        <div className="grid gap-4 sm:grid-cols-2">
+          <label className="grid gap-2 text-sm font-medium">
+            Orden
+            <input
+              className="h-10 rounded-md border border-input bg-background px-3 text-sm outline-none ring-ring focus-visible:ring-2"
+              min={0}
+              name="sortOrder"
+              onChange={(event) => setSortOrder(event.target.value)}
+              type="number"
+              value={sortOrder}
+            />
+          </label>
+          <label className="flex items-end gap-2 pb-2 text-sm font-medium">
+            {!active ? <input name="active" type="hidden" value="false" /> : null}
+            <input
+              checked={active}
+              className="h-4 w-4"
+              name="active"
+              onChange={(event) => setActive(event.target.checked)}
+              type="checkbox"
+            />
+            Activa
+          </label>
+        </div>
+      ) : null}
 
       <div className="sticky bottom-0 z-10 flex justify-end border-t border-border bg-background/95 py-3">
         <Button disabled={actionPending} type="submit">
@@ -660,16 +831,20 @@ export function AppViewForm({
 }
 
 function PanelConfigFields({
+  activeSection,
   config,
   datasets,
   entityTypes,
   fieldErrors,
   filters,
+  generalSection,
   layoutColumns,
   layoutRowHeight,
   metrics,
   modules,
   notice,
+  previewExpanded,
+  setActiveSection,
   setDatasets,
   setFilters,
   setLayoutColumns,
@@ -677,17 +852,22 @@ function PanelConfigFields({
   setMetrics,
   setModules,
   setNotice,
+  setPreviewExpanded,
 }: {
+  activeSection: PanelEditorSectionId;
   config: PanelConfig;
   datasets: PanelEditorDataset[];
   entityTypes: AppViewEntityTypeOption[];
   fieldErrors?: Record<string, string[]>;
   filters: PanelEditorFilter[];
+  generalSection: ReactNode;
   layoutColumns: number;
   layoutRowHeight: number;
   metrics: PanelEditorMetric[];
   modules: PanelEditorModule[];
   notice: string;
+  previewExpanded: boolean;
+  setActiveSection: (value: PanelEditorSectionId) => void;
   setDatasets: (value: PanelEditorDataset[]) => void;
   setFilters: (value: PanelEditorFilter[]) => void;
   setLayoutColumns: (value: number) => void;
@@ -695,299 +875,1257 @@ function PanelConfigFields({
   setMetrics: (value: PanelEditorMetric[]) => void;
   setModules: (value: PanelEditorModule[]) => void;
   setNotice: (value: string) => void;
+  setPreviewExpanded: (value: boolean) => void;
 }) {
   const layoutOverlaps = panelModuleLayoutOverlaps(modules);
-  const addDataset = () => {
-    const entityType = entityTypes[0];
-    const fieldId = entityType?.fields.find((field) => field.isActive)?.id ?? "";
-    const id = nextPanelId("dataset", datasets.map((dataset) => dataset.id));
+  const [sheet, setSheet] = useState<PanelEditorSheetState>(null);
+  const [selectedLayoutModuleId, setSelectedLayoutModuleId] = useState(modules[0]?.id ?? "");
+  const selectedLayoutModule = modules.find((module) => module.id === selectedLayoutModuleId) ?? modules[0];
+  const sections = panelEditorSections({
+    activeSection,
+    datasets,
+    fieldErrors,
+    filters,
+    layoutOverlaps,
+    metrics,
+    modules,
+  });
+  const openSheet = (kind: PanelEditorSheetKind, index: number | null = null) => setSheet({ kind, index });
 
-    setDatasets([
-      ...datasets,
-      {
-        id,
-        name: "Dataset",
-        source: { type: "ENTITY", entityTypeId: entityType?.id ?? "" },
-        transformation: {
-          type: "RECORDS",
-          fieldIds: fieldId ? [fieldId] : [],
-          pagination: { pageSize: 25 },
-        },
-      },
-    ]);
-  };
-  const addFilter = () => {
-    const dataset = datasets[0];
-    const entityType = entityTypes.find((item) => item.id === dataset?.source.entityTypeId) ?? entityTypes[0];
-    const field = entityType?.fields.find((item) => item.isActive);
-    const id = nextPanelId("filter", filters.map((filter) => filter.id));
+  useEffect(() => {
+    if (!selectedLayoutModule && modules[0]) {
+      const timeoutId = window.setTimeout(() => setSelectedLayoutModuleId(modules[0].id), 0);
 
-    setFilters([
-      ...filters,
-      {
-        id,
-        label: "Filtro",
-        valueType: panelValueTypeForField(field),
-        fieldId: field?.id ?? "",
-        operator: "EQ",
-      },
-    ]);
-  };
-  const addModule = () => {
-    const dataset = datasets[0];
-    const id = nextPanelId("table", modules.map((module) => module.id));
-
-    setModules(packPanelModules([
-      ...modules,
-      {
-        id,
-        title: "Tabla",
-        datasetId: dataset?.id ?? "",
-        visualization: {
-          type: "TABLE",
-          config: {
-            columns: [],
-            searchable: true,
-            paginated: true,
-          },
-        },
-        layout: { x: 0, y: modules.length, w: Math.min(12, layoutColumns), h: 6 },
-      },
-    ], layoutColumns));
-  };
-  const addMetric = () => {
-    const dataset = datasets[0];
-    const id = nextPanelId("metric", metrics.map((metric) => metric.id));
-
-    setMetrics([
-      ...metrics,
-      {
-        id,
-        name: "Total de registros",
-        datasetId: dataset?.id ?? "",
-        aggregation: "COUNT",
-        fieldId: null,
-        filterIds: [],
-        conditions: [],
-      },
-    ]);
-  };
-  const addKpiModule = () => {
-    const dataset = datasets[0];
-    const metric = metrics[0];
-    const id = nextPanelId("kpi", modules.map((module) => module.id));
-
-    setModules(packPanelModules([
-      ...modules,
-      {
-        id,
-        title: "Indicador",
-        datasetId: metric?.datasetId ?? dataset?.id ?? "",
-        visualization: {
-          type: "KPI",
-          config: {
-            metricId: metric?.id ?? "",
-            label: metric?.name ?? "Indicador",
-            format: "NUMBER",
-          },
-        },
-        layout: { x: 0, y: modules.length, w: Math.min(4, layoutColumns), h: 2 },
-      },
-    ], layoutColumns));
-  };
+      return () => window.clearTimeout(timeoutId);
+    }
+  }, [modules, selectedLayoutModule]);
 
   return (
-    <fieldset className="grid gap-4 rounded-md border border-border p-3">
-      <legend className="px-1 text-sm font-medium">Configuración del panel</legend>
+    <fieldset className="min-w-0">
+      <legend className="sr-only">Configuración del panel</legend>
       <input name="panelConfig" type="hidden" value={JSON.stringify(panelConfigFormValue(config))} />
-      <PanelErrorSummary fieldErrors={fieldErrors} />
-      <FieldError errors={fieldErrors?.panelConfig} />
-      {notice ? (
-        <p className="rounded-md border border-border bg-muted px-3 py-2 text-sm text-muted-foreground" role="status">
-          {notice}
-        </p>
-      ) : null}
+      <div className="grid min-h-[calc(100vh-13rem)] min-w-0 gap-4 lg:grid-cols-[190px_minmax(0,1fr)] 2xl:grid-cols-[210px_minmax(560px,1fr)_minmax(420px,0.7fr)]">
+        <PanelEditorNavigation
+          onSelect={setActiveSection}
+          sections={sections}
+        />
+        <div className="min-w-0 overflow-hidden rounded-md border border-border bg-background shadow-sm">
+          <div className="max-h-[calc(100vh-14rem)] overflow-auto p-4">
+            <PanelErrorSummary fieldErrors={fieldErrors} onSelectSection={setActiveSection} />
+            <FieldError errors={fieldErrors?.panelConfig} />
+            {notice ? (
+              <p className="mb-4 rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-900" role="status">
+                {notice}
+              </p>
+            ) : null}
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,3fr)_minmax(320px,2fr)]">
-        <div className="grid min-w-0 gap-4">
-      <section className={`grid gap-3 ${panelSectionHasErrors("fuentes-de-datos", fieldErrors) ? "rounded-md border border-destructive/30 p-3" : ""}`} id="fuentes-de-datos">
-        <div className="flex items-center justify-between gap-3">
-          <h3 className="text-sm font-medium">Fuentes de datos</h3>
-          <button className="rounded border border-input px-3 py-1 text-sm" onClick={addDataset} type="button">
-            Agregar dataset
-          </button>
+            {activeSection === "datos-generales" ? generalSection : null}
+
+            {activeSection === "fuentes-de-datos" ? (
+              <section className="grid gap-4" data-panel-section="fuentes-de-datos" id="fuentes-de-datos">
+                <PanelSectionHeader
+                  actionLabel="Agregar dataset"
+                  description="Define las entidades, transformaciones y campos que alimentan el panel."
+                  id="panel-section-fuentes-de-datos"
+                  onAction={() => openSheet("dataset")}
+                  title="Fuentes de datos"
+                  tone="datasets"
+                />
+                <FieldError errors={fieldErrors?.datasets} />
+                {datasets.length === 0 ? (
+                  <PanelEmptyState label="No hay datasets configurados." />
+                ) : (
+                  <div className="grid gap-3 lg:grid-cols-2">
+                    {datasets.map((dataset, index) => (
+                      <PanelDatasetCard
+                        dataset={dataset}
+                        entityTypes={entityTypes}
+                        key={dataset.id}
+                        onDelete={() => {
+                          const next = removePanelDatasetAt({ datasets, filters, metrics, modules }, index);
+
+                          setDatasets(next.datasets);
+                          setFilters(next.filters);
+                          setMetrics(next.metrics);
+                          setModules(next.modules);
+                        }}
+                        onEdit={() => openSheet("dataset", index)}
+                      />
+                    ))}
+                  </div>
+                )}
+              </section>
+            ) : null}
+
+            {activeSection === "filtros" ? (
+              <section className="grid gap-4" data-panel-section="filtros" id="filtros">
+                <PanelSectionHeader
+                  actionLabel="Agregar filtro"
+                  description="Crea filtros visibles para reutilizarlos en datasets y métricas."
+                  id="panel-section-filtros"
+                  onAction={datasets.length === 0 ? undefined : () => openSheet("filter")}
+                  title="Filtros"
+                  tone="filters"
+                />
+                {filters.length === 0 ? (
+                  <PanelEmptyState label="Sin filtros de panel." />
+                ) : (
+                  <div className="grid gap-3 lg:grid-cols-2">
+                    {filters.map((filter, index) => (
+                      <PanelFilterCard
+                        datasets={datasets}
+                        entityTypes={entityTypes}
+                        filter={filter}
+                        key={filter.id}
+                        onDelete={() => {
+                          const next = removePanelFilterAt({ filters, metrics }, index);
+
+                          setFilters(next.filters);
+                          setMetrics(next.metrics);
+                        }}
+                        onEdit={() => openSheet("filter", index)}
+                      />
+                    ))}
+                  </div>
+                )}
+              </section>
+            ) : null}
+
+            {activeSection === "metricas" ? (
+              <section className="grid gap-4" data-panel-section="metricas" id="metricas">
+                <PanelSectionHeader
+                  actionLabel="Agregar métrica"
+                  description="Configura KPIs calculados por Core a partir del dataset transformado."
+                  id="panel-section-metricas"
+                  onAction={datasets.length === 0 ? undefined : () => openSheet("metric")}
+                  title="Métricas"
+                  tone="metrics"
+                />
+                <FieldError errors={fieldErrors?.metrics} />
+                {metrics.length === 0 ? (
+                  <PanelEmptyState label="Sin métricas configuradas." />
+                ) : (
+                  <div className="grid gap-3 lg:grid-cols-2">
+                    {metrics.map((metric, index) => (
+                      <PanelMetricCard
+                        datasets={datasets}
+                        entityTypes={entityTypes}
+                        key={metric.id}
+                        metric={metric}
+                        onDelete={() => {
+                          const next = removePanelMetricAt({ metrics, modules }, index);
+
+                          setMetrics(next.metrics);
+                          setModules(next.modules);
+                        }}
+                        onEdit={() => openSheet("metric", index)}
+                      />
+                    ))}
+                  </div>
+                )}
+              </section>
+            ) : null}
+
+            {activeSection === "modulos" ? (
+              <section className="grid gap-4" data-panel-section="modulos" id="modulos">
+                <PanelSectionHeader
+                  actionLabel="Agregar módulo"
+                  description="Ubica tablas e indicadores sobre el layout del panel."
+                  id="panel-section-modulos"
+                  onAction={datasets.length === 0 ? undefined : () => openSheet("module")}
+                  title="Módulos"
+                  tone="modules"
+                />
+                <FieldError errors={fieldErrors?.modules} />
+                {modules.length === 0 ? (
+                  <PanelEmptyState label="No hay módulos configurados." />
+                ) : (
+                  <div className="grid gap-3 lg:grid-cols-2">
+                    {sortPanelModulesByLayout(modules).map((module, spatialIndex, spatialModules) => {
+                      const index = modules.findIndex((item) => item.id === module.id);
+                      const overlapWarnings = layoutOverlaps
+                        .filter((overlap) => overlap.left.id === module.id || overlap.right.id === module.id)
+                        .map((overlap) => {
+                          const other = overlap.left.id === module.id ? overlap.right : overlap.left;
+
+                          return `Se solapa con ${other.title || other.id}.`;
+                        });
+
+                      const moduleMetric = module.visualization.type === "KPI"
+                        ? metrics.find((item) => item.id === (module.visualization as Extract<PanelModule["visualization"], { type: "KPI" }>).config.metricId)
+                        : undefined;
+
+                      return (
+                        <PanelModuleCard
+                          datasets={datasets}
+                          entityTypes={entityTypes}
+                          key={module.id}
+                          metric={moduleMetric}
+                          module={module}
+                          onDelete={() => setModules(removePanelModuleAt(modules, index))}
+                          onEdit={() => openSheet("module", index)}
+                          onMoveDown={spatialIndex === spatialModules.length - 1
+                            ? undefined
+                            : () => setModules(packPanelModules(moveAt(spatialModules, spatialIndex, 1), layoutColumns))}
+                          onMoveUp={spatialIndex === 0
+                            ? undefined
+                            : () => setModules(packPanelModules(moveAt(spatialModules, spatialIndex, -1), layoutColumns))}
+                          warnings={overlapWarnings}
+                        />
+                      );
+                    })}
+                  </div>
+                )}
+              </section>
+            ) : null}
+
+            {activeSection === "diseno" ? (
+              <section className="grid gap-4" data-panel-section="diseno" id="diseno">
+                <PanelSectionHeader
+                  actionLabel="Organizar automáticamente"
+                  description="Ajusta la grilla de 12 columnas, posiciones y tamaño de cada módulo."
+                  id="panel-section-diseno"
+                  onAction={layoutOverlaps.length === 0 ? undefined : () => setModules(packPanelModules(modules, layoutColumns))}
+                  title="Diseño"
+                  tone="layout"
+                />
+                {layoutOverlaps.length > 0 ? (
+                  <div className="grid gap-1 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                    {layoutOverlaps.map((overlap) => (
+                      <span key={`${overlap.left.id}:${overlap.right.id}`}>
+                        Los módulos {overlap.left.title || overlap.left.id} y {overlap.right.title || overlap.right.id} se solapan en el layout.
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <NumberControl label="Columnas de grilla" max={24} min={1} onChange={setLayoutColumns} value={layoutColumns} />
+                  <NumberControl label="Alto de fila" max={64} min={1} onChange={setLayoutRowHeight} value={layoutRowHeight} />
+                </div>
+                <PanelLayoutCanvas
+                  layoutColumns={layoutColumns}
+                  layoutRowHeight={layoutRowHeight}
+                  modules={modules}
+                  onSelect={setSelectedLayoutModuleId}
+                  selectedModuleId={selectedLayoutModule?.id ?? ""}
+                />
+                {selectedLayoutModule ? (
+                  <div className="grid gap-3 rounded-md border border-border bg-muted/20 p-3">
+                    <h4 className="text-sm font-medium">Inspector de módulo</h4>
+                    <p className="text-sm text-muted-foreground">{selectedLayoutModule.title || selectedLayoutModule.id}</p>
+                    <div className="grid gap-3 sm:grid-cols-4">
+                      {(["x", "y", "w", "h"] as const).map((key) => (
+                        <NumberControl
+                          key={key}
+                          label={key.toUpperCase()}
+                          max={key === "w" ? layoutColumns : 99}
+                          min={key === "x" || key === "y" ? 0 : 1}
+                          onChange={(value) => setModules(modules.map((module) =>
+                            module.id === selectedLayoutModule.id
+                              ? { ...module, layout: { ...module.layout, [key]: value } }
+                              : module,
+                          ))}
+                          value={selectedLayoutModule.layout[key]}
+                        />
+                      ))}
+                    </div>
+                    <FieldError errors={fieldErrors?.layout} />
+                  </div>
+                ) : null}
+              </section>
+            ) : null}
+          </div>
         </div>
-        {datasets.length === 0 ? (
-          <div className="grid gap-1">
-            <p className="text-sm text-muted-foreground">No hay datasets configurados.</p>
-            <FieldError errors={fieldErrors?.datasets} />
-          </div>
+        {previewExpanded ? (
+          <PanelPreview
+            datasets={datasets}
+            entityTypes={entityTypes}
+            layoutColumns={layoutColumns}
+            layoutRowHeight={layoutRowHeight}
+            metrics={metrics}
+            modules={modules}
+            onToggle={() => setPreviewExpanded(false)}
+          />
         ) : (
-          <div className="grid gap-3">
-            {datasets.map((dataset, index) => (
-              <PanelDatasetEditor
-                dataset={dataset}
-                datasets={datasets}
-                entityTypes={entityTypes}
-                index={index}
-                key={dataset.id}
-                filters={filters}
-                fieldErrors={fieldErrors}
-                metrics={metrics}
-                modules={modules}
-                setDatasets={setDatasets}
-                setFilters={setFilters}
-                setMetrics={setMetrics}
-                setModules={setModules}
-                setNotice={setNotice}
-              />
-            ))}
-          </div>
-        )}
-      </section>
-
-      <section className={`grid gap-3 ${panelSectionHasErrors("metricas", fieldErrors) ? "rounded-md border border-destructive/30 p-3" : ""}`} id="metricas">
-        <div className="flex items-center justify-between gap-3">
-          <h3 className="text-sm font-medium">Métricas</h3>
-          <button className="rounded border border-input px-3 py-1 text-sm" disabled={datasets.length === 0} onClick={addMetric} type="button">
-            Agregar métrica
-          </button>
-        </div>
-        <FieldError errors={fieldErrors?.metrics} />
-        {metrics.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Sin métricas configuradas.</p>
-        ) : (
-          <div className="grid gap-3">
-            {metrics.map((metric, index) => (
-              <PanelMetricEditor
-                datasets={datasets}
-                entityTypes={entityTypes}
-                filters={filters}
-                index={index}
-                key={metric.id}
-                metric={metric}
-                metrics={metrics}
-                setMetrics={setMetrics}
-              />
-            ))}
-          </div>
-        )}
-      </section>
-
-      <section className={`grid gap-3 ${panelSectionHasErrors("filtros", fieldErrors) ? "rounded-md border border-destructive/30 p-3" : ""}`} id="filtros">
-        <div className="flex items-center justify-between gap-3">
-          <h3 className="text-sm font-medium">Filtros</h3>
-          <button className="rounded border border-input px-3 py-1 text-sm" disabled={datasets.length === 0} onClick={addFilter} type="button">
-            Agregar filtro
-          </button>
-        </div>
-        {filters.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Sin filtros de panel.</p>
-        ) : (
-          <div className="grid gap-3">
-            {filters.map((filter, index) => (
-              <PanelFilterEditor
-                datasets={datasets}
-                entityTypes={entityTypes}
-                filter={filter}
-                filters={filters}
-                index={index}
-                key={filter.id}
-                setFilters={setFilters}
-              />
-            ))}
-          </div>
-        )}
-      </section>
-
-      <section className={`grid gap-3 ${panelSectionHasErrors("modulos", fieldErrors) ? "rounded-md border border-destructive/30 p-3" : ""}`} id="modulos">
-        <div className="flex items-center justify-between gap-3">
-          <h3 className="text-sm font-medium">Módulos</h3>
-          <button className="rounded border border-input px-3 py-1 text-sm" disabled={datasets.length === 0} onClick={addModule} type="button">
-            Agregar tabla
-          </button>
-          <button className="rounded border border-input px-3 py-1 text-sm" disabled={datasets.length === 0} onClick={addKpiModule} type="button">
-            Agregar KPI
-          </button>
-        </div>
-        {modules.length === 0 ? (
-          <div className="grid gap-1">
-            <p className="text-sm text-muted-foreground">No hay módulos configurados.</p>
-            <FieldError errors={fieldErrors?.modules} />
-          </div>
-        ) : (
-          <div className="grid gap-3">
-            {sortPanelModulesByLayout(modules).map((module, spatialIndex, spatialModules) => (
-              <PanelModuleEditor
-                datasets={datasets}
-                entityTypes={entityTypes}
-                index={modules.findIndex((item) => item.id === module.id)}
-                key={module.id}
-                layoutColumns={layoutColumns}
-                module={module}
-                modules={modules}
-                metrics={metrics}
-                fieldErrors={fieldErrors}
-                setModules={setModules}
-                spatialIndex={spatialIndex}
-                spatialModules={spatialModules}
-              />
-            ))}
-          </div>
-        )}
-      </section>
-
-      <section className={`grid gap-3 ${panelSectionHasErrors("diseno", fieldErrors) ? "rounded-md border border-destructive/30 p-3" : ""}`} id="diseno">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <h3 className="text-sm font-medium">Diseño</h3>
           <button
-            className="rounded border border-input px-3 py-1 text-sm disabled:opacity-40"
-            disabled={layoutOverlaps.length === 0}
-            onClick={() => setModules(packPanelModules(modules, layoutColumns))}
+            className="h-fit rounded-md border border-border bg-background px-3 py-2 text-sm shadow-sm lg:col-span-2 lg:w-fit lg:justify-self-end 2xl:col-span-1 2xl:flex 2xl:items-center 2xl:gap-2"
+            onClick={() => setPreviewExpanded(true)}
             type="button"
           >
-            Organizar automáticamente
+            <Eye className="h-4 w-4" />
+            Mostrar preview
           </button>
-        </div>
-        {layoutOverlaps.length > 0 ? (
-          <div className="grid gap-1 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-            {layoutOverlaps.map((overlap) => (
-              <span key={`${overlap.left.id}:${overlap.right.id}`}>
-                Los módulos {overlap.left.title || overlap.left.id} y {overlap.right.title || overlap.right.id} se solapan en el layout.
-              </span>
-            ))}
-          </div>
-        ) : null}
-        <div className="grid gap-3 sm:grid-cols-2">
-          <NumberControl
-            label="Columnas de grilla"
-            max={24}
-            min={1}
-            onChange={setLayoutColumns}
-            value={layoutColumns}
-          />
-          <NumberControl
-            label="Alto de fila"
-            max={64}
-            min={1}
-            onChange={setLayoutRowHeight}
-            value={layoutRowHeight}
-          />
-        </div>
-        <FieldError errors={fieldErrors?.layout} />
-      </section>
-        </div>
-        <PanelPreview
+        )}
+      </div>
+      {sheet?.kind === "dataset" ? (
+        <PanelDatasetSheet
           datasets={datasets}
           entityTypes={entityTypes}
-          layoutColumns={layoutColumns}
-          layoutRowHeight={layoutRowHeight}
+          fieldErrors={fieldErrors}
+          filters={filters}
+          index={sheet.index}
           metrics={metrics}
           modules={modules}
+          onClose={() => setSheet(null)}
+          open
+          setDatasets={setDatasets}
+          setFilters={setFilters}
+          setMetrics={setMetrics}
+          setModules={setModules}
+          setNotice={setNotice}
         />
-      </div>
+      ) : null}
+      {sheet?.kind === "filter" ? (
+        <PanelFilterSheet
+          datasets={datasets}
+          entityTypes={entityTypes}
+          filters={filters}
+          index={sheet.index}
+          onClose={() => setSheet(null)}
+          open
+          setFilters={setFilters}
+        />
+      ) : null}
+      {sheet?.kind === "metric" ? (
+        <PanelMetricSheet
+          datasets={datasets}
+          entityTypes={entityTypes}
+          filters={filters}
+          index={sheet.index}
+          metrics={metrics}
+          onClose={() => setSheet(null)}
+          open
+          setMetrics={setMetrics}
+        />
+      ) : null}
+      {sheet?.kind === "module" ? (
+        <PanelModuleSheet
+          datasets={datasets}
+          entityTypes={entityTypes}
+          fieldErrors={fieldErrors}
+          index={sheet.index}
+          layoutColumns={layoutColumns}
+          metrics={metrics}
+          modules={modules}
+          onClose={() => setSheet(null)}
+          open
+          setModules={setModules}
+        />
+      ) : null}
     </fieldset>
   );
+}
+
+function PanelEditorNavigation({
+  onSelect,
+  sections,
+}: {
+  onSelect: (section: PanelEditorSectionId) => void;
+  sections: ReturnType<typeof panelEditorSections>;
+}) {
+  return (
+    <nav
+      aria-label="Navegación del editor PANEL"
+      className="grid h-fit min-w-0 gap-2 rounded-md border border-border bg-background p-2 shadow-sm lg:sticky lg:top-20"
+    >
+      {sections.map((section) => {
+        const Icon = section.icon;
+
+        return (
+          <button
+            aria-current={section.active ? "page" : undefined}
+            className={cn(
+              "grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded-md border px-3 py-2 text-left text-sm transition-colors",
+              section.active ? section.activeClassName : "border-transparent hover:border-border hover:bg-muted/50",
+            )}
+            key={section.id}
+            onClick={() => onSelect(section.id)}
+            type="button"
+          >
+            <Icon className="h-4 w-4 shrink-0" />
+            <span className="min-w-0">
+              <span className="block truncate font-medium">{section.label}</span>
+              <span className="text-xs text-muted-foreground">{section.countLabel}</span>
+            </span>
+            <span className="flex items-center gap-1">
+              {section.hasError ? <AlertCircle className="h-4 w-4 text-destructive" /> : null}
+              {section.complete ? <CheckCircle2 className="h-4 w-4 text-emerald-600" /> : null}
+            </span>
+          </button>
+        );
+      })}
+    </nav>
+  );
+}
+
+function PanelHiddenGeneralFields({
+  active,
+  icon,
+  name,
+  slug,
+  sortOrder,
+  type,
+}: {
+  active: boolean;
+  icon: string;
+  name: string;
+  slug: string;
+  sortOrder: string;
+  type: AppViewType;
+}) {
+  return (
+    <>
+      <input name="name" type="hidden" value={name} />
+      <input name="slug" type="hidden" value={slug} />
+      <input name="icon" type="hidden" value={icon} />
+      <input name="type" type="hidden" value={type} />
+      <input name="sortOrder" type="hidden" value={sortOrder} />
+      <input name="active" type="hidden" value={active ? "true" : "false"} />
+    </>
+  );
+}
+
+function PanelSectionHeader({
+  actionLabel,
+  description,
+  id,
+  onAction,
+  title,
+  tone,
+}: {
+  actionLabel?: string;
+  description: string;
+  id: string;
+  onAction?: () => void;
+  title: string;
+  tone: "datasets" | "filters" | "general" | "layout" | "metrics" | "modules";
+}) {
+  return (
+    <div className={cn("flex flex-wrap items-start justify-between gap-3 rounded-md border px-3 py-3", panelToneClassName(tone))}>
+      <div className="min-w-0">
+        <h3 className="text-sm font-semibold" id={id}>{title}</h3>
+        <p className="mt-1 text-sm text-muted-foreground">{description}</p>
+      </div>
+      {actionLabel ? (
+        <Button disabled={!onAction} onClick={onAction} size="sm" type="button" variant="outline">
+          <Plus className="h-4 w-4" />
+          {actionLabel}
+        </Button>
+      ) : null}
+    </div>
+  );
+}
+
+function PanelEmptyState({ label }: { label: string }) {
+  return (
+    <div className="rounded-md border border-dashed border-border bg-muted/20 px-4 py-6 text-sm text-muted-foreground">
+      {label}
+    </div>
+  );
+}
+
+function PanelDatasetCard({
+  dataset,
+  entityTypes,
+  onDelete,
+  onEdit,
+}: {
+  dataset: PanelEditorDataset;
+  entityTypes: AppViewEntityTypeOption[];
+  onDelete: () => void;
+  onEdit: () => void;
+}) {
+  const entityType = entityTypes.find((item) => item.id === dataset.source.entityTypeId);
+
+  return (
+    <PanelSummaryCard
+      actions={<CardActions onDelete={onDelete} onEdit={onEdit} />}
+      eyebrow={dataset.transformation.type === "LATEST_BY_RELATION" ? "Último por relación" : "Registros"}
+      tone="datasets"
+      title={dataset.name || "Dataset sin nombre"}
+    >
+      <PanelInfoGrid items={[
+        ["Entidad", entityType?.name ?? "Sin entidad"],
+        ["Campos", String(dataset.transformation.fieldIds.length)],
+        ["Paginación", String(dataset.transformation.pagination?.pageSize ?? 25)],
+      ]} />
+    </PanelSummaryCard>
+  );
+}
+
+function PanelFilterCard({
+  datasets,
+  entityTypes,
+  filter,
+  onDelete,
+  onEdit,
+}: {
+  datasets: PanelEditorDataset[];
+  entityTypes: AppViewEntityTypeOption[];
+  filter: PanelEditorFilter;
+  onDelete: () => void;
+  onEdit: () => void;
+}) {
+  const dataset = datasets.find((item) => item.filters?.some((binding) => binding.type === "PANEL_FILTER" && binding.filterId === filter.id)) ?? datasets[0];
+  const field = fieldsForPanelDataset(dataset, entityTypes).find((item) => item.id === filter.fieldId);
+
+  return (
+    <PanelSummaryCard actions={<CardActions onDelete={onDelete} onEdit={onEdit} />} eyebrow={filter.required ? "Requerido" : "Opcional"} tone="filters" title={filter.label || "Filtro sin nombre"}>
+      <PanelInfoGrid items={[
+        ["Dataset", dataset?.name || dataset?.id || "Sin dataset"],
+        ["Campo", field?.name ?? "Sin campo"],
+        ["Operador", filter.operator === "IN" ? "Incluye" : "Es igual"],
+      ]} />
+    </PanelSummaryCard>
+  );
+}
+
+function PanelMetricCard({
+  datasets,
+  entityTypes,
+  metric,
+  onDelete,
+  onEdit,
+}: {
+  datasets: PanelEditorDataset[];
+  entityTypes: AppViewEntityTypeOption[];
+  metric: PanelEditorMetric;
+  onDelete: () => void;
+  onEdit: () => void;
+}) {
+  const dataset = datasets.find((item) => item.id === metric.datasetId);
+  const fields = fieldsForPanelDataset(dataset, entityTypes);
+  const field = metric.fieldId ? fields.find((item) => item.id === metric.fieldId) : undefined;
+  const summary = panelMetricReadableSummary(metric, dataset, field, fields);
+
+  return (
+    <PanelSummaryCard actions={<CardActions onDelete={onDelete} onEdit={onEdit} />} eyebrow={metric.aggregation} tone="metrics" title={metric.name || "Métrica sin nombre"}>
+      <p className="text-sm text-muted-foreground">{summary}</p>
+      <PanelInfoGrid items={[
+        ["Dataset", dataset?.name || dataset?.id || "Sin dataset"],
+        ["Campo", field?.name ?? (metric.aggregation === "COUNT" ? "No requiere" : "Sin campo")],
+      ]} />
+    </PanelSummaryCard>
+  );
+}
+
+function PanelModuleCard({
+  datasets,
+  entityTypes,
+  metric,
+  module,
+  onDelete,
+  onEdit,
+  onMoveDown,
+  onMoveUp,
+  warnings,
+}: {
+  datasets: PanelEditorDataset[];
+  entityTypes: AppViewEntityTypeOption[];
+  metric?: PanelEditorMetric;
+  module: PanelEditorModule;
+  onDelete: () => void;
+  onEdit: () => void;
+  onMoveDown?: () => void;
+  onMoveUp?: () => void;
+  warnings: string[];
+}) {
+  const dataset = datasets.find((item) => item.id === module.datasetId);
+  const entityType = entityTypes.find((item) => item.id === dataset?.source.entityTypeId);
+
+  return (
+    <PanelSummaryCard
+      actions={(
+        <div className="flex flex-wrap justify-end gap-1">
+          <IconButton disabled={!onMoveUp} label="Subir módulo" onClick={onMoveUp} icon={ArrowUp} />
+          <IconButton disabled={!onMoveDown} label="Bajar módulo" onClick={onMoveDown} icon={ArrowDown} />
+          <CardActions onDelete={onDelete} onEdit={onEdit} />
+        </div>
+      )}
+      eyebrow={module.visualization.type}
+      tone="modules"
+      title={module.title || "Módulo sin título"}
+      warning={warnings.length > 0}
+    >
+      <PanelInfoGrid items={[
+        ["Dataset", dataset?.name || dataset?.id || "Sin dataset"],
+        ["Entidad", entityType?.name ?? "Sin entidad"],
+        ["Métrica", module.visualization.type === "KPI" ? metric?.name ?? "Sin métrica" : "No aplica"],
+        ["Tamaño", `${module.layout.w}x${module.layout.h}`],
+        ["Posición", `x${module.layout.x} y${module.layout.y}`],
+      ]} />
+      {warnings.length > 0 ? (
+        <div className="grid gap-1 rounded-md border border-destructive/30 bg-destructive/10 p-2 text-xs text-destructive">
+          {warnings.map((warning) => <span key={warning}>{warning}</span>)}
+        </div>
+      ) : null}
+    </PanelSummaryCard>
+  );
+}
+
+function PanelSummaryCard({
+  actions,
+  children,
+  eyebrow,
+  title,
+  tone,
+  warning = false,
+}: {
+  actions: ReactNode;
+  children: ReactNode;
+  eyebrow: string;
+  title: string;
+  tone: "datasets" | "filters" | "metrics" | "modules";
+  warning?: boolean;
+}) {
+  return (
+    <article className={cn("grid min-w-0 gap-3 rounded-md border bg-background p-3 shadow-sm", warning ? "border-destructive/50" : "border-border")}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className={cn("w-fit rounded-full px-2 py-0.5 text-xs font-medium", panelBadgeClassName(tone))}>{eyebrow}</p>
+          <h4 className="mt-2 truncate text-sm font-semibold" title={title}>{title}</h4>
+        </div>
+        {actions}
+      </div>
+      {children}
+    </article>
+  );
+}
+
+function PanelInfoGrid({ items }: { items: Array<[string, string]> }) {
+  return (
+    <dl className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
+      {items.map(([label, value]) => (
+        <div className="min-w-0" key={label}>
+          <dt className="font-medium text-foreground">{label}</dt>
+          <dd className="truncate" title={value}>{value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+function CardActions({ onDelete, onEdit }: { onDelete: () => void; onEdit: () => void }) {
+  return (
+    <div className="flex shrink-0 gap-1">
+      <IconButton label="Editar" onClick={onEdit} icon={Pencil} />
+      <IconButton label="Eliminar" onClick={onDelete} icon={Trash2} />
+    </div>
+  );
+}
+
+function IconButton({
+  disabled,
+  icon: Icon,
+  label,
+  onClick,
+}: {
+  disabled?: boolean;
+  icon: typeof Pencil;
+  label: string;
+  onClick?: () => void;
+}) {
+  return (
+    <Button aria-label={label} disabled={disabled} onClick={onClick} size="icon" type="button" variant="ghost">
+      <Icon className="h-4 w-4" />
+    </Button>
+  );
+}
+
+function PanelLayoutCanvas({
+  layoutColumns,
+  layoutRowHeight,
+  modules,
+  onSelect,
+  selectedModuleId,
+}: {
+  layoutColumns: number;
+  layoutRowHeight: number;
+  modules: PanelEditorModule[];
+  onSelect: (moduleId: string) => void;
+  selectedModuleId: string;
+}) {
+  return (
+    <div
+      aria-label="Canvas de layout PANEL"
+      className="grid max-w-full gap-2 overflow-x-auto rounded-md border border-dashed border-border bg-slate-50/60 p-2"
+      style={{
+        gridAutoRows: `${Math.max(layoutRowHeight * 4, 32)}px`,
+        gridTemplateColumns: `repeat(${Math.max(layoutColumns, 1)}, minmax(0, 1fr))`,
+      }}
+    >
+      {modules.length === 0 ? (
+        <p className="col-span-12 text-sm text-muted-foreground">No hay módulos para ubicar.</p>
+      ) : sortPanelModulesByLayout(modules).map((module) => (
+        <button
+          className={cn(
+            "grid min-w-0 content-start gap-1 rounded-md border bg-background p-2 text-left text-xs shadow-sm",
+            selectedModuleId === module.id ? "border-primary ring-2 ring-primary/20" : "border-border",
+          )}
+          key={module.id}
+          onClick={() => onSelect(module.id)}
+          style={{
+            gridColumn: `${Math.max(module.layout.x, 0) + 1} / span ${Math.min(Math.max(module.layout.w, 1), layoutColumns || 12)}`,
+            gridRow: `${Math.max(module.layout.y, 0) + 1} / span ${Math.max(module.layout.h, 1)}`,
+          }}
+          type="button"
+        >
+          <span className="truncate font-medium">{module.title || module.id}</span>
+          <span className="text-muted-foreground">{module.visualization.type} · {module.layout.w}x{module.layout.h}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function PanelDatasetSheet({
+  datasets,
+  entityTypes,
+  fieldErrors,
+  filters,
+  index,
+  metrics,
+  modules,
+  onClose,
+  open,
+  setDatasets,
+  setFilters,
+  setMetrics,
+  setModules,
+  setNotice,
+}: {
+  datasets: PanelEditorDataset[];
+  entityTypes: AppViewEntityTypeOption[];
+  fieldErrors?: Record<string, string[]>;
+  filters: PanelEditorFilter[];
+  index: number | null;
+  metrics: PanelEditorMetric[];
+  modules: PanelEditorModule[];
+  onClose: () => void;
+  open: boolean;
+  setDatasets: (value: PanelEditorDataset[]) => void;
+  setFilters: (value: PanelEditorFilter[]) => void;
+  setMetrics: (value: PanelEditorMetric[]) => void;
+  setModules: (value: PanelEditorModule[]) => void;
+  setNotice: (value: string) => void;
+}) {
+  const draftIndex = index ?? datasets.length;
+  const initialDatasets = index === null
+    ? [...datasets, defaultPanelDataset(entityTypes, datasets)]
+    : datasets;
+  const [draftDatasets, setDraftDatasets] = useState(() => clonePanelEditorValue(initialDatasets));
+  const [draftFilters, setDraftFilters] = useState(() => clonePanelEditorValue(filters));
+  const [draftMetrics, setDraftMetrics] = useState(() => clonePanelEditorValue(metrics));
+  const [draftModules, setDraftModules] = useState(() => clonePanelEditorValue(modules));
+  const [draftNotice, setDraftNotice] = useState("");
+  const dirty = JSON.stringify({ draftDatasets, draftFilters, draftMetrics, draftModules }) !==
+    JSON.stringify({ draftDatasets: initialDatasets, draftFilters: filters, draftMetrics: metrics, draftModules: modules });
+
+  return (
+    <PanelEditorSheet
+      dirty={dirty}
+      description="Configura entidad, transformación, relación, orden y campos disponibles."
+      onClose={onClose}
+      onSave={() => {
+        setDatasets(clonePanelEditorValue(draftDatasets));
+        setFilters(clonePanelEditorValue(draftFilters));
+        setMetrics(clonePanelEditorValue(draftMetrics));
+        setModules(clonePanelEditorValue(draftModules));
+        if (draftNotice) {
+          setNotice(draftNotice);
+        }
+        onClose();
+      }}
+      open={open}
+      title={index === null ? "Agregar dataset" : "Editar dataset"}
+    >
+      {draftNotice ? (
+        <p className="mb-3 rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-900" role="status">
+          {draftNotice}
+        </p>
+      ) : null}
+      {draftDatasets[draftIndex] ? (
+        <PanelDatasetEditor
+          dataset={draftDatasets[draftIndex]}
+          datasets={draftDatasets}
+          entityTypes={entityTypes}
+          fieldErrors={fieldErrors}
+          filters={draftFilters}
+          index={draftIndex}
+          metrics={draftMetrics}
+          modules={draftModules}
+          setDatasets={setDraftDatasets}
+          setFilters={setDraftFilters}
+          setMetrics={setDraftMetrics}
+          setModules={setDraftModules}
+          setNotice={setDraftNotice}
+        />
+      ) : null}
+    </PanelEditorSheet>
+  );
+}
+
+function PanelFilterSheet({
+  datasets,
+  entityTypes,
+  filters,
+  index,
+  onClose,
+  open,
+  setFilters,
+}: {
+  datasets: PanelEditorDataset[];
+  entityTypes: AppViewEntityTypeOption[];
+  filters: PanelEditorFilter[];
+  index: number | null;
+  onClose: () => void;
+  open: boolean;
+  setFilters: (value: PanelEditorFilter[]) => void;
+}) {
+  const draftIndex = index ?? filters.length;
+  const initialFilters = index === null ? [...filters, defaultPanelFilter(datasets, entityTypes, filters)] : filters;
+  const [draftFilters, setDraftFilters] = useState(() => clonePanelEditorValue(initialFilters));
+  const dirty = JSON.stringify(draftFilters) !== JSON.stringify(initialFilters);
+
+  return (
+    <PanelEditorSheet
+      dirty={dirty}
+      description="Define el nombre, campo y operador del filtro."
+      onClose={onClose}
+      onSave={() => {
+        setFilters(clonePanelEditorValue(draftFilters));
+        onClose();
+      }}
+      open={open}
+      title={index === null ? "Agregar filtro" : "Editar filtro"}
+    >
+      {draftFilters[draftIndex] ? (
+        <PanelFilterEditor
+          datasets={datasets}
+          entityTypes={entityTypes}
+          filter={draftFilters[draftIndex]}
+          filters={draftFilters}
+          index={draftIndex}
+          setFilters={setDraftFilters}
+        />
+      ) : null}
+    </PanelEditorSheet>
+  );
+}
+
+function PanelMetricSheet({
+  datasets,
+  entityTypes,
+  filters,
+  index,
+  metrics,
+  onClose,
+  open,
+  setMetrics,
+}: {
+  datasets: PanelEditorDataset[];
+  entityTypes: AppViewEntityTypeOption[];
+  filters: PanelEditorFilter[];
+  index: number | null;
+  metrics: PanelEditorMetric[];
+  onClose: () => void;
+  open: boolean;
+  setMetrics: (value: PanelEditorMetric[]) => void;
+}) {
+  const draftIndex = index ?? metrics.length;
+  const initialMetrics = index === null ? [...metrics, defaultPanelMetric(datasets, metrics)] : metrics;
+  const [draftMetrics, setDraftMetrics] = useState(() => clonePanelEditorValue(initialMetrics));
+  const dirty = JSON.stringify(draftMetrics) !== JSON.stringify(initialMetrics);
+
+  return (
+    <PanelEditorSheet
+      dirty={dirty}
+      description="Configura agregación, campo, filtros opcionales y condiciones fijas."
+      onClose={onClose}
+      onSave={() => {
+        setMetrics(clonePanelEditorValue(draftMetrics));
+        onClose();
+      }}
+      open={open}
+      title={index === null ? "Agregar métrica" : "Editar métrica"}
+    >
+      {draftMetrics[draftIndex] ? (
+        <PanelMetricEditor
+          datasets={datasets}
+          entityTypes={entityTypes}
+          filters={filters}
+          index={draftIndex}
+          metric={draftMetrics[draftIndex]}
+          metrics={draftMetrics}
+          setMetrics={setDraftMetrics}
+        />
+      ) : null}
+    </PanelEditorSheet>
+  );
+}
+
+function PanelModuleSheet({
+  datasets,
+  entityTypes,
+  fieldErrors,
+  index,
+  layoutColumns,
+  metrics,
+  modules,
+  onClose,
+  open,
+  setModules,
+}: {
+  datasets: PanelEditorDataset[];
+  entityTypes: AppViewEntityTypeOption[];
+  fieldErrors?: Record<string, string[]>;
+  index: number | null;
+  layoutColumns: number;
+  metrics: PanelEditorMetric[];
+  modules: PanelEditorModule[];
+  onClose: () => void;
+  open: boolean;
+  setModules: (value: PanelEditorModule[]) => void;
+}) {
+  const draftIndex = index ?? modules.length;
+  const initialModules = index === null ? packPanelModules([...modules, defaultPanelModule(datasets, metrics, modules, layoutColumns)], layoutColumns) : modules;
+  const [draftModules, setDraftModules] = useState(() => clonePanelEditorValue(initialModules));
+  const dirty = JSON.stringify(draftModules) !== JSON.stringify(initialModules);
+  const spatialModules = sortPanelModulesByLayout(draftModules);
+  const draftModule = draftModules[draftIndex];
+  const spatialIndex = draftModule ? spatialModules.findIndex((item) => item.id === draftModule.id) : 0;
+
+  return (
+    <PanelEditorSheet
+      dirty={dirty}
+      description="Configura tipo, dataset, columnas o KPI, y layout del módulo."
+      onClose={onClose}
+      onSave={() => {
+        setModules(clonePanelEditorValue(draftModules));
+        onClose();
+      }}
+      open={open}
+      title={index === null ? "Agregar módulo" : "Editar módulo"}
+    >
+      {draftModule ? (
+        <PanelModuleEditor
+          datasets={datasets}
+          entityTypes={entityTypes}
+          fieldErrors={fieldErrors}
+          index={draftIndex}
+          layoutColumns={layoutColumns}
+          metrics={metrics}
+          module={draftModule}
+          modules={draftModules}
+          setModules={setDraftModules}
+          spatialIndex={Math.max(0, spatialIndex)}
+          spatialModules={spatialModules}
+        />
+      ) : null}
+    </PanelEditorSheet>
+  );
+}
+
+function panelEditorSections({
+  activeSection,
+  datasets,
+  fieldErrors,
+  filters,
+  layoutOverlaps,
+  metrics,
+  modules,
+}: {
+  activeSection: PanelEditorSectionId;
+  datasets: PanelEditorDataset[];
+  fieldErrors?: Record<string, string[]>;
+  filters: PanelEditorFilter[];
+  layoutOverlaps: ReturnType<typeof panelModuleLayoutOverlaps>;
+  metrics: PanelEditorMetric[];
+  modules: PanelEditorModule[];
+}) {
+  const items: Array<{
+    activeClassName: string;
+    complete: boolean;
+    countLabel: string;
+    hasError: boolean;
+    icon: typeof Database;
+    id: PanelEditorSectionId;
+    label: string;
+  }> = [
+    {
+      activeClassName: "border-slate-200 bg-slate-50 text-slate-950",
+      complete: true,
+      countLabel: "Identidad",
+      hasError: panelSectionHasErrors("datos-generales", fieldErrors),
+      icon: Settings2,
+      id: "datos-generales",
+      label: "Datos generales",
+    },
+    {
+      activeClassName: "border-sky-200 bg-sky-50 text-sky-950",
+      complete: datasets.length > 0,
+      countLabel: `${datasets.length} dataset${datasets.length === 1 ? "" : "s"}`,
+      hasError: panelSectionHasErrors("fuentes-de-datos", fieldErrors),
+      icon: Database,
+      id: "fuentes-de-datos",
+      label: "Fuentes de datos",
+    },
+    {
+      activeClassName: "border-amber-200 bg-amber-50 text-amber-950",
+      complete: true,
+      countLabel: `${filters.length} filtro${filters.length === 1 ? "" : "s"}`,
+      hasError: panelSectionHasErrors("filtros", fieldErrors),
+      icon: Filter,
+      id: "filtros",
+      label: "Filtros",
+    },
+    {
+      activeClassName: "border-emerald-200 bg-emerald-50 text-emerald-950",
+      complete: true,
+      countLabel: `${metrics.length} métrica${metrics.length === 1 ? "" : "s"}`,
+      hasError: panelSectionHasErrors("metricas", fieldErrors),
+      icon: BarChart3,
+      id: "metricas",
+      label: "Métricas",
+    },
+    {
+      activeClassName: "border-violet-200 bg-violet-50 text-violet-950",
+      complete: modules.length > 0,
+      countLabel: `${modules.length} módulo${modules.length === 1 ? "" : "s"}`,
+      hasError: panelSectionHasErrors("modulos", fieldErrors),
+      icon: LayoutDashboard,
+      id: "modulos",
+      label: "Módulos",
+    },
+    {
+      activeClassName: "border-slate-300 bg-slate-100 text-slate-950",
+      complete: layoutOverlaps.length === 0,
+      countLabel: layoutOverlaps.length > 0 ? `${layoutOverlaps.length} solapamiento${layoutOverlaps.length === 1 ? "" : "s"}` : "Layout válido",
+      hasError: panelSectionHasErrors("diseno", fieldErrors) || layoutOverlaps.length > 0,
+      icon: Grid3X3,
+      id: "diseno",
+      label: "Diseño",
+    },
+  ];
+
+  return items.map((item) => ({ ...item, active: item.id === activeSection }));
+}
+
+function panelToneClassName(tone: "datasets" | "filters" | "general" | "layout" | "metrics" | "modules") {
+  if (tone === "datasets") return "border-sky-200 bg-sky-50/70";
+  if (tone === "filters") return "border-amber-200 bg-amber-50/70";
+  if (tone === "metrics") return "border-emerald-200 bg-emerald-50/70";
+  if (tone === "modules") return "border-violet-200 bg-violet-50/70";
+  if (tone === "layout") return "border-slate-200 bg-slate-100/70";
+
+  return "border-slate-200 bg-slate-50/70";
+}
+
+function panelBadgeClassName(tone: "datasets" | "filters" | "metrics" | "modules") {
+  if (tone === "datasets") return "bg-sky-50 text-sky-900";
+  if (tone === "filters") return "bg-amber-50 text-amber-900";
+  if (tone === "metrics") return "bg-emerald-50 text-emerald-900";
+
+  return "bg-violet-50 text-violet-900";
+}
+
+function defaultPanelDataset(entityTypes: AppViewEntityTypeOption[], datasets: PanelEditorDataset[]): PanelEditorDataset {
+  const entityType = entityTypes[0];
+  const fieldId = entityType?.fields.find((field) => field.isActive)?.id ?? "";
+
+  return {
+    id: nextPanelId("dataset", datasets.map((dataset) => dataset.id)),
+    name: "Dataset",
+    source: { type: "ENTITY", entityTypeId: entityType?.id ?? "" },
+    transformation: {
+      type: "RECORDS",
+      fieldIds: fieldId ? [fieldId] : [],
+      pagination: { pageSize: 25 },
+    },
+  };
+}
+
+function defaultPanelFilter(
+  datasets: PanelEditorDataset[],
+  entityTypes: AppViewEntityTypeOption[],
+  filters: PanelEditorFilter[],
+): PanelEditorFilter {
+  const dataset = datasets[0];
+  const entityType = entityTypes.find((item) => item.id === dataset?.source.entityTypeId) ?? entityTypes[0];
+  const field = entityType?.fields.find((item) => item.isActive);
+
+  return {
+    id: nextPanelId("filter", filters.map((filter) => filter.id)),
+    label: "Filtro",
+    valueType: panelValueTypeForField(field),
+    fieldId: field?.id ?? "",
+    operator: "EQ",
+  };
+}
+
+function defaultPanelMetric(datasets: PanelEditorDataset[], metrics: PanelEditorMetric[]): PanelEditorMetric {
+  const dataset = datasets[0];
+
+  return {
+    id: nextPanelId("metric", metrics.map((metric) => metric.id)),
+    name: "Total de registros",
+    datasetId: dataset?.id ?? "",
+    aggregation: "COUNT",
+    fieldId: null,
+    filterIds: [],
+    conditions: [],
+  };
+}
+
+function defaultPanelModule(
+  datasets: PanelEditorDataset[],
+  metrics: PanelEditorMetric[],
+  modules: PanelEditorModule[],
+  layoutColumns: number,
+): PanelEditorModule {
+  const dataset = datasets[0];
+  const metric = metrics[0];
+  const id = nextPanelId("table", modules.map((module) => module.id));
+
+  if (metric) {
+    return {
+      id: nextPanelId("kpi", modules.map((module) => module.id)),
+      title: "Indicador",
+      datasetId: metric.datasetId || dataset?.id || "",
+      visualization: {
+        type: "KPI",
+        config: {
+          metricId: metric.id,
+          label: metric.name || "Indicador",
+          format: "NUMBER",
+        },
+      },
+      layout: { x: 0, y: modules.length, w: Math.min(4, layoutColumns), h: 2 },
+    };
+  }
+
+  return {
+    id,
+    title: "Tabla",
+    datasetId: dataset?.id ?? "",
+    visualization: {
+      type: "TABLE",
+      config: {
+        columns: [],
+        searchable: true,
+        paginated: true,
+      },
+    },
+    layout: { x: 0, y: modules.length, w: Math.min(12, layoutColumns), h: 6 },
+  };
+}
+
+export function clonePanelEditorValue<T>(value: T): T {
+  return structuredClone(value);
+}
+
+export function removePanelDatasetAt(
+  state: {
+    datasets: PanelEditorDataset[];
+    filters: PanelEditorFilter[];
+    metrics: PanelEditorMetric[];
+    modules: PanelEditorModule[];
+  },
+  index: number,
+) {
+  const datasets = state.datasets.filter((_, itemIndex) => itemIndex !== index);
+  const datasetIds = new Set(datasets.map((dataset) => dataset.id));
+  const metrics = state.metrics
+    .filter((metric) => datasetIds.has(metric.datasetId))
+    .map((metric) => cleanPanelMetricForDataset(
+      metric,
+      datasets.find((dataset) => dataset.id === metric.datasetId),
+    ));
+  const metricIds = new Set(metrics.map((metric) => metric.id));
+  const modules = state.modules
+    .filter((module) => datasetIds.has(module.datasetId))
+    .filter((module) => module.visualization.type !== "KPI" || metricIds.has(module.visualization.config.metricId))
+    .map((module) => ({
+      ...module,
+      visualization: cleanPanelModuleVisualizationForDataset(
+        module.visualization,
+        datasets.find((dataset) => dataset.id === module.datasetId),
+        metrics,
+      ),
+    }));
+
+  return {
+    datasets,
+    filters: datasets.length === 0 ? [] : state.filters,
+    metrics,
+    modules,
+  };
+}
+
+export function removePanelFilterAt(
+  state: {
+    filters: PanelEditorFilter[];
+    metrics: PanelEditorMetric[];
+  },
+  index: number,
+) {
+  const filter = state.filters[index];
+
+  if (!filter) {
+    return state;
+  }
+
+  return {
+    filters: state.filters.filter((_, itemIndex) => itemIndex !== index),
+    metrics: state.metrics.map((metric) => ({
+      ...metric,
+      filterIds: metric.filterIds.filter((filterId) => filterId !== filter.id),
+    })),
+  };
+}
+
+export function removePanelMetricAt(
+  state: {
+    metrics: PanelEditorMetric[];
+    modules: PanelEditorModule[];
+  },
+  index: number,
+) {
+  const metric = state.metrics[index];
+
+  if (!metric) {
+    return state;
+  }
+
+  return {
+    metrics: state.metrics.filter((_, itemIndex) => itemIndex !== index),
+    modules: state.modules.filter((module) =>
+      module.visualization.type !== "KPI" || module.visualization.config.metricId !== metric.id,
+    ),
+  };
+}
+
+export function removePanelModuleAt(modules: PanelEditorModule[], index: number) {
+  return modules.filter((_, itemIndex) => itemIndex !== index);
+}
+
+function panelMetricReadableSummary(
+  metric: PanelEditorMetric,
+  dataset: PanelEditorDataset | undefined,
+  field: AppViewEntityTypeOption["fields"][number] | undefined,
+  fields: AppViewEntityTypeOption["fields"],
+) {
+  const aggregation = panelMetricAggregationOptions().find((option) => option.value === metric.aggregation)?.label ?? metric.aggregation;
+  const target = field?.name ?? (metric.aggregation === "COUNT" ? "registros" : "campo sin seleccionar");
+  const conditions = metric.conditions ?? [];
+
+  if (conditions.length === 0) {
+    return `${aggregation} ${target} en ${dataset?.name || dataset?.id || "dataset sin seleccionar"}.`;
+  }
+
+  return `${aggregation} ${target} donde ${conditions
+    .map((condition) => panelMetricConditionSummary(condition, fields.find((item) => item.id === condition.fieldId)))
+    .join(" y ")}.`;
 }
 
 function PanelDatasetEditor({
@@ -1832,6 +2970,7 @@ function PanelPreview({
   layoutRowHeight,
   metrics,
   modules,
+  onToggle,
 }: {
   datasets: PanelEditorDataset[];
   entityTypes: AppViewEntityTypeOption[];
@@ -1839,9 +2978,287 @@ function PanelPreview({
   layoutRowHeight: number;
   metrics: PanelEditorMetric[];
   modules: PanelEditorModule[];
+  onToggle?: () => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [referenceSize, setReferenceSize] = useState<"desktop" | "mobile">("desktop");
+
+  return (
+    <aside className="min-w-0 lg:col-span-2 2xl:col-span-1" id="vista-previa-panel">
+      <div className="grid gap-3 rounded-md border border-slate-200 bg-slate-50/80 p-3 shadow-sm 2xl:sticky 2xl:top-4 2xl:max-h-[calc(100vh-2rem)] 2xl:overflow-auto">
+        <div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h3 className="text-sm font-medium">Vista previa</h3>
+            <p className="text-xs text-muted-foreground">Grilla de {layoutColumns} columnas · valores de ejemplo</p>
+          </div>
+          <div className="flex shrink-0 flex-wrap justify-end gap-1">
+            <Button onClick={() => setExpanded(true)} size="sm" type="button" variant="outline">
+              <Maximize2 className="h-4 w-4" />
+              Ampliar vista previa
+            </Button>
+            {onToggle ? (
+              <Button aria-label="Contraer vista previa" onClick={onToggle} size="icon" type="button" variant="ghost">
+                <EyeOff className="h-4 w-4" />
+              </Button>
+            ) : null}
+          </div>
+        </div>
+        <PanelPreviewCanvas
+          datasets={datasets}
+          entityTypes={entityTypes}
+          layoutColumns={layoutColumns}
+          layoutRowHeight={layoutRowHeight}
+          metrics={metrics}
+          modules={modules}
+          referenceSize="desktop"
+        />
+        <Sheet open={expanded} onOpenChange={setExpanded}>
+          <SheetContent className="sm:max-w-[min(1120px,calc(100vw-2rem))]">
+            <SheetHeader>
+              <SheetTitle>Vista previa ampliada</SheetTitle>
+              <SheetDescription>Representación estructural con datos de ejemplo. No modifica la configuración del panel.</SheetDescription>
+            </SheetHeader>
+            <div className="grid min-h-0 flex-1 gap-4 overflow-auto bg-slate-50/70 p-5">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <p className="text-sm text-muted-foreground">Tamaño de referencia</p>
+                <div className="flex rounded-md border border-border bg-background p-1" data-preview-reference={referenceSize}>
+                  <Button
+                    aria-pressed={referenceSize === "desktop"}
+                    onClick={() => setReferenceSize("desktop")}
+                    size="sm"
+                    type="button"
+                    variant={referenceSize === "desktop" ? "default" : "ghost"}
+                  >
+                    <Monitor className="h-4 w-4" />
+                    Escritorio
+                  </Button>
+                  <Button
+                    aria-pressed={referenceSize === "mobile"}
+                    onClick={() => setReferenceSize("mobile")}
+                    size="sm"
+                    type="button"
+                    variant={referenceSize === "mobile" ? "default" : "ghost"}
+                  >
+                    <Smartphone className="h-4 w-4" />
+                    Móvil
+                  </Button>
+                </div>
+              </div>
+              <div className={cn("mx-auto w-full", referenceSize === "mobile" ? "max-w-[390px]" : "max-w-[1040px]")}>
+                <PanelPreviewCanvas
+                  datasets={datasets}
+                  entityTypes={entityTypes}
+                  layoutColumns={layoutColumns}
+                  layoutRowHeight={layoutRowHeight}
+                  metrics={metrics}
+                  modules={modules}
+                  referenceSize={referenceSize}
+                />
+              </div>
+            </div>
+          </SheetContent>
+        </Sheet>
+      </div>
+    </aside>
+  );
+}
+
+function PanelPreviewCanvas({
+  datasets,
+  entityTypes,
+  layoutColumns,
+  layoutRowHeight,
+  metrics,
+  modules,
+  referenceSize,
+}: {
+  datasets: PanelEditorDataset[];
+  entityTypes: AppViewEntityTypeOption[];
+  layoutColumns: number;
+  layoutRowHeight: number;
+  metrics: PanelEditorMetric[];
+  modules: PanelEditorModule[];
+  referenceSize: "desktop" | "mobile";
 }) {
   const fieldSourcesById = panelFieldSourcesById(entityTypes);
   const layoutOverlaps = panelModuleLayoutOverlaps(modules);
+  const overlapWarningsByModuleId = panelOverlapWarningsByModuleId(layoutOverlaps);
+  const columns = referenceSize === "mobile" ? Math.min(4, Math.max(layoutColumns, 1)) : Math.max(layoutColumns, 1);
+
+  return (
+    <div
+      className="grid min-w-0 gap-2 overflow-x-auto rounded-md border border-dashed border-slate-300 bg-white/80 p-2"
+      data-panel-preview-canvas="true"
+      data-preview-size={referenceSize}
+      style={{
+        gridAutoRows: `${Math.max(layoutRowHeight * (referenceSize === "mobile" ? 3 : 4), 32)}px`,
+        gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
+      }}
+    >
+      {modules.length === 0 ? (
+        <p className="col-span-full text-sm text-muted-foreground">No hay módulos configurados.</p>
+      ) : sortPanelModulesByLayout(modules).map((module) => {
+        const dataset = datasets.find((item) => item.id === module.datasetId);
+        const datasetName = dataset?.name || dataset?.id || "sin dataset";
+        const entityType = entityTypes.find((item) => item.id === dataset?.source.entityTypeId);
+        const warnings = incompatiblePanelColumns(module, datasets);
+        const overlapWarnings = overlapWarningsByModuleId.get(module.id) ?? [];
+        const metricId = module.visualization.type === "KPI" ? module.visualization.config.metricId : "";
+        const metric = metricId ? metrics.find((item) => item.id === metricId) : undefined;
+        const span = referenceSize === "mobile" ? columns : Math.min(Math.max(module.layout.w, 1), columns);
+
+        return (
+          <article
+            className={cn(
+              "grid min-w-0 content-start gap-3 overflow-hidden rounded-md border bg-background p-3 text-sm shadow-sm",
+              overlapWarnings.length > 0 ? "border-destructive/60" : "border-slate-200",
+            )}
+            key={module.id}
+            style={{
+              gridColumn: referenceSize === "mobile"
+                ? `1 / span ${columns}`
+                : `${Math.max(module.layout.x, 0) + 1} / span ${span}`,
+              gridRow: referenceSize === "mobile"
+                ? undefined
+                : `${Math.max(module.layout.y, 0) + 1} / span ${Math.max(module.layout.h, 1)}`,
+            }}
+          >
+            <div className="min-w-0">
+              <p className="truncate font-medium" title={module.title || module.id}>{module.title || module.id}</p>
+              <p className="truncate text-xs text-muted-foreground" title={datasetName}>
+                {datasetName} · {module.visualization.type}
+              </p>
+              <p className="text-[11px] text-muted-foreground">x{module.layout.x} y{module.layout.y} · {module.layout.w}x{module.layout.h}</p>
+              {entityType ? <p className="truncate text-xs text-muted-foreground" title={entityType.name}>{entityType.name}</p> : null}
+            </div>
+            {module.visualization.type === "KPI" ? (
+              <PanelPreviewKpi config={module.visualization.config} metric={metric} />
+            ) : (
+              <PanelPreviewTable
+                columns={module.visualization.config.columns}
+                fieldSourcesById={fieldSourcesById}
+                searchable={module.visualization.config.searchable}
+              />
+            )}
+            <PanelPreviewWarnings
+              datasetName={entityType?.name ?? datasetName}
+              fieldSourcesById={fieldSourcesById}
+              overlapWarnings={overlapWarnings}
+              warnings={warnings}
+            />
+          </article>
+        );
+      })}
+    </div>
+  );
+}
+
+function PanelPreviewKpi({
+  config,
+  metric,
+}: {
+  config: PanelKpiConfig;
+  metric?: PanelEditorMetric;
+}) {
+  const label = config.label || metric?.name || "Métrica sin seleccionar";
+  const value = panelKpiPreviewValue(config);
+  const updatedAt = "Actualizado 12-09-2026 09:30 (ejemplo)";
+
+  return (
+    <div className="grid min-w-0 gap-2 rounded-md border border-emerald-100 bg-emerald-50/40 p-3">
+      <p className="truncate text-xs font-medium text-emerald-900" title={label} aria-label={label}>{label}</p>
+      <p className="truncate text-3xl font-semibold tracking-normal" title={value} aria-label={`Valor de ejemplo ${value}`}>{value}</p>
+      <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]" title={updatedAt}>{updatedAt}</p>
+    </div>
+  );
+}
+
+function PanelPreviewTable({
+  columns,
+  fieldSourcesById,
+  searchable,
+}: {
+  columns: Extract<PanelModule["visualization"], { type: "TABLE" }>["config"]["columns"];
+  fieldSourcesById: Map<string, { entity: AppViewEntityTypeOption; field: AppViewEntityTypeOption["fields"][number] }>;
+  searchable?: boolean;
+}) {
+  const visibleColumns = columns.map((column) => ({
+    ...column,
+    field: fieldSourcesById.get(column.fieldId)?.field,
+    label: fieldSourcesById.get(column.fieldId)?.field.name ?? column.fieldId,
+  }));
+
+  return (
+    <div className="grid min-w-0 gap-2">
+      {searchable ? (
+        <div className="h-8 rounded-md border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-muted-foreground">
+          Buscar en tabla...
+        </div>
+      ) : null}
+      <div className="max-w-full overflow-x-auto rounded-md border border-slate-200">
+        <table className="w-full min-w-[420px] table-fixed border-collapse text-xs" data-panel-preview-table="true">
+          <thead className="bg-slate-50 text-slate-700">
+            <tr>
+              {visibleColumns.length === 0 ? (
+                <th className="px-3 py-2 text-left font-medium">Sin columnas</th>
+              ) : visibleColumns.map((column) => (
+                <th className="truncate px-3 py-2 text-left font-medium" key={column.fieldId} title={column.label}>
+                  {column.label}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {[0, 1, 2].map((rowIndex) => (
+              <tr className="border-t border-slate-100" key={rowIndex}>
+                {visibleColumns.length === 0 ? (
+                  <td className="px-3 py-2 text-muted-foreground">Configura columnas</td>
+                ) : visibleColumns.map((column) => {
+                  const value = panelPreviewSampleValue(column.field, rowIndex, column.format);
+
+                  return (
+                    <td className="truncate px-3 py-2" key={`${column.fieldId}:${rowIndex}`} title={value} aria-label={value}>
+                      {value}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function PanelPreviewWarnings({
+  datasetName,
+  fieldSourcesById,
+  overlapWarnings,
+  warnings,
+}: {
+  datasetName: string;
+  fieldSourcesById: Map<string, { entity: AppViewEntityTypeOption; field: AppViewEntityTypeOption["fields"][number] }>;
+  overlapWarnings: string[];
+  warnings: Array<{ fieldId: string }>;
+}) {
+  if (warnings.length === 0 && overlapWarnings.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="grid gap-1 rounded border border-amber-200 bg-amber-50/80 p-2 text-xs text-amber-950">
+      {warnings.map((column) => {
+        const columnName = fieldSourcesById.get(column.fieldId)?.field.name ?? column.fieldId;
+
+        return <span className="[overflow-wrap:anywhere]" key={column.fieldId}>La columna {columnName} no pertenece al dataset {datasetName}.</span>;
+      })}
+      {overlapWarnings.map((warning) => <span className="[overflow-wrap:anywhere]" key={warning}>{warning}</span>)}
+    </div>
+  );
+}
+
+function panelOverlapWarningsByModuleId(layoutOverlaps: ReturnType<typeof panelModuleLayoutOverlaps>) {
   const overlapWarningsByModuleId = new Map<string, string[]>();
 
   for (const overlap of layoutOverlaps) {
@@ -1855,96 +3272,37 @@ function PanelPreview({
     ]);
   }
 
-  return (
-    <aside className="min-w-0" id="vista-previa-panel">
-      <div className="sticky top-4 grid max-h-[calc(100vh-2rem)] gap-3 overflow-auto rounded-md border border-border p-3">
-        <div>
-          <h3 className="text-sm font-medium">Vista previa</h3>
-          <p className="text-xs text-muted-foreground">Grilla de {layoutColumns} columnas</p>
-        </div>
-        <div
-          className="grid gap-2 rounded-md border border-dashed border-border p-2"
-          style={{
-            gridAutoRows: `${Math.max(layoutRowHeight * 4, 32)}px`,
-            gridTemplateColumns: `repeat(${Math.max(layoutColumns, 1)}, minmax(0, 1fr))`,
-          }}
-        >
-          {modules.length === 0 ? (
-            <p className="col-span-12 text-sm text-muted-foreground">No hay módulos configurados.</p>
-          ) : sortPanelModulesByLayout(modules).map((module) => {
-            const dataset = datasets.find((item) => item.id === module.datasetId);
-            const datasetName = dataset?.name || dataset?.id || "sin dataset";
-            const entityType = entityTypes.find((item) => item.id === dataset?.source.entityTypeId);
-            const warnings = incompatiblePanelColumns(module, datasets);
-            const overlapWarnings = overlapWarningsByModuleId.get(module.id) ?? [];
-            const columnNames = module.visualization.type === "TABLE"
-              ? module.visualization.config.columns.map((column) =>
-                  fieldSourcesById.get(column.fieldId)?.field.name ?? column.fieldId,
-                )
-              : [];
-            const metricId = module.visualization.type === "KPI" ? module.visualization.config.metricId : "";
-            const metric = metricId
-              ? metrics.find((item) => item.id === metricId)
-              : undefined;
-
-            return (
-              <div
-                className={`grid min-w-0 gap-2 overflow-hidden rounded-md border bg-background p-3 text-sm ${
-                  overlapWarnings.length > 0 ? "border-destructive/60" : "border-border"
-                }`}
-                key={module.id}
-                style={{
-                  gridColumn: `${Math.max(module.layout.x, 0) + 1} / span ${Math.min(Math.max(module.layout.w, 1), layoutColumns || 12)}`,
-                  gridRow: `${Math.max(module.layout.y, 0) + 1} / span ${Math.max(module.layout.h, 1)}`,
-                }}
-              >
-                <div className="min-w-0">
-                  <p className="truncate font-medium">{module.title || module.id}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {datasetName} · {module.visualization.type} · x{module.layout.x} y{module.layout.y} · {module.layout.w}x{module.layout.h}
-                  </p>
-                  {entityType ? <p className="text-xs text-muted-foreground">{entityType.name}</p> : null}
-                </div>
-                {module.visualization.type === "KPI" ? (
-                  <div className="grid gap-1 rounded border border-dashed border-border p-2">
-                    <p className="truncate text-xs text-muted-foreground">{metric?.name ?? "Métrica sin seleccionar"}</p>
-                    <p className="text-2xl font-semibold">{panelKpiPreviewValue(module.visualization.config)}</p>
-                    <p className="text-xs text-muted-foreground">Valor de ejemplo en vista previa</p>
-                  </div>
-                ) : (
-                  <ol className="grid gap-1 text-xs">
-                    {columnNames.length === 0 ? (
-                      <li className="text-muted-foreground">Sin columnas</li>
-                    ) : columnNames.map((name, index) => (
-                      <li className="truncate" key={`${name}-${index}`}>{index + 1}. {name}</li>
-                    ))}
-                  </ol>
-                )}
-                {warnings.length > 0 ? (
-                  <div className="grid gap-1 rounded border border-destructive/30 bg-destructive/10 p-2 text-xs text-destructive">
-                    {warnings.map((column) => {
-                      const columnName = fieldSourcesById.get(column.fieldId)?.field.name ?? column.fieldId;
-                      const targetName = entityType?.name ?? datasetName;
-
-                      return <span key={column.fieldId}>La columna {columnName} no pertenece al dataset {targetName}.</span>;
-                    })}
-                  </div>
-                ) : null}
-                {overlapWarnings.length > 0 ? (
-                  <div className="grid gap-1 rounded border border-destructive/30 bg-destructive/10 p-2 text-xs text-destructive">
-                    {overlapWarnings.map((warning) => <span key={warning}>{warning}</span>)}
-                  </div>
-                ) : null}
-              </div>
-            );
-          })}
-        </div>
-      </div>
-    </aside>
-  );
+  return overlapWarningsByModuleId;
 }
 
-function PanelErrorSummary({ fieldErrors }: { fieldErrors?: Record<string, string[]> }) {
+function panelPreviewSampleValue(
+  field: AppViewEntityTypeOption["fields"][number] | undefined,
+  rowIndex: number,
+  format?: string,
+) {
+  if (!field) {
+    return `Ejemplo ${rowIndex + 1}`;
+  }
+  if (field.type === "RELATION") return ["Procedimiento ejemplo", "Manual operativo", "Protocolo revisión"][rowIndex] ?? "Registro relacionado";
+  if (field.type === "SELECT" || field.type === "MULTISELECT") return field.options[rowIndex % Math.max(field.options.length, 1)]?.label ?? "Opción ejemplo";
+  if (field.type === "DATE") return format === "DD-MM-YYYY" ? "12-09-2026" : "2026-09-12";
+  if (field.type === "DATETIME") return "12-09-2026 09:30";
+  if (field.type === "TIME") return "09:30";
+  if (field.type === "BOOLEAN") return rowIndex % 2 === 0 ? "Sí" : "No";
+  if (field.type === "INTEGER") return String(120 + rowIndex);
+  if (field.type === "DECIMAL" || field.type === "MONEY") return rowIndex === 0 ? "1.250,50" : "980,25";
+  if (field.type === "TEXTAREA") return "Texto largo de ejemplo disponible completo";
+
+  return ["Versión inicial", "Actualización", "Revisión final"][rowIndex] ?? "Texto de ejemplo";
+}
+
+function PanelErrorSummary({
+  fieldErrors,
+  onSelectSection,
+}: {
+  fieldErrors?: Record<string, string[]>;
+  onSelectSection?: (section: PanelEditorSectionId) => void;
+}) {
   const items = panelErrorSummaryItems(fieldErrors);
 
   if (items.length === 0) {
@@ -1956,9 +3314,14 @@ function PanelErrorSummary({ fieldErrors }: { fieldErrors?: Record<string, strin
       <p className="font-medium">Revisa la configuración del panel.</p>
       <div className="flex flex-wrap gap-2">
         {items.map((item) => (
-          <a className="rounded border border-destructive/30 bg-background px-2 py-1" href={`#${item.sectionId}`} key={`${item.sectionId}-${item.message}`}>
+          <button
+            className="rounded border border-destructive/30 bg-background px-2 py-1 text-left"
+            key={`${item.sectionId}-${item.message}`}
+            onClick={() => onSelectSection?.(item.sectionId)}
+            type="button"
+          >
             {item.label}: {item.message}
-          </a>
+          </button>
         ))}
       </div>
     </div>
@@ -3956,16 +5319,16 @@ function nextPanelId(prefix: string, existingIds: string[]) {
   return id;
 }
 
-function panelSectionId(label: string) {
-  return label.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, "-");
-}
-
 function panelSectionHasErrors(sectionId: string, fieldErrors: Record<string, string[]> | undefined) {
   if (!fieldErrors) {
     return false;
   }
 
   return panelErrorSummaryItems(fieldErrors).some((item) => item.sectionId === sectionId);
+}
+
+function firstPanelErrorSection(fieldErrors: Record<string, string[]> | undefined): PanelEditorSectionId | null {
+  return panelErrorSummaryItems(fieldErrors)[0]?.sectionId ?? null;
 }
 
 function panelErrorSummaryItems(fieldErrors: Record<string, string[]> | undefined) {
@@ -3990,7 +5353,7 @@ function panelErrorSummaryItems(fieldErrors: Record<string, string[]> | undefine
     });
 }
 
-function panelErrorSectionId(fieldName: string) {
+function panelErrorSectionId(fieldName: string): PanelEditorSectionId | "" {
   if (["datasets", "panelDatasetFields", "panelDatasetRelation", "panelDatasetOrder"].includes(fieldName)) {
     return "fuentes-de-datos";
   }

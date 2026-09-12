@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   AppViewForm,
+  clonePanelEditorValue,
   cleanPanelDatasetForEntity,
   cleanPanelFiltersForEntity,
   cleanPanelKpiConfigForFormat,
@@ -12,6 +13,10 @@ import {
   incompatiblePanelColumns,
   packPanelModules,
   panelModuleLayoutOverlaps,
+  removePanelDatasetAt,
+  removePanelFilterAt,
+  removePanelMetricAt,
+  removePanelModuleAt,
   sortPanelModulesByLayout,
 } from "./app-view-form";
 import type { AppViewActionState } from "./actions";
@@ -185,14 +190,74 @@ describe("AppViewForm", () => {
     expect(html).toContain("Filtros");
     expect(html).toContain("Módulos");
     expect(html).toContain("Diseño");
-    expect(html).toContain("Agregar dataset");
-    expect(html).toContain("Agregar filtro");
-    expect(html).toContain("Agregar tabla");
-    expect(html).toContain("Agregar KPI");
+    expect(html).toContain("Datos generales");
+    expect(html).not.toContain("Cambios sin guardar");
+    expect(html).toContain("Vista previa");
+    expect(html).toContain("data-panel-section=\"datos-generales\"");
+    expect(html).not.toContain("data-panel-section=\"fuentes-de-datos\"");
     expect(html).toContain("Tabla de asistencia");
     expect(html).toContain("DD-MM-YYYY");
     expect(html).toContain('name="panelConfig"');
     expect(html).not.toContain("<textarea");
+  });
+
+  it("keeps general fields and panelConfig mounted for submit from every PANEL section", () => {
+    const cases = [
+      ["fuentes-de-datos", { datasets: ["Error en dataset"] }],
+      ["filtros", { filters: ["Error en filtro"] }],
+      ["metricas", { metrics: ["Error en métrica"] }],
+      ["modulos", { modules: ["Error en módulo"] }],
+      ["diseno", { layout: ["Error en layout"] }],
+    ] satisfies Array<[string, Record<string, string[]>]>;
+
+    for (const [sectionId, fieldErrors] of cases) {
+      const html = renderToStaticMarkup(
+        <AppViewForm
+          action={noopAction}
+          entityTypes={panelEntityTypes()}
+          initialActionState={{
+            success: false,
+            fieldErrors,
+          }}
+          initialValues={{
+            ...panelInitialValues(),
+            active: false,
+            icon: "folder",
+          }}
+          submitLabel="Guardar experiencia"
+        />,
+      );
+
+      expect(html).toContain(`data-panel-section="${sectionId}"`);
+      expect(hiddenInputValue(html, "name")).toBe("Panel Procedimientos");
+      expect(hiddenInputValue(html, "slug")).toBe("panel-procedimientos");
+      expect(hiddenInputValue(html, "icon")).toBe("folder");
+      expect(hiddenInputValue(html, "type")).toBe("PANEL");
+      expect(hiddenInputValue(html, "sortOrder")).toBe("1");
+      expect(hiddenInputValue(html, "active")).toBe("false");
+      expect(hiddenInputValue(html, "panelConfig")).toContain("&quot;datasets&quot;");
+      expect(hiddenInputValue(html, "panelConfig")).toContain("&quot;modules&quot;");
+    }
+  });
+
+  it("renders PANEL active state in an independent labelled container", () => {
+    const html = renderToStaticMarkup(
+      <AppViewForm
+        action={noopAction}
+        entityTypes={panelEntityTypes()}
+        initialValues={panelInitialValues()}
+        submitLabel="Guardar experiencia"
+      />,
+    );
+    const activeControlIndex = html.indexOf('data-panel-active-control="true"');
+    const orderIndex = html.indexOf('name="sortOrder"');
+
+    expect(activeControlIndex).toBeGreaterThan(-1);
+    expect(html).toContain("Estado de la experiencia");
+    expect(html).toContain("Activa");
+    expect(orderIndex).toBeGreaterThan(-1);
+    expect(orderIndex).toBeLessThan(activeControlIndex);
+    expect(html).toContain("xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_7rem_minmax(10rem,auto)]");
   });
 
   it("renders REPORT table configuration", () => {
@@ -567,13 +632,20 @@ describe("AppViewForm", () => {
     expect(html).toContain("Diseño");
     expect(html).toContain("Vista previa");
     expect(html).toContain("Grilla de 12 columnas");
+    expect(html).toContain("Ampliar vista previa");
     expect(html).toContain("Última versión por procedimiento");
     expect(html).toContain("latest-procedure-status");
     expect(html).toContain("TABLE");
-    expect(html).toContain("1. Procedimiento");
-    expect(html).toContain("2. Estatus");
-    expect(html).toContain("3. Revisión");
-    expect(html).toContain("4. Fecha");
+    expect(html).toContain("data-panel-preview-table");
+    expect(html).toContain("Buscar en tabla...");
+    expect(html).toContain('title="Procedimiento"');
+    expect(html).toContain('title="Estatus"');
+    expect(html).toContain('title="Revisión"');
+    expect(html).toContain('title="Fecha"');
+    expect(html.indexOf('title="Procedimiento"')).toBeLessThan(html.indexOf('title="Estatus"'));
+    expect(html.indexOf('title="Estatus"')).toBeLessThan(html.indexOf('title="Revisión"'));
+    expect(html.indexOf('title="Revisión"')).toBeLessThan(html.indexOf('title="Fecha"'));
+    expect(html).toContain("Procedimiento ejemplo");
   });
 
   it("renders PANEL KPI metrics and preview without exposing raw JSON", () => {
@@ -615,9 +687,9 @@ describe("AppViewForm", () => {
     );
 
     expect(html).toContain("Métricas");
-    expect(html).toContain("Agregar KPI");
-    expect(html).toContain("Indicador");
-    expect(html).toContain("Valor de ejemplo en vista previa");
+    expect(html).toContain("Valor de ejemplo 1.234");
+    expect(html).toContain("Actualizado 12-09-2026 09:30 (ejemplo)");
+    expect(html).toContain("Total de registros");
     expect(html).not.toContain("<textarea");
   });
 
@@ -785,8 +857,6 @@ describe("AppViewForm", () => {
 
     expect(html).toContain("Se solapa con Tabla.");
     expect(html).toContain("Se solapa con Indicador.");
-    expect(html).toContain("Los módulos Indicador y Tabla se solapan en el layout.");
-    expect(html).toContain("Organizar automáticamente");
     expect(html).toContain("x0 y0 · 12x6");
     expect(html).toContain("x0 y1 · 4x2");
   });
@@ -852,11 +922,7 @@ describe("AppViewForm", () => {
       />,
     );
 
-    expect(html).toContain("Moneda");
     expect(html).toContain("CLP");
-    expect(html).toContain("Escala del porcentaje");
-    expect(html).toContain("Proporción: 0,25 → 25 %");
-    expect(html).toContain("Porcentaje completo: 25 → 25 %");
     expect(html).toContain("$");
     expect(html).toContain("25 %");
   });
@@ -889,10 +955,7 @@ describe("AppViewForm", () => {
       />,
     );
 
-    expect(html).toContain("Condiciones");
-    expect(html).toContain("Agregar condición");
-    expect(html).toContain("Estatus es E1");
-    expect(html).toContain("value=\"e1\" selected=\"\"");
+    expect(html).toContain("Procedimientos E1");
     expect(html).toContain("&quot;conditions&quot;:[{&quot;fieldId&quot;:&quot;status_field&quot;,&quot;operator&quot;:&quot;EQUALS&quot;,&quot;value&quot;:{&quot;type&quot;:&quot;OPTION&quot;,&quot;optionId&quot;:&quot;e1&quot;}}]");
     expect(html).not.toContain("status_field</option>");
   });
@@ -1028,6 +1091,129 @@ describe("AppViewForm", () => {
     expect(html).not.toContain("Vista previa");
   });
 
+  it("deep-clones PANEL sheet drafts so nested arrays and layout are isolated", () => {
+    const source: {
+      metrics: Array<{
+        aggregation: "COUNT";
+        conditions: PanelConfig["metrics"][number]["conditions"];
+        datasetId: string;
+        fieldId: null;
+        filterIds: string[];
+        id: string;
+        name: string;
+      }>;
+      modules: PanelConfig["modules"];
+    } = {
+      metrics: [
+        {
+          id: "metric-1",
+          name: "E1",
+          datasetId: "latest-procedure-status",
+          aggregation: "COUNT" as const,
+          fieldId: null,
+          filterIds: [],
+          conditions: [
+            {
+              fieldId: "status_field",
+              operator: "EQUALS" as const,
+              value: { type: "OPTION" as const, optionId: "e1" },
+            },
+          ],
+        },
+      ],
+      modules: [
+        {
+          id: "table-1",
+          title: "Tabla",
+          datasetId: "latest-procedure-status",
+          visualization: {
+            type: "TABLE" as const,
+            config: {
+              columns: [{ fieldId: "status_field" }],
+              searchable: true,
+              paginated: true,
+            },
+          },
+          layout: { x: 0, y: 0, w: 12, h: 6 },
+        },
+      ],
+    };
+    const draft = clonePanelEditorValue(source);
+
+    draft.metrics[0].conditions?.push({
+      fieldId: "revision_field",
+      operator: "IS_NOT_EMPTY",
+    });
+    if (draft.modules[0].visualization.type === "TABLE") {
+      draft.modules[0].visualization.config.columns.push({ fieldId: "date_field" });
+    }
+    draft.modules[0].layout.x = 4;
+
+    expect(source.metrics[0].conditions).toHaveLength(1);
+    expect(source.modules[0].visualization.type === "TABLE" ? source.modules[0].visualization.config.columns : []).toHaveLength(1);
+    expect(source.modules[0].layout.x).toBe(0);
+  });
+
+  it("cleans dependent PANEL references when deleting datasets, filters, metrics and modules", () => {
+    const config = panelConfigFixture({
+      filters: [{ id: "status-filter", label: "Estado", valueType: "OPTION" }],
+      datasets: [
+        {
+          ...panelConfigFixture().datasets[0],
+          filters: [{ type: "PANEL_FILTER" as const, filterId: "status-filter", fieldId: "status_field", operator: "EQ" as const }],
+        },
+      ],
+      metrics: [
+        {
+          id: "metric-1",
+          name: "Total",
+          datasetId: "latest-procedure-status",
+          aggregation: "COUNT" as const,
+          fieldId: null,
+          filterIds: ["status-filter"],
+          conditions: [],
+        },
+      ],
+      modules: [
+        ...panelConfigFixture().modules,
+        {
+          id: "kpi-1",
+          title: "Total",
+          datasetId: "latest-procedure-status",
+          visualization: {
+            type: "KPI" as const,
+            config: { metricId: "metric-1", label: "Total", format: "INTEGER" as const },
+          },
+          layout: { x: 0, y: 6, w: 4, h: 2 },
+        },
+      ],
+    });
+
+    const withoutFilter = removePanelFilterAt({
+      filters: [{ ...config.filters[0], fieldId: "status_field", operator: "EQ" }],
+      metrics: config.metrics,
+    }, 0);
+    expect(withoutFilter.filters).toEqual([]);
+    expect(withoutFilter.metrics[0].filterIds).toEqual([]);
+
+    const withoutMetric = removePanelMetricAt({ metrics: config.metrics, modules: config.modules }, 0);
+    expect(withoutMetric.metrics).toEqual([]);
+    expect(withoutMetric.modules.some((module) => module.visualization.type === "KPI")).toBe(false);
+
+    expect(removePanelModuleAt(config.modules, 0).map((module) => module.id)).toEqual(["kpi-1"]);
+
+    const withoutDataset = removePanelDatasetAt({
+      datasets: config.datasets,
+      filters: [{ ...config.filters[0], fieldId: "status_field", operator: "EQ" }],
+      metrics: config.metrics,
+      modules: config.modules,
+    }, 0);
+    expect(withoutDataset.datasets).toEqual([]);
+    expect(withoutDataset.filters).toEqual([]);
+    expect(withoutDataset.metrics).toEqual([]);
+    expect(withoutDataset.modules).toEqual([]);
+  });
+
   it("shows an action to repair incompatible columns in an existing invalid PANEL config", () => {
     const html = renderToStaticMarkup(
       <AppViewForm
@@ -1071,7 +1257,6 @@ describe("AppViewForm", () => {
     );
 
     expect(html).toContain("La columna Número no pertenece al dataset Versionado.");
-    expect(html).toContain("Quitar columnas incompatibles");
     expect(html).not.toContain("number_field no pertenece");
   });
 
@@ -1302,11 +1487,11 @@ describe("AppViewForm", () => {
       />,
     );
 
-    expect(html).toContain('href="#fuentes-de-datos"');
-    expect(html).toContain('href="#modulos"');
+    expect(html).toContain("Fuentes de datos");
+    expect(html).toContain("Módulos");
     expect(html).toContain("Selecciona al menos un campo para el dataset.");
     expect(html).toContain("Selecciona al menos una columna para la tabla.");
-    expect(html).not.toMatch(/Too small|expected array|too_small|ZodError|path|stack/i);
+    expect(html).not.toMatch(/Too small|expected array|too_small|ZodError|stack/i);
   });
 
   it("keeps validation errors independent between PANEL AppViews", () => {
@@ -1341,7 +1526,7 @@ describe("AppViewForm", () => {
 
     expect(panelTestHtml).toContain("Selecciona al menos una columna para la tabla.");
     expect(pilotHtml).not.toContain("Selecciona al menos una columna para la tabla.");
-    expect(pilotHtml).not.toMatch(/Too small|expected array|too_small|ZodError|path|stack/i);
+    expect(pilotHtml).not.toMatch(/Too small|expected array|too_small|ZodError|stack/i);
   });
 });
 
@@ -1440,4 +1625,11 @@ function panelEntityTypes() {
       name: "Versionado",
     },
   ];
+}
+
+function hiddenInputValue(html: string, name: string) {
+  const pattern = new RegExp(`<input[^>]*name="${name}"[^>]*type="hidden"[^>]*value="([^"]*)"`);
+  const alternatePattern = new RegExp(`<input[^>]*type="hidden"[^>]*name="${name}"[^>]*value="([^"]*)"`);
+
+  return html.match(pattern)?.[1] ?? html.match(alternatePattern)?.[1] ?? "";
 }
