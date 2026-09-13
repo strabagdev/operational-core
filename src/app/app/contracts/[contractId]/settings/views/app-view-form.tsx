@@ -1331,7 +1331,7 @@ function PanelDatasetCard({
 
   return (
     <PanelSummaryCard
-      actions={<CardActions onDelete={onDelete} onEdit={onEdit} />}
+      actions={<CardActions deleteLabel="Eliminar dataset" editLabel="Editar dataset" onDelete={onDelete} onEdit={onEdit} />}
       eyebrow={dataset.transformation.type === "LATEST_BY_RELATION" ? "Último por relación" : "Registros"}
       tone="datasets"
       title={dataset.name || "Dataset sin nombre"}
@@ -1362,7 +1362,7 @@ function PanelFilterCard({
   const field = fieldsForPanelDataset(dataset, entityTypes).find((item) => item.id === filter.fieldId);
 
   return (
-    <PanelSummaryCard actions={<CardActions onDelete={onDelete} onEdit={onEdit} />} eyebrow={filter.required ? "Requerido" : "Opcional"} tone="filters" title={filter.label || "Filtro sin nombre"}>
+    <PanelSummaryCard actions={<CardActions deleteLabel="Eliminar filtro" editLabel="Editar filtro" onDelete={onDelete} onEdit={onEdit} />} eyebrow={filter.required ? "Requerido" : "Opcional"} tone="filters" title={filter.label || "Filtro sin nombre"}>
       <PanelInfoGrid items={[
         ["Dataset", dataset?.name || dataset?.id || "Sin dataset"],
         ["Campo", field?.name ?? "Sin campo"],
@@ -1391,7 +1391,7 @@ function PanelMetricCard({
   const summary = panelMetricReadableSummary(metric, dataset, field, fields);
 
   return (
-    <PanelSummaryCard actions={<CardActions onDelete={onDelete} onEdit={onEdit} />} eyebrow={metric.aggregation} tone="metrics" title={metric.name || "Métrica sin nombre"}>
+    <PanelSummaryCard actions={<CardActions deleteLabel="Eliminar métrica" editLabel="Editar métrica" onDelete={onDelete} onEdit={onEdit} />} eyebrow={metric.aggregation} tone="metrics" title={metric.name || "Métrica sin nombre"}>
       <p className="text-sm text-muted-foreground">{summary}</p>
       <PanelInfoGrid items={[
         ["Dataset", dataset?.name || dataset?.id || "Sin dataset"],
@@ -1431,7 +1431,7 @@ function PanelModuleCard({
         <div className="flex flex-wrap justify-end gap-1">
           <IconButton disabled={!onMoveUp} label="Subir módulo" onClick={onMoveUp} icon={ArrowUp} />
           <IconButton disabled={!onMoveDown} label="Bajar módulo" onClick={onMoveDown} icon={ArrowDown} />
-          <CardActions onDelete={onDelete} onEdit={onEdit} />
+          <CardActions deleteLabel="Eliminar módulo" editLabel="Editar módulo" onDelete={onDelete} onEdit={onEdit} />
         </div>
       )}
       eyebrow={module.visualization.type}
@@ -1471,13 +1471,15 @@ function PanelSummaryCard({
   warning?: boolean;
 }) {
   return (
-    <article className={cn("grid min-w-0 gap-3 rounded-md border bg-background p-3 shadow-sm", warning ? "border-destructive/50" : "border-border")}>
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
+    <article className={cn("grid min-w-0 gap-3 rounded-md border bg-background p-3 shadow-sm", warning ? "border-destructive/50" : "border-border")} data-panel-card={tone}>
+      <div className="flex min-w-0 flex-wrap items-start justify-between gap-3" data-panel-card-header="true">
+        <div className="min-w-0 flex-1">
           <p className={cn("w-fit rounded-full px-2 py-0.5 text-xs font-medium", panelBadgeClassName(tone))}>{eyebrow}</p>
           <h4 className="mt-2 truncate text-sm font-semibold" title={title}>{title}</h4>
         </div>
-        {actions}
+        <div className="flex shrink-0 items-center gap-1" data-panel-card-actions="true">
+          {actions}
+        </div>
       </div>
       {children}
     </article>
@@ -1497,11 +1499,21 @@ function PanelInfoGrid({ items }: { items: Array<[string, string]> }) {
   );
 }
 
-function CardActions({ onDelete, onEdit }: { onDelete: () => void; onEdit: () => void }) {
+function CardActions({
+  deleteLabel,
+  editLabel,
+  onDelete,
+  onEdit,
+}: {
+  deleteLabel: string;
+  editLabel: string;
+  onDelete: () => void;
+  onEdit: () => void;
+}) {
   return (
-    <div className="flex shrink-0 gap-1">
-      <IconButton label="Editar" onClick={onEdit} icon={Pencil} />
-      <IconButton label="Eliminar" onClick={onDelete} icon={Trash2} />
+    <div className="flex shrink-0 items-center gap-1">
+      <IconButton label={editLabel} onClick={onEdit} icon={Pencil} />
+      <IconButton label={deleteLabel} onClick={onDelete} icon={Trash2} />
     </div>
   );
 }
@@ -1518,7 +1530,7 @@ function IconButton({
   onClick?: () => void;
 }) {
   return (
-    <Button aria-label={label} disabled={disabled} onClick={onClick} size="icon" type="button" variant="ghost">
+    <Button aria-label={label} disabled={disabled} onClick={onClick} size="icon" title={label} type="button" variant="ghost">
       <Icon className="h-4 w-4" />
     </Button>
   );

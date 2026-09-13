@@ -650,6 +650,72 @@ describe("AppViewForm", () => {
     expect(html).toContain("Procedimiento ejemplo");
   });
 
+  it("keeps PANEL card actions inside their cards with accessible labels", () => {
+    const longTitle = "Nombre extremadamente largo para confirmar que las acciones no salen de la tarjeta ni pisan el contenido principal";
+    const config = panelConfigFixture({
+      filters: [
+        { id: "status-filter", label: longTitle, valueType: "OPTION" },
+      ],
+      metrics: [
+        {
+          id: "status-count",
+          name: longTitle,
+          datasetId: "latest-procedure-status",
+          aggregation: "COUNT",
+          fieldId: null,
+          filterIds: [],
+        },
+      ],
+      modules: [
+        {
+          ...panelConfigFixture().modules[0],
+          title: longTitle,
+        },
+      ],
+      datasets: [
+        {
+          ...panelConfigFixture().datasets[0],
+          name: longTitle,
+        },
+      ],
+    });
+
+    const cases = [
+      ["datasets", "datasets", "Editar dataset", "Eliminar dataset"],
+      ["filters", "filters", "Editar filtro", "Eliminar filtro"],
+      ["metrics", "metrics", "Editar métrica", "Eliminar métrica"],
+      ["modules", "modules", "Editar módulo", "Eliminar módulo"],
+    ] satisfies Array<[string, string, string, string]>;
+
+    for (const [sectionId, cardKind, editLabel, deleteLabel] of cases) {
+      const html = renderToStaticMarkup(
+        <AppViewForm
+          action={noopAction}
+          entityTypes={panelEntityTypes()}
+          initialActionState={{ success: false, fieldErrors: { [sectionId]: ["Revisar sección"] } }}
+          initialValues={{ ...panelInitialValues(), config }}
+          submitLabel="Guardar experiencia"
+        />,
+      );
+      const cardStart = html.indexOf(`data-panel-card="${cardKind}"`);
+      const cardEnd = html.indexOf("</article>", cardStart);
+      const cardHtml = html.slice(cardStart, cardEnd);
+
+      expect(cardStart).toBeGreaterThan(-1);
+      expect(cardHtml).toContain('data-panel-card-header="true"');
+      expect(cardHtml).toContain("flex-wrap");
+      expect(cardHtml).toContain("min-w-0 flex-1");
+      expect(cardHtml).toContain('data-panel-card-actions="true"');
+      expect(cardHtml).toContain("flex shrink-0 items-center gap-1");
+      expect(cardHtml).toContain(`aria-label="${editLabel}"`);
+      expect(cardHtml).toContain(`title="${editLabel}"`);
+      expect(cardHtml).toContain(`aria-label="${deleteLabel}"`);
+      expect(cardHtml).toContain(`title="${deleteLabel}"`);
+      expect(cardHtml).not.toContain("absolute");
+      expect(cardHtml).not.toMatch(/\b(?:-right|-left|-top|-bottom|translate-x|translate-y|left-full|right-full)\b/);
+    }
+  });
+
   it("renders PANEL KPI metrics and preview without exposing raw JSON", () => {
     const html = renderToStaticMarkup(
       <AppViewForm
