@@ -2,9 +2,15 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
 import { auth } from "@/auth";
+import {
+  ActionMessage,
+  EmptyState,
+  PageHeader,
+  StatusBadge,
+  SummaryCard,
+} from "@/components/admin-ui";
 import { EntityIcon } from "@/components/entity-icon";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   getAppViewAdminData,
   getAppViewTypeLabel,
@@ -37,15 +43,10 @@ export default async function AppViewsPage({
   const { error, notice } = await searchParams;
 
   return (
-    <div className="grid max-w-5xl gap-6">
-      <header className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold">Experiencias</h1>
-          <p className="text-sm text-muted-foreground">
-            Configura las vistas que Opco Client podrá consumir en etapas posteriores.
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2 sm:justify-end">
+    <div className="grid w-full gap-6 xl:max-w-6xl">
+      <PageHeader
+        actions={(
+          <>
           <Button asChild variant="outline">
             <Link href={`/app/contracts/${contractId}/settings/views/access`}>
               Asignar usuarios
@@ -56,57 +57,24 @@ export default async function AppViewsPage({
               Crear experiencia
             </Link>
           </Button>
-        </div>
-      </header>
+          </>
+        )}
+        description="Configura las vistas que Opco Client podrá consumir en etapas posteriores."
+        metadata={<StatusBadge variant="info">{data.appViews.length} experiencia{data.appViews.length === 1 ? "" : "s"}</StatusBadge>}
+        title="Experiencias"
+      />
 
-      <ActionMessage error={error} notice={notice} />
+      <ActionMessage variant={error ? "error" : "info"}>{error ?? notice}</ActionMessage>
 
-      <section className="grid gap-3">
+      <section className="grid gap-3 lg:grid-cols-2">
         {data.appViews.length > 0 ? (
           data.appViews.map((view) => {
             const config = parseAppViewConfig(view);
 
             return (
-              <Card key={view.id}>
-                <CardHeader className="pb-4">
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="space-y-1">
-                      <CardTitle className="flex items-center gap-2">
-                        <EntityIcon className="text-muted-foreground" icon={view.icon} />
-                        {view.name}
-                      </CardTitle>
-                      <p className="text-sm text-muted-foreground">{view.slug}</p>
-                    </div>
-                    <div className="flex flex-wrap justify-end gap-2">
-                      <span className="rounded-md border border-border bg-muted/40 px-2 py-1 text-xs font-medium">
-                        {getAppViewTypeLabel(view.type)}
-                      </span>
-                      <span className="rounded-md border border-border px-2 py-1 text-xs font-medium">
-                        {view.active ? "Activa" : "Inactiva"}
-                      </span>
-                    </div>
-                  </div>
-                </CardHeader>
-                <CardContent className="grid gap-4">
-                  <div className="grid gap-2 text-sm text-muted-foreground sm:grid-cols-3">
-                    <div>
-                      Entidades:{" "}
-                      <span className="font-medium text-foreground">
-                        {summarizeAppViewConfig({ config, entityTypes: data.entityTypes })}
-                      </span>
-                    </div>
-                    <div>
-                      Orden:{" "}
-                      <span className="font-medium text-foreground">{view.sortOrder}</span>
-                    </div>
-                    <div>
-                      Estado:{" "}
-                      <span className="font-medium text-foreground">
-                        {view.active ? "Activa" : "Inactiva"}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
+              <SummaryCard
+                actions={(
+                  <>
                     <Button asChild size="sm" variant="outline">
                       <Link href={`/app/contracts/${contractId}/settings/views/${view.id}`}>
                         Editar
@@ -124,35 +92,53 @@ export default async function AppViewsPage({
                         {view.active ? "Desactivar" : "Activar"}
                       </Button>
                     </form>
-                  </div>
-                </CardContent>
-              </Card>
+                  </>
+                )}
+                badges={(
+                  <>
+                    <StatusBadge variant={appViewTypeVariant(view.type)}>
+                      {getAppViewTypeLabel(view.type)}
+                    </StatusBadge>
+                    <StatusBadge variant={view.active ? "active" : "inactive"}>
+                      {view.active ? "Activa" : "Inactiva"}
+                    </StatusBadge>
+                  </>
+                )}
+                description={view.slug}
+                icon={<EntityIcon icon={view.icon} />}
+                key={view.id}
+                metadata={[
+                  { label: "Entidades", value: summarizeAppViewConfig({ config, entityTypes: data.entityTypes }) },
+                  { label: "Orden", value: view.sortOrder },
+                  { label: "Estado", value: view.active ? "Activa" : "Inactiva" },
+                ]}
+                title={view.name}
+              />
             );
           })
         ) : (
-          <Card>
-            <CardContent className="pt-6">
-              <p className="text-sm text-muted-foreground">
-                Todavía no hay experiencias configuradas.
-              </p>
-            </CardContent>
-          </Card>
+          <div className="lg:col-span-2">
+            <EmptyState
+              action={(
+                <Button asChild variant="outline">
+                  <Link href={`/app/contracts/${contractId}/settings/views/new`}>
+                    Crear experiencia
+                  </Link>
+                </Button>
+              )}
+              description="Crea una experiencia para que Opco Client pueda consumirla."
+              title="Todavía no hay experiencias configuradas."
+            />
+          </div>
         )}
       </section>
     </div>
   );
 }
 
-function ActionMessage({ error, notice }: { error?: string; notice?: string }) {
-  if (!error && !notice) {
-    return null;
-  }
-
-  return (
-    <Card>
-      <CardContent className="pt-6">
-        <p className="text-sm text-muted-foreground">{error ?? notice}</p>
-      </CardContent>
-    </Card>
-  );
+function appViewTypeVariant(type: string) {
+  if (type === "PANEL") return "info";
+  if (type === "WORKFLOW") return "warning";
+  if (type === "DASHBOARD") return "active";
+  return "neutral";
 }
