@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 
 import { EntityIcon } from "@/components/entity-icon";
+import { IconPicker, getIconPickerFormValue } from "@/components/icon-picker";
 import { Button } from "@/components/ui/button";
 import {
   Sheet,
@@ -53,7 +54,6 @@ import {
   type ReportSelectValueDisplay,
   suggestedAppViewSlug,
 } from "@/lib/app-views";
-import { entityIconOptions } from "@/lib/entity-icons";
 import { cn } from "@/lib/utils";
 
 import type { AppViewActionState } from "./actions";
@@ -579,23 +579,15 @@ export function AppViewForm({
         </div>
 
         <div className={type === "PANEL" ? "grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_7rem_minmax(10rem,auto)]" : "grid gap-4"}>
-          <label className="grid min-w-0 gap-2 text-sm font-medium">
+          <fieldset className="grid min-w-0 gap-2 text-sm font-medium">
             Icono opcional
-            <select
-              className="h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 text-sm font-normal outline-none ring-ring focus-visible:ring-2"
-              name="icon"
-              onChange={(event) => setIcon(event.target.value)}
-              value={icon}
-            >
-              <option value="">Sin icono</option>
-              {entityIconOptions.map((option) => (
-                <option key={option.key} value={option.key}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
+            <IconPicker
+              label="Seleccionar icono de experiencia"
+              onIconChange={(nextIcon) => setIcon(getIconPickerFormValue(nextIcon))}
+              selectedIcon={icon || null}
+            />
             <FieldError errors={state.fieldErrors?.icon} />
-          </label>
+          </fieldset>
 
           <label className="grid min-w-0 gap-2 text-sm font-medium">
             Tipo

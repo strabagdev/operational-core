@@ -114,6 +114,7 @@ describe("AppViewForm", () => {
     expect(html).toContain("Nombre");
     expect(html).toContain("Slug");
     expect(html).toContain("Icono opcional");
+    expect(html).toContain("Seleccionar icono de experiencia");
     expect(html).toContain("Tipo");
     expect(html).toContain("Registros");
     expect(html).toContain("Flujo");
@@ -122,6 +123,7 @@ describe("AppViewForm", () => {
     expect(html).toContain("Dashboard");
     expect(html).toContain("Panel");
     expect(html).toContain("Configuración de registros");
+    expect(html).not.toContain("<option value=\"warehouse\">Bodega</option>");
     expect(html).not.toContain("Subvista Estados");
     expect(html).toContain("Crear experiencia");
   });
