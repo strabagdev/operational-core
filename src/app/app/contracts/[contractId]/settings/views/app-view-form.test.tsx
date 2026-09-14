@@ -1,4 +1,5 @@
 import { renderToStaticMarkup } from "react-dom/server";
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -21,6 +22,9 @@ import {
 } from "./app-view-form";
 import type { AppViewActionState } from "./actions";
 import type { PanelConfig } from "@/lib/app-views";
+
+const appViewFormSource = readFileSync(new URL("./app-view-form.tsx", import.meta.url), "utf8");
+const panelEditorChromeSource = readFileSync(new URL("./panel-editor-chrome.tsx", import.meta.url), "utf8");
 
 const entityTypes = [
   {
@@ -1595,6 +1599,30 @@ describe("AppViewForm", () => {
     expect(panelTestHtml).toContain("Selecciona al menos una columna para la tabla.");
     expect(pilotHtml).not.toContain("Selecciona al menos una columna para la tabla.");
     expect(pilotHtml).not.toMatch(/Too small|expected array|too_small|ZodError|stack/i);
+  });
+
+  it("keeps PANEL metric condition fields and actions in separate responsive containers", () => {
+    expect(appViewFormSource).toContain('data-panel-metric-condition-row="true"');
+    expect(appViewFormSource).toContain('data-panel-metric-condition-actions="true"');
+    expect(appViewFormSource).toContain("flex min-w-0 flex-wrap justify-end gap-2");
+    expect(appViewFormSource).toContain("xl:grid-cols-[minmax(0,1fr)_minmax(160px,220px)_minmax(0,1fr)]");
+    expect(appViewFormSource).not.toContain("minmax(0,1fr)_minmax(160px,220px)_minmax(0,1fr)_auto");
+  });
+
+  it("prevents PANEL sheets from causing horizontal overflow", () => {
+    expect(panelEditorChromeSource).toContain("w-[min(100vw,920px)] max-w-full");
+    expect(panelEditorChromeSource).toContain("overflow-x-hidden overflow-y-auto");
+    expect(panelEditorChromeSource).toContain("flex flex-wrap justify-end gap-2");
+    expect(appViewFormSource).toContain("grid min-w-0 gap-3 md:grid-cols-2 2xl:grid-cols-4");
+    expect(appViewFormSource).toContain("grid min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-3");
+  });
+
+  it("labels KPI number formats clearly without changing persisted identifiers", () => {
+    expect(appViewFormSource).toContain('{ label: "Número con decimales", value: "NUMBER" }');
+    expect(appViewFormSource).toContain('{ label: "Entero sin decimales", value: "INTEGER" }');
+    expect(appViewFormSource).toContain("Este formato solo cambia la presentación del resultado.");
+    expect(appViewFormSource).toContain('if (config.format === "INTEGER")');
+    expect(appViewFormSource).toContain('if (config.format === "DECIMAL")');
   });
 });
 

@@ -2168,7 +2168,7 @@ function PanelDatasetEditor({
 
   return (
     <div className="grid gap-3 rounded-md border border-border p-3">
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="grid min-w-0 gap-3 sm:grid-cols-2">
         <TextControl
           label="Nombre visible"
           onChange={(name) => updateDataset({ ...dataset, name })}
@@ -2251,7 +2251,7 @@ function PanelDatasetEditor({
             options={entityTypes}
             value={transformation.relatedEntityTypeId}
           />
-          <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
+          <div className="grid min-w-0 gap-3 md:grid-cols-2 2xl:grid-cols-3">
             <FieldSelect
               allowedTypes={["RELATION"]}
               disabled={!transformation.relatedEntityTypeId}
@@ -2332,7 +2332,7 @@ function PanelFilterEditor({
 
   return (
     <div className="grid gap-3 rounded-md border border-border p-3">
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="grid min-w-0 gap-3 sm:grid-cols-2">
         <TextControl label="Etiqueta" onChange={(label) => updateFilter({ ...filter, label })} value={filter.label ?? ""} />
         <TextControl label="Identificador interno" onChange={(id) => updateFilter({ ...filter, id })} value={filter.id} />
         <FieldSelect
@@ -2417,7 +2417,7 @@ function PanelMetricEditor({
 
   return (
     <div className="grid gap-3 rounded-md border border-border p-3">
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+      <div className="grid min-w-0 gap-3 md:grid-cols-2 2xl:grid-cols-4">
         <TextControl label="Nombre visible" onChange={(name) => updateMetric({ ...metric, name })} value={metric.name} />
         <TextControl label="Identificador interno" onChange={(id) => updateMetric({ ...metric, id })} value={metric.id} />
         <SelectControl
@@ -2454,7 +2454,7 @@ function PanelMetricEditor({
       {applicableFilters.length > 0 ? (
         <fieldset className="grid gap-2 rounded-md border border-border p-3">
           <legend className="px-1 text-sm font-medium">Filtros aplicables</legend>
-          <div className="grid gap-2 sm:grid-cols-2">
+          <div className="grid min-w-0 gap-2 sm:grid-cols-2">
             {applicableFilters.map((filter) => (
               <label className="flex items-center gap-2 text-sm" key={filter.id}>
                 <input
@@ -2494,9 +2494,9 @@ function PanelMetricEditor({
                 : condition;
 
               return (
-                <div className="grid gap-3 rounded border border-border p-3" key={`${condition.fieldId}:${conditionIndex}`}>
+                <div className="grid min-w-0 gap-3 rounded border border-border p-3" data-panel-metric-condition-row="true" key={`${condition.fieldId}:${conditionIndex}`}>
                   <p className="text-xs text-muted-foreground">{panelMetricConditionSummary(conditionWithValidField, field)}</p>
-                  <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(160px,220px)_minmax(0,1fr)_auto]">
+                  <div className="grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_minmax(160px,220px)_minmax(0,1fr)]">
                     <SelectControl
                       label="Campo"
                       name={`panelMetricConditionField:${metric.id}:${conditionIndex}`}
@@ -2540,17 +2540,17 @@ function PanelMetricEditor({
                       })}
                       index={conditionIndex}
                     />
-                    <div className="flex items-end gap-2">
-                      <button aria-label="Subir condición" className="rounded border border-input px-2 py-1 text-sm disabled:opacity-40" disabled={conditionIndex === 0} onClick={() => updateMetric({ ...metric, conditions: moveAt(conditions, conditionIndex, -1) })} type="button">
-                        Subir
-                      </button>
-                      <button aria-label="Bajar condición" className="rounded border border-input px-2 py-1 text-sm disabled:opacity-40" disabled={conditionIndex === conditions.length - 1} onClick={() => updateMetric({ ...metric, conditions: moveAt(conditions, conditionIndex, 1) })} type="button">
-                        Bajar
-                      </button>
-                      <button className="rounded border border-input px-2 py-1 text-sm" onClick={() => updateMetric({ ...metric, conditions: conditions.filter((_, itemIndex) => itemIndex !== conditionIndex) })} type="button">
-                        Eliminar
-                      </button>
-                    </div>
+                  </div>
+                  <div className="flex min-w-0 flex-wrap justify-end gap-2" data-panel-metric-condition-actions="true">
+                    <button aria-label="Subir condición" className="rounded border border-input px-2 py-1 text-sm disabled:opacity-40" disabled={conditionIndex === 0} onClick={() => updateMetric({ ...metric, conditions: moveAt(conditions, conditionIndex, -1) })} type="button">
+                      Subir
+                    </button>
+                    <button aria-label="Bajar condición" className="rounded border border-input px-2 py-1 text-sm disabled:opacity-40" disabled={conditionIndex === conditions.length - 1} onClick={() => updateMetric({ ...metric, conditions: moveAt(conditions, conditionIndex, 1) })} type="button">
+                      Bajar
+                    </button>
+                    <button className="rounded border border-input px-2 py-1 text-sm" onClick={() => updateMetric({ ...metric, conditions: conditions.filter((_, itemIndex) => itemIndex !== conditionIndex) })} type="button">
+                      Eliminar
+                    </button>
                   </div>
                 </div>
               );
@@ -2603,10 +2603,10 @@ function PanelMetricConditionValueControl({
       .map((value) => value.optionId);
 
     return (
-      <label className="grid gap-2 text-sm font-medium">
+      <label className="grid min-w-0 gap-2 text-sm font-medium">
         Valor
         <select
-          className="min-h-10 rounded-md border border-input bg-background px-3 py-2 text-sm font-normal outline-none ring-ring focus-visible:ring-2"
+          className="min-h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 py-2 text-sm font-normal outline-none ring-ring focus-visible:ring-2"
           multiple={isMultiValue}
           name={`panelMetricConditionValue:${metricId}:${index}`}
           onChange={(event) => {
@@ -2644,10 +2644,10 @@ function PanelMetricConditionValueControl({
   const inputValue = panelMetricConditionInputValue(firstValue, valueType);
 
   return (
-    <label className="grid gap-2 text-sm font-medium">
+    <label className="grid min-w-0 gap-2 text-sm font-medium">
       Valor
       <input
-        className="h-10 rounded-md border border-input bg-background px-3 text-sm font-normal outline-none ring-ring focus-visible:ring-2"
+        className="h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 text-sm font-normal outline-none ring-ring focus-visible:ring-2"
         name={`panelMetricConditionValue:${metricId}:${index}`}
         onChange={(event) => updateValues([panelMetricConditionValueFromInput(event.target.value, valueType)])}
         step={valueType === "NUMBER" ? "any" : undefined}
@@ -2709,7 +2709,7 @@ function PanelModuleEditor({
 
   return (
     <div className="grid gap-3 rounded-md border border-border p-3">
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="grid min-w-0 gap-3 sm:grid-cols-2">
         <TextControl label="Título" onChange={(title) => updateModule({ ...module, title })} value={module.title ?? ""} />
         <TextControl label="Identificador interno" onChange={(id) => updateModule({ ...module, id })} value={module.id} />
         <SelectControl
@@ -2754,9 +2754,9 @@ function PanelModuleEditor({
         />
       </div>
       {kpiVisualization ? (
-        <fieldset className="grid gap-2 rounded-md border border-border p-3">
+        <fieldset className="grid min-w-0 gap-2 rounded-md border border-border p-3">
           <legend className="px-1 text-sm font-medium">Indicador</legend>
-          <div className="grid gap-3 sm:grid-cols-3">
+          <div className="grid min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-3">
             <SelectControl
               label="Métrica"
               name={`panelKpiMetric:${module.id}`}
@@ -2802,6 +2802,9 @@ function PanelModuleEditor({
               options={panelKpiFormatOptions()}
               value={kpiVisualization.config.format}
             />
+            <p className="text-xs text-muted-foreground sm:col-span-2 xl:col-span-3">
+              Este formato solo cambia la presentación del resultado.
+            </p>
             {kpiVisualization.config.format === "MONEY" ? (
               <SelectControl
                 label="Moneda"
@@ -2903,7 +2906,7 @@ function PanelModuleEditor({
                     ) : null}
                   </label>
                   {isSelected ? (
-                    <div className="flex shrink-0 gap-1">
+                    <div className="flex shrink-0 flex-wrap justify-end gap-1">
                       <button aria-label={`Subir ${field.name}`} className="rounded border border-input px-2 py-1 text-xs disabled:opacity-40" disabled={columnIndex === 0} onClick={() => updateColumns(moveAt(columns, columnIndex, -1))} type="button">
                         Subir
                       </button>
@@ -2948,11 +2951,11 @@ function PanelModuleEditor({
         </div>
       </fieldset>
       )}
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="grid min-w-0 gap-3 sm:grid-cols-2">
         <NumberControl label="Ancho" max={layoutColumns} min={1} onChange={(w) => updateModule({ ...module, layout: { ...module.layout, w } })} value={module.layout.w} />
         <NumberControl label="Orden" max={99} min={0} onChange={(y) => updateModule({ ...module, layout: { ...module.layout, y } })} value={module.layout.y} />
       </div>
-      <div className="flex justify-end gap-2">
+      <div className="flex flex-wrap justify-end gap-2">
         <button aria-label={`Subir módulo ${module.title || module.id}`} className="rounded border border-input px-3 py-1 text-sm disabled:opacity-40" disabled={spatialIndex === 0} onClick={() => moveModuleSpatially(-1)} type="button">
           Subir
         </button>
@@ -4149,10 +4152,10 @@ function TextControl({
   value: string;
 }) {
   return (
-    <label className="grid gap-2 text-sm font-medium">
+    <label className="grid min-w-0 gap-2 text-sm font-medium">
       {label}
       <input
-        className="h-10 rounded-md border border-input bg-background px-3 text-sm font-normal outline-none ring-ring focus-visible:ring-2"
+        className="h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 text-sm font-normal outline-none ring-ring focus-visible:ring-2"
         onChange={(event) => onChange(event.target.value)}
         value={value}
       />
@@ -4174,10 +4177,10 @@ function NumberControl({
   value: number;
 }) {
   return (
-    <label className="grid gap-2 text-sm font-medium">
+    <label className="grid min-w-0 gap-2 text-sm font-medium">
       {label}
       <input
-        className="h-10 rounded-md border border-input bg-background px-3 text-sm font-normal outline-none ring-ring focus-visible:ring-2"
+        className="h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 text-sm font-normal outline-none ring-ring focus-visible:ring-2"
         max={max}
         min={min}
         onChange={(event) => onChange(Number(event.target.value))}
@@ -4218,10 +4221,10 @@ function FieldSelect({
   const otherFields = selectableFields.filter((field) => field.type !== preferredType);
 
   return (
-    <label className="grid gap-2 text-sm font-medium">
+    <label className="grid min-w-0 gap-2 text-sm font-medium">
       {label}
       <select
-        className="h-10 rounded-md border border-input bg-background px-3 text-sm font-normal outline-none ring-ring focus-visible:ring-2"
+        className="h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 text-sm font-normal outline-none ring-ring focus-visible:ring-2"
         disabled={disabled}
         name={name}
         onChange={(event) => onChange(event.target.value)}
@@ -4259,10 +4262,10 @@ function OptionSelect({
   value: string;
 }) {
   return (
-    <label className="grid gap-2 text-sm font-medium">
+    <label className="grid min-w-0 gap-2 text-sm font-medium">
       {label}
       <select
-        className="h-10 rounded-md border border-input bg-background px-3 text-sm font-normal outline-none ring-ring focus-visible:ring-2"
+        className="h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 text-sm font-normal outline-none ring-ring focus-visible:ring-2"
         name={name}
         onChange={(event) => onChange(event.target.value)}
         required={!includeEmpty}
@@ -5213,8 +5216,8 @@ function panelMetricAggregationOptions() {
 
 function panelKpiFormatOptions() {
   return [
-    { label: "Número", value: "NUMBER" },
-    { label: "Entero", value: "INTEGER" },
+    { label: "Número con decimales", value: "NUMBER" },
+    { label: "Entero sin decimales", value: "INTEGER" },
     { label: "Decimal", value: "DECIMAL" },
     { label: "Moneda", value: "MONEY" },
     { label: "Porcentaje", value: "PERCENT" },

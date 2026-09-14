@@ -87,16 +87,16 @@ export function PanelEditorSheet({
         requestClose();
       }
     }}>
-      <SheetContent className="sm:max-w-[860px]" onCloseClick={requestClose}>
+      <SheetContent className="w-[min(100vw,920px)] max-w-full sm:max-w-[920px]" onCloseClick={requestClose}>
         <SheetHeader>
           <SheetTitle>{title}</SheetTitle>
           <SheetDescription>{description}</SheetDescription>
         </SheetHeader>
-        <div className="min-h-0 flex-1 overflow-auto p-5">
+        <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto p-4 sm:p-5">
           {children}
         </div>
         <SheetFooter>
-          <div className="flex justify-end gap-2">
+          <div className="flex flex-wrap justify-end gap-2">
             <Button onClick={requestClose} type="button" variant="outline">Cancelar</Button>
             <Button onClick={onSave} type="button">Guardar</Button>
           </div>
