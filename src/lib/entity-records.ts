@@ -37,6 +37,9 @@ type FieldWithOptions = EntityField & {
 };
 
 type ValueInput = SerializedFieldValue;
+type UniqueFieldCandidate = FieldWithOptions & {
+  isUnique: boolean;
+};
 
 export type UniqueFieldConflictDetails = {
   conflictingRecordId: string | null;
@@ -1967,7 +1970,53 @@ async function validateUniqueValue(
   value: ValueInput,
   recordId?: string,
 ) {
-  const existing = await prisma.entityValue.findFirst({
+  const conflict = await findUniqueFieldConflict({
+    entityTypeId,
+    field: { ...field, isUnique: true },
+    recordId,
+    value,
+  });
+
+  if (conflict) {
+    throw new UniqueFieldConflictError(conflict);
+  }
+}
+
+export function isUniqueFieldValidationSupported(field: Pick<EntityField, "type">) {
+  return field.type !== "RELATION" && field.type !== "FILE" && field.type !== "IMAGE";
+}
+
+export function normalizeUniqueFieldValue(
+  field: Pick<FieldWithOptions, "id" | "name" | "options" | "type">,
+  value: unknown,
+) {
+  const rawValues = Array.isArray(value)
+    ? value.map((item) => String(item))
+    : value === undefined || value === null
+      ? []
+      : [String(value)];
+
+  return normalizeRawFieldValue(field, rawValues);
+}
+
+export async function findUniqueFieldConflict({
+  client = prisma,
+  entityTypeId,
+  field,
+  recordId,
+  value,
+}: {
+  client?: typeof prisma | Prisma.TransactionClient;
+  entityTypeId: string;
+  field: UniqueFieldCandidate;
+  recordId?: string | null;
+  value: ValueInput;
+}) {
+  if (!field.isUnique || !isUniqueFieldValidationSupported(field) || isEmptySerializedValue(value)) {
+    return null;
+  }
+
+  const existing = await client.entityValue.findFirst({
     where: {
       entityFieldId: field.id,
       entityRecord: {
@@ -1982,29 +2031,50 @@ async function validateUniqueValue(
     },
   });
 
-  if (existing) {
-    const rejectedValue = readUniqueRejectedValue(value);
-
-    throw new UniqueFieldConflictError({
-      conflictingRecordId: existing.entityRecordId,
-      entityTypeId,
-      fieldId: field.id,
-      fieldName: field.name,
-      rejectedValue,
-      fields: [{
-        expectedType: "UNIQUE_FIELD_VALUE",
-        fieldId: field.id,
-        fieldLabel: field.name,
-        fieldType: field.type,
-        messages: [`${field.name} ya existe en otro registro.`],
-        rejectedValue,
-        source: "field",
-      }],
-    });
+  if (!existing) {
+    return null;
   }
+
+  return buildUniqueFieldConflictDetails({
+    conflictingRecordId: existing.entityRecordId,
+    entityTypeId,
+    field,
+    value,
+  });
 }
 
-function readUniqueRejectedValue(value: ValueInput) {
+export function buildUniqueFieldConflictDetails({
+  conflictingRecordId,
+  entityTypeId,
+  field,
+  value,
+}: {
+  conflictingRecordId: string | null;
+  entityTypeId: string;
+  field: Pick<FieldWithOptions, "id" | "name" | "type">;
+  value: ValueInput;
+}): UniqueFieldConflictDetails {
+  const rejectedValue = readUniqueRejectedValue(value);
+
+  return {
+    conflictingRecordId,
+    entityTypeId,
+    fieldId: field.id,
+    fieldName: field.name,
+    rejectedValue,
+    fields: [{
+      expectedType: "UNIQUE_FIELD_VALUE",
+      fieldId: field.id,
+      fieldLabel: field.name,
+      fieldType: field.type,
+      messages: [`${field.name} ya existe en otro registro.`],
+      rejectedValue,
+      source: "field",
+    }],
+  };
+}
+
+export function readUniqueRejectedValue(value: ValueInput) {
   if (value.textValue !== undefined) {
     return value.textValue;
   }

@@ -12,6 +12,7 @@ import {
   GET as recordsGET,
   POST as recordsPOST,
 } from "./[entityTypeId]/records/route";
+import { POST as validateUniquePOST } from "./[entityTypeId]/records/validate-unique/route";
 import { GET as entitiesGET } from "./route";
 
 vi.mock("@/lib/prisma", () => ({
@@ -547,6 +548,192 @@ describe("POST /api/v1/contracts/[contractId]/entities/[entityTypeId]/records", 
       data: { displayName: "EQ-001", entityTypeId: "entity_1" },
     });
     expect(apiIdempotencyKeyCreate).toHaveBeenCalled();
+  });
+});
+
+describe("POST /api/v1/contracts/[contractId]/entities/[entityTypeId]/records/validate-unique", () => {
+  it("returns available when unique values do not conflict", async () => {
+    entityTypeFindFirst.mockResolvedValue(entity({
+      fields: [field({ isUnique: true })],
+    }) as never);
+    entityValueFindFirst.mockResolvedValue(null);
+
+    const response = await validateUniquePOST(
+      new Request("http://localhost/api/v1/contracts/contract_1/entities/entity_1/records/validate-unique", {
+        body: JSON.stringify({
+          fields: [{ fieldId: "field_codigo", value: " EQ-001 " }],
+        }),
+        headers: (await apiRequest("/api/v1/contracts/contract_1/entities/entity_1/records/validate-unique")).headers,
+        method: "POST",
+      }),
+      { params: Promise.resolve({ contractId: "contract_1", entityTypeId: "entity_1" }) },
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      ok: true,
+      data: {
+        available: true,
+        conflicts: [],
+      },
+    });
+    expect(entityValueFindFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        entityFieldId: "field_codigo",
+        textValue: "EQ-001",
+      }),
+    }));
+  });
+
+  it("returns field-level conflicts with the rejected value and excludes the edited record", async () => {
+    entityTypeFindFirst.mockResolvedValue(entity({
+      fields: [field({ isUnique: true, name: "RUT" })],
+    }) as never);
+    entityRecordFindFirst.mockResolvedValueOnce({ id: "record_1" } as never);
+    entityValueFindFirst.mockResolvedValue({ entityRecordId: "record_conflict", id: "value_1" } as never);
+
+    const response = await validateUniquePOST(
+      new Request("http://localhost/api/v1/contracts/contract_1/entities/entity_1/records/validate-unique", {
+        body: JSON.stringify({
+          fields: [{ fieldId: "field_codigo", value: "76.123.456-7" }],
+          recordId: "record_1",
+        }),
+        headers: (await apiRequest("/api/v1/contracts/contract_1/entities/entity_1/records/validate-unique")).headers,
+        method: "POST",
+      }),
+      { params: Promise.resolve({ contractId: "contract_1", entityTypeId: "entity_1" }) },
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      ok: true,
+      data: {
+        available: false,
+        conflicts: [{
+          conflictingRecordId: "record_conflict",
+          fieldId: "field_codigo",
+          fieldName: "RUT",
+          message: "Ya existe un registro con este valor en \"RUT\".",
+          rejectedValue: "76.123.456-7",
+        }],
+      },
+    });
+    expect(entityValueFindFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        entityRecord: {
+          entityTypeId: "entity_1",
+          id: { not: "record_1" },
+        },
+      }),
+    }));
+  });
+
+  it("rejects recordId exclusions outside the requested entity", async () => {
+    entityTypeFindFirst.mockResolvedValue(entity({
+      fields: [field({ isUnique: true })],
+    }) as never);
+    entityRecordFindFirst.mockResolvedValueOnce(null);
+
+    const response = await validateUniquePOST(
+      new Request("http://localhost/api/v1/contracts/contract_1/entities/entity_1/records/validate-unique", {
+        body: JSON.stringify({
+          fields: [{ fieldId: "field_codigo", value: "EQ-001" }],
+          recordId: "foreign_record",
+        }),
+        headers: (await apiRequest("/api/v1/contracts/contract_1/entities/entity_1/records/validate-unique")).headers,
+        method: "POST",
+      }),
+      { params: Promise.resolve({ contractId: "contract_1", entityTypeId: "entity_1" }) },
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({
+      error: {
+        code: "INVALID_UNIQUE_VALIDATION_BODY",
+        message: "recordId no pertenece a esta entidad.",
+      },
+      ok: false,
+    });
+    expect(entityValueFindFirst).not.toHaveBeenCalled();
+  });
+
+  it("rejects oversized or duplicated preventive validation payloads", async () => {
+    entityTypeFindFirst.mockResolvedValue(entity({
+      fields: [field({ isUnique: true })],
+    }) as never);
+
+    const duplicateResponse = await validateUniquePOST(
+      new Request("http://localhost/api/v1/contracts/contract_1/entities/entity_1/records/validate-unique", {
+        body: JSON.stringify({
+          fields: [
+            { fieldId: "field_codigo", value: "EQ-001" },
+            { fieldId: "field_codigo", value: "EQ-002" },
+          ],
+        }),
+        headers: (await apiRequest("/api/v1/contracts/contract_1/entities/entity_1/records/validate-unique")).headers,
+        method: "POST",
+      }),
+      { params: Promise.resolve({ contractId: "contract_1", entityTypeId: "entity_1" }) },
+    );
+
+    expect(duplicateResponse.status).toBe(400);
+    expect(await duplicateResponse.json()).toMatchObject({
+      error: { message: "Cada campo unico debe enviarse una sola vez." },
+      ok: false,
+    });
+
+    const tooManyResponse = await validateUniquePOST(
+      new Request("http://localhost/api/v1/contracts/contract_1/entities/entity_1/records/validate-unique", {
+        body: JSON.stringify({
+          fields: Array.from({ length: 21 }, (_, index) => ({
+            fieldId: `field_${index}`,
+            value: "EQ-001",
+          })),
+        }),
+        headers: (await apiRequest("/api/v1/contracts/contract_1/entities/entity_1/records/validate-unique")).headers,
+        method: "POST",
+      }),
+      { params: Promise.resolve({ contractId: "contract_1", entityTypeId: "entity_1" }) },
+    );
+
+    expect(tooManyResponse.status).toBe(400);
+    expect(await tooManyResponse.json()).toMatchObject({
+      error: { message: "Puedes validar hasta 20 campos por solicitud." },
+      ok: false,
+    });
+  });
+
+  it("rejects fields that are not unique or not supported", async () => {
+    entityTypeFindFirst.mockResolvedValue(entity({
+      fields: [field({
+        config: { relationKind: "ONE", targetEntityTypeId: "people" },
+        id: "field_relation",
+        isUnique: true,
+        key: "persona",
+        name: "Persona",
+        type: "RELATION",
+      })],
+    }) as never);
+
+    const response = await validateUniquePOST(
+      new Request("http://localhost/api/v1/contracts/contract_1/entities/entity_1/records/validate-unique", {
+        body: JSON.stringify({
+          fields: [{ fieldId: "field_relation", value: "record_1" }],
+        }),
+        headers: (await apiRequest("/api/v1/contracts/contract_1/entities/entity_1/records/validate-unique")).headers,
+        method: "POST",
+      }),
+      { params: Promise.resolve({ contractId: "contract_1", entityTypeId: "entity_1" }) },
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({
+      error: {
+        code: "INVALID_UNIQUE_VALIDATION_BODY",
+        message: "Persona no admite validacion preventiva de unicidad.",
+      },
+      ok: false,
+    });
   });
 });
 

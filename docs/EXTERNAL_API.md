@@ -1220,6 +1220,50 @@ Success response:
 
 PATCH does not currently use `clientRequestId`; it is not idempotent in this stage.
 
+### POST /api/v1/contracts/:contractId/entities/:entityTypeId/records/validate-unique
+
+Checks active unique fields before a client stores or syncs a record. This endpoint is advisory for user experience only: record create and patch endpoints remain authoritative and repeat the same server-side unique validation inside the write path.
+
+Request:
+
+```json
+{
+  "recordId": "existing_record_id_when_editing",
+  "fields": [
+    {
+      "fieldId": "field_id",
+      "value": "EQ-001"
+    }
+  ]
+}
+```
+
+`recordId` is optional and excludes that existing record from the conflict lookup during edits. When present, it must belong to the requested active entity type and contract. `fields` must include one to twenty active fields from the requested entity type where `unique = true`; each field can appear only once and each submitted value is size-limited. Preventive validation supports the same writable scalar field types as record writes except `RELATION`, `FILE`, and `IMAGE`; those types are rejected until a safe preflight contract exists for them. Empty values do not participate in uniqueness and return available when no other requested field conflicts.
+
+Values are normalized with the same dynamic field validation used by record writes: text values are trimmed, numeric/date/time values use the canonical storage representation, `SELECT` uses option value, and `MULTISELECT` uses the validated option-value array. Clients should send exactly the value they plan to submit in `values`.
+
+Success response:
+
+```json
+{
+  "ok": true,
+  "data": {
+    "available": false,
+    "conflicts": [
+      {
+        "fieldId": "field_id",
+        "fieldName": "Código",
+        "rejectedValue": "EQ-001",
+        "conflictingRecordId": "record_id",
+        "message": "Ya existe un registro con este valor en \"Código\"."
+      }
+    ]
+  }
+}
+```
+
+`conflictingRecordId` is scoped to the authenticated app/user contract context and never points outside the requested entity type.
+
 ### Record Value Serialization
 
 | EntityField type | JSON value |
@@ -1283,10 +1327,12 @@ Invalid hours, full dates, timestamps, and free text are rejected with the stand
 | 400 | `INACTIVE_FIELD` | A value key matches an inactive field and cannot be written. |
 | 400 | `INVALID_FIELD_VALUE` | A field value fails type or configured validation. |
 | 400 | `INVALID_RELATION` | Relation input points to an invalid, incompatible, cross-contract, or self-referential record. |
-| 400 | `UNIQUE_CONSTRAINT` | A unique field value conflicts with an existing record. |
+| 400 | `INVALID_UNIQUE_VALIDATION_BODY` | Preventive unique validation references an unsupported, missing, or non-unique field. |
+| 400 | `UNIQUE_CONSTRAINT` | Legacy unique field conflict response. New explicit field conflicts use `UNIQUE_FIELD_CONFLICT`. |
 | 400 | `INVALID_PAGINATION` | `page` or `pageSize` is invalid, or `pageSize` exceeds `100`. |
 | 400 | `INVALID_SORT` | `sort` or `direction` is invalid. |
 | 401 | API auth codes | Missing, invalid, expired, or stale Bearer token. |
+| 409 | `UNIQUE_FIELD_CONFLICT` | A unique field value conflicts with an existing record. |
 | 403 | `CONTRACT_FORBIDDEN` / `TOKEN_APP_INACTIVE` | Authenticated caller cannot access the contract, or the app is inactive. |
 | 409 | `IDEMPOTENCY_CONFLICT` | Record POST reused `clientRequestId` with a different payload. |
 | 409 | `IDEMPOTENCY_KEY_REUSED` | Workflow POST reused `clientRequestId` with a different semantic payload. |

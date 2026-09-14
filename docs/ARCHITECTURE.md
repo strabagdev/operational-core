@@ -187,6 +187,8 @@ Prisma/PostgreSQL transient connection failures are treated as infrastructure er
 
 Dynamic entity definitions and records are exposed through `/api/v1/contracts/:contractId/entities`. Record write endpoints reuse the same server-side validation layer used by the web UI instead of maintaining a parallel validation engine. `EntityField.key` is the external JSON key for record values.
 
+External clients can call the preventive unique-field endpoint before saving local RECORDS operations. It reuses the same normalization and unique lookup as server writes and returns field-level conflicts for active `EntityField.isUnique` fields, excluding `RELATION`, `FILE`, and `IMAGE` in this stage. The endpoint is advisory only: create and update still perform authoritative validation inside the write transaction, so offline clients may proceed when local coverage or connectivity is inconclusive and reconcile against the server later.
+
 Client experiences are exposed through `/api/v1/contracts/:contractId/views`. The endpoint returns only active `AppView` rows assigned to the authenticated user through `UserAppViewAccess`.
 
 External record creation is persistently idempotent through `ApiIdempotencyKey`. The unique boundary is external app, operation, and `clientRequestId`; matching payload replays return the original record, while different payloads are rejected as conflicts. The idempotency row points back to the created `EntityRecord` after a successful transaction.
