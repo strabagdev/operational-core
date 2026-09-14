@@ -37,6 +37,34 @@ type FieldWithOptions = EntityField & {
 };
 
 type ValueInput = SerializedFieldValue;
+
+export type UniqueFieldConflictDetails = {
+  conflictingRecordId: string | null;
+  entityTypeId: string;
+  fieldId: string;
+  fieldName: string;
+  rejectedValue: string | number | boolean | null | Array<string | number | boolean | null>;
+  fields: Array<{
+    expectedType: "UNIQUE_FIELD_VALUE";
+    fieldId: string;
+    fieldLabel: string;
+    fieldType: string;
+    messages: string[];
+    rejectedValue: string | number | boolean | null | Array<string | number | boolean | null>;
+    source: "field";
+  }>;
+};
+
+export class UniqueFieldConflictError extends Error {
+  details: UniqueFieldConflictDetails;
+
+  constructor(details: UniqueFieldConflictDetails) {
+    super(`${details.fieldName} debe ser único dentro de este tipo de entidad.`);
+    this.name = "UniqueFieldConflictError";
+    this.details = details;
+  }
+}
+
 export type RelationValidationIssueCause =
   | "REFERENCE_NOT_FOUND_OR_DELETED"
   | "WRONG_ENTITY"
@@ -1948,12 +1976,68 @@ async function validateUniqueValue(
       },
       ...uniqueValueWhere(value),
     },
-    select: { id: true },
+    select: {
+      entityRecordId: true,
+      id: true,
+    },
   });
 
   if (existing) {
-    throw userError(`${field.name} debe ser único dentro de este tipo de entidad.`);
+    const rejectedValue = readUniqueRejectedValue(value);
+
+    throw new UniqueFieldConflictError({
+      conflictingRecordId: existing.entityRecordId,
+      entityTypeId,
+      fieldId: field.id,
+      fieldName: field.name,
+      rejectedValue,
+      fields: [{
+        expectedType: "UNIQUE_FIELD_VALUE",
+        fieldId: field.id,
+        fieldLabel: field.name,
+        fieldType: field.type,
+        messages: [`${field.name} ya existe en otro registro.`],
+        rejectedValue,
+        source: "field",
+      }],
+    });
   }
+}
+
+function readUniqueRejectedValue(value: ValueInput) {
+  if (value.textValue !== undefined) {
+    return value.textValue;
+  }
+
+  if (value.integerValue !== undefined) {
+    return value.integerValue;
+  }
+
+  if (value.decimalValue !== undefined) {
+    return Number(value.decimalValue);
+  }
+
+  if (value.booleanValue !== undefined) {
+    return value.booleanValue;
+  }
+
+  if (value.dateValue !== undefined) {
+    return formatDateOnly(value.dateValue);
+  }
+
+  const jsonValue = value.jsonValue;
+
+  if (
+    jsonValue === null ||
+    typeof jsonValue === "string" ||
+    typeof jsonValue === "number" ||
+    typeof jsonValue === "boolean" ||
+    Array.isArray(jsonValue)
+  ) {
+    return jsonValue as string | number | boolean | null | Array<string | number | boolean | null>;
+  }
+
+  return null;
 }
 
 function uniqueValueWhere(value: ValueInput) {

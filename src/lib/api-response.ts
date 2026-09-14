@@ -81,8 +81,9 @@ export function notFound(
 export function conflict(
   message = "Conflicto",
   code = "CONFLICT",
+  details?: unknown,
 ) {
-  return apiError({ code, message, status: 409 });
+  return apiError({ code, details, message, status: 409 });
 }
 
 export function internalError(

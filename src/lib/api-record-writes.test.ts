@@ -325,6 +325,61 @@ describe("api record writes", () => {
     });
   });
 
+  it("returns structured UNIQUE_FIELD_CONFLICT for duplicated unique field values", async () => {
+    vi.mocked(prisma.entityValue.findFirst).mockResolvedValueOnce({
+      entityRecordId: "record_existing",
+      id: "value_existing",
+    } as never);
+
+    const result = await createApiEntityRecord({
+      appId: "app_1",
+      body: {
+        clientRequestId: "client-request-unique",
+        values: { codigo: "EQ-001" },
+      },
+      contractId: "contract_1",
+      entity: {
+        contractId: "contract_1",
+        fields: [{ ...textField, isUnique: true }],
+        id: "entity_1",
+        isActive: true,
+        name: "Equipos",
+        slug: "equipos",
+      } as never,
+      userId: "user_1",
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      throw new Error("Expected unique conflict.");
+    }
+    expect(result.response.status).toBe(409);
+    await expect(result.response.json()).resolves.toMatchObject({
+      error: {
+        code: "UNIQUE_FIELD_CONFLICT",
+        details: {
+          conflictingRecordId: "record_existing",
+          entityTypeId: "entity_1",
+          fieldId: "field_codigo",
+          fieldName: "Código",
+          fields: [
+            {
+              expectedType: "UNIQUE_FIELD_VALUE",
+              fieldId: "field_codigo",
+              fieldLabel: "Código",
+              fieldType: "TEXT",
+              rejectedValue: "EQ-001",
+            },
+          ],
+          rejectedValue: "EQ-001",
+        },
+        message: "Código debe ser único dentro de este tipo de entidad.",
+      },
+      ok: false,
+    });
+    expect(prisma.entityRecord.create).not.toHaveBeenCalled();
+  });
+
   it("replays an idempotent create with the same payload without writing again", async () => {
     const requestHash = stableRecordRequestHash({
       displayName: null,

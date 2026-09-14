@@ -25,6 +25,7 @@ import {
   validateEntityValues,
   validateRelationValues,
   FieldValidationError,
+  UniqueFieldConflictError,
 } from "@/lib/entity-records";
 
 export type ApiRecordWriteBody = {
@@ -810,6 +811,13 @@ function mapApiWriteException(error: unknown) {
 
   if (error instanceof FieldValidationError) {
     return writeError("INVALID_FIELD_VALUE", "Uno o más campos tienen valores inválidos.");
+  }
+
+  if (error instanceof UniqueFieldConflictError) {
+    return {
+      ok: false as const,
+      response: conflict(error.message, "UNIQUE_FIELD_CONFLICT", error.details),
+    };
   }
 
   if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
