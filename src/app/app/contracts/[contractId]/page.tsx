@@ -1,14 +1,18 @@
 import { notFound, redirect } from "next/navigation";
+import Link from "next/link";
+import { Activity, FileText, Settings, TableProperties } from "lucide-react";
 
 import { auth } from "@/auth";
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { Separator } from "@/components/ui/separator";
+  PageHeader,
+  StatusBadge,
+  SummaryCard,
+} from "@/components/admin-ui";
+import { Button } from "@/components/ui/button";
+import {
+  type ContractNavigationItem,
+  getContractNavigationItems,
+} from "@/lib/contract-layout-navigation";
 import { getAuthorizedContract } from "@/lib/contracts";
 import { contractStatusLabels } from "@/lib/contract-status";
 
@@ -30,40 +34,83 @@ export default async function ContractSummaryPage({
     notFound();
   }
 
-  return (
-    <div className="grid max-w-3xl gap-6">
-      <Card>
-        <CardHeader>
-          <CardTitle>{contract.name}</CardTitle>
-          <CardDescription>{contract.description}</CardDescription>
-        </CardHeader>
-        <CardContent className="grid gap-4 text-sm">
-          <div className="grid gap-1">
-            <span className="text-muted-foreground">Código</span>
-            <span className="font-medium">{contract.code}</span>
-          </div>
-          <Separator />
-          <div className="grid gap-1">
-            <span className="text-muted-foreground">Organización</span>
-            <span className="font-medium">{contract.organization.name}</span>
-          </div>
-          <Separator />
-          <div className="grid gap-1">
-            <span className="text-muted-foreground">Estado</span>
-            <span className="font-medium">{contractStatusLabels[contract.status]}</span>
-          </div>
-        </CardContent>
-      </Card>
+  const navigation = getContractNavigationItems({
+    contractId: contract.id,
+    membershipRole: contract.membershipRole,
+  }).filter((item) => item.label !== "Resumen");
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Fuente única de verdad</CardTitle>
-          <CardDescription>
-            Aquí se centralizarán las personas, equipos, documentos y demás
-            registros operacionales del contrato.
-          </CardDescription>
-        </CardHeader>
-      </Card>
+  return (
+    <div className="grid w-full gap-6">
+      <PageHeader
+        description={contract.description}
+        metadata={(
+          <>
+            <StatusBadge variant="active">{contractStatusLabels[contract.status]}</StatusBadge>
+            <StatusBadge variant="info">{contract.organization.name}</StatusBadge>
+          </>
+        )}
+        title={contract.name}
+      />
+
+      <section className="grid gap-3 md:grid-cols-3">
+        <SummaryCard
+          badges={<StatusBadge variant="neutral">Identificación</StatusBadge>}
+          metadata={[
+            { label: "Código", value: contract.code },
+            { label: "Organización", value: contract.organization.name },
+            { label: "Estado", value: contractStatusLabels[contract.status] },
+          ]}
+          title="Contexto contractual"
+        />
+      </section>
+
+      <section className="grid gap-3">
+        <h2 className="text-base font-semibold">Accesos principales</h2>
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {navigation.map((item) => (
+            <SummaryCard
+              actions={(
+                <Button asChild variant="outline">
+                  <Link href={item.href}>Abrir</Link>
+                </Button>
+              )}
+              description={navigationDescription(item)}
+              icon={navigationIcon(item)}
+              key={item.href}
+              title={item.label}
+            />
+          ))}
+        </div>
+      </section>
     </div>
   );
+}
+
+function navigationDescription(item: ContractNavigationItem) {
+  if (item.label === "Registros") {
+    return "Consulta y gestiona la fuente operacional del contrato.";
+  }
+  if (item.label === "Actividad") {
+    return "Revisa eventos y cambios relevantes del contrato.";
+  }
+  if (item.label === "Configuración") {
+    return "Administra entidades, experiencias y opciones del contrato.";
+  }
+
+  return "Resumen del contrato.";
+}
+
+function navigationIcon(item: ContractNavigationItem) {
+  const className = "h-4 w-4";
+  if (item.label === "Registros") {
+    return <TableProperties aria-hidden="true" className={className} />;
+  }
+  if (item.label === "Actividad") {
+    return <Activity aria-hidden="true" className={className} />;
+  }
+  if (item.label === "Configuración") {
+    return <Settings aria-hidden="true" className={className} />;
+  }
+
+  return <FileText aria-hidden="true" className={className} />;
 }

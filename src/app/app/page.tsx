@@ -1,16 +1,16 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { Building2, ExternalLink, FileStack, ShieldAlert, Users } from "lucide-react";
 
 import { auth } from "@/auth";
-import { Button } from "@/components/ui/button";
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { Separator } from "@/components/ui/separator";
+  ActionMessage,
+  EmptyState,
+  PageHeader,
+  StatusBadge,
+  SummaryCard,
+} from "@/components/admin-ui";
+import { Button } from "@/components/ui/button";
 import {
   canManageContract,
   canManageExternalApps,
@@ -46,110 +46,137 @@ export default async function AppPage() {
       userImage={session.user.image}
       userName={session.user.name}
     >
-      <div className="mx-auto flex w-full max-w-4xl flex-col gap-8">
-        <header className="space-y-2">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <div>
-              <h1 className="text-2xl font-semibold">Operational Core</h1>
-              <p className="text-sm text-muted-foreground">
-                Selecciona un contrato para continuar.
-              </p>
-            </div>
-            {adminContract ? (
-              <div className="flex flex-wrap gap-2 sm:justify-end">
-                {canManageUsers(adminContext) ? (
-                  <Button asChild variant="outline">
-                    <Link href="/app/settings/users">Usuarios</Link>
-                  </Button>
-                ) : null}
-                <Button asChild variant="outline">
-                  <Link href="/app/settings/contracts">Administrar contratos</Link>
-                </Button>
-                {canManageExternalApps(adminContext) ? (
-                  <Button asChild variant="outline">
-                    <Link href="/app/settings/apps">Aplicaciones externas</Link>
-                  </Button>
-                ) : null}
-              </div>
-            ) : null}
-          </div>
-        </header>
+      <div className="mx-auto flex w-full max-w-7xl flex-col gap-6">
+        <PageHeader
+          description="Selecciona un contrato para continuar."
+          metadata={(
+            <StatusBadge variant="info">
+              {contracts.length} contrato{contracts.length === 1 ? "" : "s"} disponible{contracts.length === 1 ? "" : "s"}
+            </StatusBadge>
+          )}
+          title="Operational Core"
+        />
 
         <section className="grid gap-3">
           {platformNavigation.length > 0 ? (
-            <div className="grid gap-3 rounded-md border border-border p-4">
-              <div>
-                <h2 className="text-base font-semibold">Plataforma</h2>
-              </div>
-              <div className="flex flex-wrap gap-2">
+            <section className="grid gap-3">
+              <h2 className="text-base font-semibold">Plataforma</h2>
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                 {platformNavigation.map((item) => (
-                  <Button asChild key={item.href} variant="outline">
-                    <Link href={item.href}>{item.label}</Link>
-                  </Button>
+                  <SummaryCard
+                    actions={(
+                      <Button asChild variant="outline">
+                        <Link href={item.href}>{item.label}</Link>
+                      </Button>
+                    )}
+                    description="Administración global disponible para usuarios de plataforma."
+                    icon={<ShieldAlert aria-hidden="true" className="h-4 w-4" />}
+                    key={item.href}
+                    title={item.label}
+                  />
                 ))}
               </div>
-            </div>
+            </section>
           ) : null}
 
           {inactiveOrganizations.length > 0 ? (
-            <Card>
-              <CardContent className="pt-6">
-                <p className="text-sm font-medium">Esta organización se encuentra inactiva.</p>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  {inactiveOrganizations.map((organization) => organization.name).join(", ")}
-                </p>
-              </CardContent>
-            </Card>
+            <ActionMessage variant="warning">
+              <span className="block font-medium">Esta organización se encuentra inactiva.</span>
+              <span className="mt-1 block text-sm">
+                {inactiveOrganizations.map((organization) => organization.name).join(", ")}
+              </span>
+            </ActionMessage>
           ) : null}
 
           {contracts.length > 0 ? (
-            contracts.map((contract) => (
-              <Card key={contract.id}>
-                <CardHeader className="pb-4">
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="space-y-1">
-                      <CardTitle>{contract.name}</CardTitle>
-                      <CardDescription>{contract.organization.name}</CardDescription>
-                    </div>
-                    <span className="rounded-md border border-border px-2 py-1 text-xs font-medium">
-                      Activo
-                    </span>
-                  </div>
-                </CardHeader>
-                <CardContent className="flex items-center justify-between gap-4">
-                  <div className="text-sm text-muted-foreground">
-                    Código:{" "}
-                    <span className="font-medium text-foreground">
-                      {contract.code}
-                    </span>
-                  </div>
-                  <Button asChild>
-                    <Link href={`/app/contracts/${contract.id}`}>
-                      Abrir contrato
-                    </Link>
-                  </Button>
-                </CardContent>
-              </Card>
-            ))
+            <section className="grid gap-3">
+              <h2 className="text-base font-semibold">Contratos</h2>
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                {contracts.map((contract) => (
+                  <SummaryCard
+                    actions={(
+                      <Button asChild>
+                        <Link href={`/app/contracts/${contract.id}`}>
+                          Abrir contrato
+                        </Link>
+                      </Button>
+                    )}
+                    badges={(
+                      <>
+                        <StatusBadge variant="active">Activo</StatusBadge>
+                        {canManageContract({ membershipRole: contract.membershipRole }) ? (
+                          <StatusBadge variant="info">Administrador</StatusBadge>
+                        ) : null}
+                      </>
+                    )}
+                    description={contract.organization.name}
+                    icon={<Building2 aria-hidden="true" className="h-4 w-4" />}
+                    key={contract.id}
+                    metadata={[
+                      { label: "Código", value: contract.code },
+                      { label: "Organización", value: contract.organization.name },
+                    ]}
+                    title={contract.name}
+                  />
+                ))}
+              </div>
+            </section>
           ) : (
-            <Card>
-              <CardContent className="flex flex-col gap-4 pt-6 sm:flex-row sm:items-center sm:justify-between">
-                <p className="text-sm text-muted-foreground">
-                  No hay contratos disponibles para tu usuario.
-                </p>
-                {canCreateContracts ? (
-                  <Button asChild>
-                    <Link href="/app/settings/contracts?createContract=1">
-                      Crear contrato
-                    </Link>
-                  </Button>
-                ) : null}
-              </CardContent>
-            </Card>
+            <EmptyState
+              action={canCreateContracts ? (
+                <Button asChild>
+                  <Link href="/app/settings/contracts?createContract=1">
+                    Crear contrato
+                  </Link>
+                </Button>
+              ) : null}
+              description="No hay contratos disponibles para tu usuario."
+              title="Sin contratos disponibles"
+            />
           )}
-        </section>
 
-        <Separator />
+          {adminContract ? (
+            <section className="grid gap-3">
+              <h2 className="text-base font-semibold">Administración</h2>
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                {canManageUsers(adminContext) ? (
+                  <SummaryCard
+                    actions={(
+                      <Button asChild variant="outline">
+                        <Link href="/app/settings/users">Usuarios</Link>
+                      </Button>
+                    )}
+                    description="Administra usuarios y accesos de la organización."
+                    icon={<Users aria-hidden="true" className="h-4 w-4" />}
+                    title="Usuarios"
+                  />
+                ) : null}
+                <SummaryCard
+                  actions={(
+                    <Button asChild variant="outline">
+                      <Link href="/app/settings/contracts">Administrar contratos</Link>
+                    </Button>
+                  )}
+                  description="Gestiona contratos disponibles para la organización."
+                  icon={<FileStack aria-hidden="true" className="h-4 w-4" />}
+                  title="Contratos"
+                />
+                {canManageExternalApps(adminContext) ? (
+                  <SummaryCard
+                    actions={(
+                      <Button asChild variant="outline">
+                        <Link href="/app/settings/apps">Aplicaciones externas</Link>
+                      </Button>
+                    )}
+                    description="Configura aplicaciones externas autorizadas para consumir la API."
+                    icon={<ExternalLink aria-hidden="true" className="h-4 w-4" />}
+                    title="Aplicaciones externas"
+                  />
+                ) : null}
+              </div>
+            </section>
+          ) : null}
+        </section>
       </div>
     </AuthenticatedAppShell>
   );

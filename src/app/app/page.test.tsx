@@ -76,6 +76,13 @@ describe("/app page", () => {
     expect(html).toContain("Usuarios");
     expect(html).toContain("Administrar contratos");
     expect(html).toContain("Aplicaciones externas");
+    expect(html).toContain('href="/app/settings/users"');
+    expect(html).toContain('href="/app/settings/contracts"');
+    expect(html).toContain('href="/app/settings/apps"');
+    expect(countOccurrences(html, 'href="/app/settings/users"')).toBe(1);
+    expect(countOccurrences(html, 'href="/app/settings/contracts"')).toBe(1);
+    expect(countOccurrences(html, 'href="/app/settings/apps"')).toBe(1);
+    expect(countOccurrences(html, "Administrar contratos")).toBe(1);
   });
 
   it("does not grant contract administration to PLATFORM_ADMIN without membership admin", async () => {
@@ -154,4 +161,58 @@ describe("/app page", () => {
     expect(html).toContain("Contrato");
     expect(html).not.toContain("No hay contratos disponibles para tu usuario.");
   });
+
+  it("renders multiple contracts with organization metadata and contained actions", async () => {
+    vi.mocked(auth).mockResolvedValueOnce({
+      user: { id: "member_1", platformRole: "NONE" },
+    } as never);
+    vi.mocked(getUserContracts).mockResolvedValueOnce([
+      contract({
+        code: "CODIGO-LARGO-UNO",
+        id: "contract_1",
+        name: "Contrato Norte con nombre muy largo",
+        organization: { id: "org_1", name: "Organización Norte" },
+      }),
+      contract({
+        code: "CODIGO-LARGO-DOS",
+        id: "contract_2",
+        name: "Contrato Sur",
+        organization: { id: "org_2", name: "Organización Sur" },
+      }),
+    ] as never);
+    vi.mocked(getInactiveUserOrganizations).mockResolvedValueOnce([] as never);
+
+    const html = renderToStaticMarkup(await AppPage());
+
+    expect(html).toContain("2 contratos disponibles");
+    expect(html).toContain("Contrato Norte con nombre muy largo");
+    expect(html).toContain("Organización Norte");
+    expect(html).toContain("CODIGO-LARGO-UNO");
+    expect(html).toContain("/app/contracts/contract_1");
+    expect(html).toContain("/app/contracts/contract_2");
+    expect(html).toContain('data-summary-card="true"');
+    expect(html).toContain('data-summary-card-actions="true"');
+    expect(html).toContain("min-w-0 flex-1");
+    expect(html).toContain("Activo");
+  });
+
+  it("shows inactive organizations as a warning without changing contract selection", async () => {
+    vi.mocked(auth).mockResolvedValueOnce({
+      user: { id: "member_1", platformRole: "NONE" },
+    } as never);
+    vi.mocked(getUserContracts).mockResolvedValueOnce([contract()] as never);
+    vi.mocked(getInactiveUserOrganizations).mockResolvedValueOnce([
+      { id: "org_inactive", name: "Organización pausada" },
+    ] as never);
+
+    const html = renderToStaticMarkup(await AppPage());
+
+    expect(html).toContain("Esta organización se encuentra inactiva.");
+    expect(html).toContain("Organización pausada");
+    expect(html).toContain("/app/contracts/contract_1");
+  });
 });
+
+function countOccurrences(value: string, pattern: string) {
+  return value.split(pattern).length - 1;
+}
