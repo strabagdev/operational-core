@@ -5,6 +5,8 @@ import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowDown, ArrowUp, Trash2, X } from "lucide-react";
 
+import { ActionGroup, ActionMessage, EmptyState } from "@/components/admin-ui";
+import { TableScrollArea } from "@/components/operational-ui";
 import {
   AlertDialog,
   AlertDialogContent,
@@ -138,18 +140,15 @@ export function EntityRecordsTable({
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3">
       {feedback ? (
-        <p
-          className={feedback.success ? "shrink-0 text-sm text-muted-foreground" : "shrink-0 text-sm text-destructive"}
-          role="status"
-        >
+        <ActionMessage variant={feedback.success ? "success" : "error"}>
           {feedback.message}
-        </p>
+        </ActionMessage>
       ) : null}
 
       {selectedCount > 0 ? (
-        <div className="sticky top-2 z-10 flex shrink-0 flex-col gap-2 rounded-md border border-border bg-background p-3 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+        <div className="sticky top-2 z-10 flex shrink-0 flex-col gap-2 rounded-md border border-amber-200 bg-amber-50/80 p-3 text-amber-950 shadow-sm sm:flex-row sm:items-center sm:justify-between" data-bulk-action-bar="true">
           <p className="text-sm font-medium">{selectedCount} seleccionados</p>
-          <div className="flex flex-wrap gap-2">
+          <ActionGroup>
             <Button
               disabled={pending}
               onClick={() => setDeleteOpen(true)}
@@ -170,13 +169,13 @@ export function EntityRecordsTable({
               <X aria-hidden="true" className="h-4 w-4" />
               Limpiar selección
             </Button>
-          </div>
+          </ActionGroup>
         </div>
       ) : null}
 
-      <div className="min-h-0 flex-1 overflow-auto">
+      <TableScrollArea>
         <table className="w-full min-w-[760px] text-left text-sm">
-          <thead className="sticky top-0 z-20 border-b border-border bg-card text-muted-foreground shadow-sm">
+          <thead className="sticky top-0 z-20 border-b border-sky-100 bg-sky-50 text-sky-950 shadow-sm">
             <tr>
               <th className="w-10 py-3 pr-3 font-medium">
                 <IndeterminateCheckbox
@@ -199,7 +198,7 @@ export function EntityRecordsTable({
               <th className="py-3 text-right font-medium">Acciones</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody className="divide-y divide-border">
             {records.length > 0 ? (
               records.map((record) => (
                 <tr className={recordRowClassName(highlightedIds.has(record.id))} key={record.id}>
@@ -216,18 +215,21 @@ export function EntityRecordsTable({
                     <td className={fieldIndex === 0 ? "py-3 pr-4 font-medium" : "py-3 pr-4"} key={field.id}>
                       {fieldIndex === 0 ? (
                         <Link
-                          className="text-primary underline-offset-4 hover:underline"
+                          className="block max-w-[280px] truncate text-primary underline-offset-4 hover:underline"
                           href={entityRecordDetailPath(contractId, entityTypeId, record.id)}
+                          title={record.values.find((value) => value.fieldId === field.id)?.value || "Ver registro"}
                         >
                           {record.values.find((value) => value.fieldId === field.id)?.value || "Ver registro"}
                         </Link>
                       ) : (
-                        record.values.find((value) => value.fieldId === field.id)?.value ?? ""
+                        <span className="block max-w-[240px] truncate" title={record.values.find((value) => value.fieldId === field.id)?.value ?? ""}>
+                          {record.values.find((value) => value.fieldId === field.id)?.value ?? ""}
+                        </span>
                       )}
                     </td>
                   ))}
                   <td className="py-3">
-                    <div className="flex justify-end gap-2">
+                    <ActionGroup className="justify-end">
                       <Button asChild size="sm" variant="outline">
                         <Link href={entityRecordDetailPath(contractId, entityTypeId, record.id)}>
                           Ver
@@ -238,23 +240,26 @@ export function EntityRecordsTable({
                           Editar
                         </Link>
                       </Button>
-                    </div>
+                    </ActionGroup>
                   </td>
                 </tr>
               ))
             ) : (
               <tr>
                 <td
-                  className="py-6 text-sm text-muted-foreground"
+                  className="py-6"
                   colSpan={2 + listFields.length}
                 >
-                  No hay registros para estos filtros.
+                  <EmptyState
+                    description="Ajusta la búsqueda o crea un nuevo registro para esta entidad."
+                    title="No hay registros para estos filtros."
+                  />
                 </td>
               </tr>
             )}
           </tbody>
         </table>
-      </div>
+      </TableScrollArea>
 
       <AlertDialog
         open={deleteOpen}
@@ -295,7 +300,7 @@ export function EntityRecordsTable({
 }
 
 export function recordRowClassName(highlighted: boolean) {
-  return cn("border-b border-border", highlighted && "record-new-highlight");
+  return cn("transition-colors hover:bg-slate-50/80", highlighted && "record-new-highlight");
 }
 
 function SortableHeader({

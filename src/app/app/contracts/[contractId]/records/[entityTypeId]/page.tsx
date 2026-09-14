@@ -4,7 +4,14 @@ import { type ReactNode } from "react";
 import { Download, FileSpreadsheet, Plus } from "lucide-react";
 
 import { auth } from "@/auth";
+import { ActionMessage, StatusBadge } from "@/components/admin-ui";
 import { EntityIcon } from "@/components/entity-icon";
+import {
+  DataTableShell,
+  FilterBar,
+  OperationalPageHeader,
+  PaginationBar,
+} from "@/components/operational-ui";
 import { Button } from "@/components/ui/button";
 import {
   deserializeEntityValue,
@@ -101,27 +108,9 @@ export default async function EntityRecordsPage({
 
   return (
     <div className="-mt-6 flex h-[calc(100dvh-1.5rem)] min-h-0 w-full flex-col gap-3">
-      <header className="sticky top-0 z-40 -mx-4 shrink-0 border-b border-border bg-background/95 px-4 py-2 backdrop-blur md:-mx-6 md:px-6">
-        <div className="flex flex-wrap items-center gap-2 lg:flex-nowrap">
-          <div className="flex min-w-0 shrink-0 items-center gap-3">
-            <h1 className="flex min-w-0 items-center gap-2 text-xl font-semibold">
-              <EntityIcon className="text-muted-foreground" icon={data.entityType.icon} />
-              <span className="truncate">{data.entityType.name}</span>
-            </h1>
-            <span className="rounded-md border border-border bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
-              {data.pagination.totalRecords}
-            </span>
-          </div>
-          <div className="min-w-[min(100%,360px)] flex-1">
-            <RecordListControls
-              basePath={basePath}
-              pageSize={data.pagination.pageSize}
-              query={q}
-              searchParams={{ dir, page, pageSize, q, sort }}
-              totalRecords={data.pagination.totalRecords}
-            />
-          </div>
-          <div className="ml-auto flex shrink-0 flex-nowrap items-center justify-end gap-1.5">
+      <OperationalPageHeader
+        actions={(
+          <>
             <RecordListAutoRefresh />
             <TooltipIconButton label="Descargar plantilla">
               <Button asChild size="icon" variant="outline">
@@ -162,51 +151,66 @@ export default async function EntityRecordsPage({
                 </Link>
               </Button>
             </TooltipIconButton>
+          </>
+        )}
+      >
+        <div className="grid min-w-0 gap-2 lg:grid-cols-[auto_minmax(260px,1fr)] lg:items-center">
+          <div className="flex min-w-0 items-center gap-3">
+            <h1 className="flex min-w-0 items-center gap-2 text-xl font-semibold" title={data.entityType.name}>
+              <EntityIcon className="text-muted-foreground" icon={data.entityType.icon} />
+              <span className="truncate">{data.entityType.name}</span>
+            </h1>
+            <StatusBadge variant="info">
+              {data.pagination.totalRecords}
+            </StatusBadge>
           </div>
+          <FilterBar active={Boolean(q)}>
+            <RecordListControls
+              basePath={basePath}
+              pageSize={data.pagination.pageSize}
+              query={q}
+              searchParams={{ dir, page, pageSize, q, sort }}
+              totalRecords={data.pagination.totalRecords}
+            />
+          </FilterBar>
         </div>
-      </header>
+      </OperationalPageHeader>
 
       {error ? (
-        <div className="shrink-0 rounded-md border border-border">
-          <div className="p-4">
-            <p className="text-sm text-destructive">{error}</p>
-          </div>
-        </div>
+        <ActionMessage variant="error">{error}</ActionMessage>
       ) : null}
 
-      <div className="min-h-0 flex-1 overflow-hidden rounded-md border border-border bg-card text-card-foreground">
-        <div className="flex h-full min-h-0 flex-col p-4">
-          <EntityRecordsTable
-            contractId={contractId}
-            deleteAction={deleteEntityRecordsAction.bind(null, contractId, entityTypeId)}
-            entityTypeId={entityTypeId}
-            key={`${entityTypeId}:${q ?? ""}:${page ?? ""}:${pageSize ?? ""}:${sort ?? ""}:${dir ?? ""}`}
-            listFields={listFields.map((field) => ({
-              id: field.id,
-              name: field.name,
-              sort: sortableFields.some((item) => item.id === field.id)
-                ? sortHeader({
-                    basePath,
-                    currentSort: data.sort,
-                    pageSize: data.pagination.pageSize,
-                    query: q,
-                    sortKey: `field:${field.id}`,
-                  })
-                : undefined,
-            }))}
-            records={tableRecords}
-          />
-          <PaginationControls
-            basePath={basePath}
-            page={data.pagination.page}
-            pageSize={data.pagination.pageSize}
-            query={q}
-            sort={data.sort}
-            totalPages={data.pagination.totalPages}
-            totalRecords={data.pagination.totalRecords}
-          />
-        </div>
-      </div>
+      <DataTableShell>
+        <EntityRecordsTable
+          contractId={contractId}
+          deleteAction={deleteEntityRecordsAction.bind(null, contractId, entityTypeId)}
+          entityTypeId={entityTypeId}
+          key={`${entityTypeId}:${q ?? ""}:${page ?? ""}:${pageSize ?? ""}:${sort ?? ""}:${dir ?? ""}`}
+          listFields={listFields.map((field) => ({
+            id: field.id,
+            name: field.name,
+            sort: sortableFields.some((item) => item.id === field.id)
+              ? sortHeader({
+                  basePath,
+                  currentSort: data.sort,
+                  pageSize: data.pagination.pageSize,
+                  query: q,
+                  sortKey: `field:${field.id}`,
+                })
+              : undefined,
+          }))}
+          records={tableRecords}
+        />
+        <PaginationControls
+          basePath={basePath}
+          page={data.pagination.page}
+          pageSize={data.pagination.pageSize}
+          query={q}
+          sort={data.sort}
+          totalPages={data.pagination.totalPages}
+          totalRecords={data.pagination.totalRecords}
+        />
+      </DataTableShell>
     </div>
   );
 }
@@ -264,11 +268,13 @@ function PaginationControls({
   const nextHref = pageHref({ basePath, page: page + 1, pageSize, query, sort });
 
   return (
-    <div className="mt-4 flex shrink-0 flex-col gap-3 border-t border-border pt-4 text-sm sm:flex-row sm:items-center sm:justify-between">
-      <p className="text-muted-foreground">
+    <PaginationBar
+      summary={(
+        <>
         Página {page} de {totalPages} · {totalRecords} registros
-      </p>
-      <div className="flex flex-wrap gap-2">
+        </>
+      )}
+    >
         {page <= 1 ? (
           <Button disabled size="sm" variant="outline">
             Anterior
@@ -287,8 +293,7 @@ function PaginationControls({
             <Link href={nextHref}>Siguiente</Link>
           </Button>
         )}
-      </div>
-    </div>
+    </PaginationBar>
   );
 }
 

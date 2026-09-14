@@ -30,6 +30,10 @@ const recordTypesPageSource = readFileSync(
   new URL("../app/app/contracts/[contractId]/records/page.tsx", import.meta.url),
   "utf8",
 );
+const operationalUiSource = readFileSync(
+  new URL("../components/operational-ui.tsx", import.meta.url),
+  "utf8",
+);
 
 describe("entity record pagination UI", () => {
   it("offers the supported page sizes in the listing filter form", () => {
@@ -141,9 +145,10 @@ describe("entity record pagination UI", () => {
 
   it("uses a sticky operational bar with entity, controls and actions", () => {
     expect(recordsPageSource).toContain("flex h-[calc(100dvh-1.5rem)] min-h-0 w-full flex-col");
-    expect(recordsPageSource).toContain("sticky top-0 z-40");
-    expect(recordsPageSource).toContain("shrink-0 border-b border-border");
-    expect(recordsPageSource).toContain("bg-background/95");
+    expect(recordsPageSource).toContain("OperationalPageHeader");
+    expect(operationalUiSource).toContain("sticky top-0 z-40");
+    expect(operationalUiSource).toContain("shrink-0 border-b border-border");
+    expect(operationalUiSource).toContain("bg-background/95");
     expect(recordsPageSource).not.toContain("{data.contract.name}");
     expect(recordsPageSource).not.toContain("{data.contract.code}");
     expect(recordsPageSource).toContain("EntityIcon");
@@ -152,8 +157,8 @@ describe("entity record pagination UI", () => {
     expect(recordsPageSource).toContain("{data.pagination.totalRecords}");
     expect(recordsPageSource).toContain("text-xl font-semibold");
     expect(recordsPageSource).toContain("RecordListControls");
-    expect(recordsPageSource).toContain("lg:flex-nowrap");
-    expect(recordsPageSource).toContain("ml-auto flex shrink-0 flex-nowrap items-center justify-end gap-1.5");
+    expect(operationalUiSource).toContain("lg:flex-nowrap");
+    expect(operationalUiSource).toContain("flex shrink-0 flex-wrap items-center justify-end gap-1.5");
     expect(recordsPageSource).not.toContain("Registros operacionales de este tipo de entidad.");
   });
 
@@ -183,12 +188,15 @@ describe("entity record pagination UI", () => {
   });
 
   it("keeps toolbar, column headers and pagination outside row vertical scrolling", () => {
-    expect(recordsPageSource).toContain("min-h-0 flex-1 overflow-hidden rounded-md border");
-    expect(recordsPageSource).toContain("flex h-full min-h-0 flex-col p-4");
-    expect(recordsPageSource).toContain("flex shrink-0 flex-col gap-3 border-t");
+    expect(recordsPageSource).toContain("DataTableShell");
+    expect(recordsPageSource).toContain("PaginationBar");
+    expect(operationalUiSource).toContain("min-h-0 flex-1 overflow-hidden rounded-md border");
+    expect(operationalUiSource).toContain("flex h-full min-h-0 flex-col p-3 sm:p-4");
+    expect(operationalUiSource).toContain("flex shrink-0 flex-col gap-3 border-t");
     expect(recordsTableSource).toContain("flex min-h-0 flex-1 flex-col gap-3");
-    expect(recordsTableSource).toContain("sticky top-0 z-20 border-b border-border bg-card");
-    expect(recordsTableSource).toContain("min-h-0 flex-1 overflow-auto");
+    expect(recordsTableSource).toContain("sticky top-0 z-20 border-b border-sky-100 bg-sky-50");
+    expect(recordsTableSource).toContain("TableScrollArea");
+    expect(operationalUiSource).toContain("min-h-0 flex-1 overflow-auto");
   });
 
   it("applies new-record highlight styles to table cells", () => {
@@ -245,12 +253,12 @@ describe("entity record pagination UI", () => {
     expect(recordTypesPageSource).toContain('className="-mt-4 grid w-full gap-6"');
     expect(recordTypesPageSource).not.toContain('className="-mt-6 grid w-full gap-6"');
     expect(recordTypesPageSource).toContain('className="grid gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4"');
-    expect(recordTypesPageSource).toContain('CardHeader className="px-4 py-3"');
-    expect(recordTypesPageSource).toContain('CardContent className="flex items-center justify-between gap-3 px-4 pb-4 pt-0"');
+    expect(recordTypesPageSource).toContain("SummaryCard");
+    expect(recordTypesPageSource).toContain("StatusBadge");
     expect(recordTypesPageSource).toContain("EntityIcon");
     expect(recordTypesPageSource).not.toContain("Activos:");
     expect(recordTypesPageSource).not.toContain("Total:");
-    expect(recordTypesPageSource).toContain("registros");
+    expect(recordTypesPageSource).toContain('label: "Registros"');
     expect(recordTypesPageSource).toContain('className="h-8 px-3 text-xs"');
     expect(recordTypesPageSource).toContain("Abrir");
     expect(recordTypesPageSource).not.toContain("Abrir listado");

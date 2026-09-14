@@ -2,15 +2,14 @@ import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
 
 import { auth } from "@/auth";
+import {
+  EmptyState,
+  PageHeader,
+  StatusBadge,
+  SummaryCard,
+} from "@/components/admin-ui";
 import { EntityIcon } from "@/components/entity-icon";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { getEntityNatureLabel } from "@/lib/entity-nature";
 import { getRecordEntityTypes } from "@/lib/entity-records";
 
@@ -47,71 +46,63 @@ export default async function RecordsPage({
 
   return (
     <div className="-mt-4 grid w-full gap-6">
-      <header>
-        <h1 className="text-2xl font-semibold">Registros</h1>
-        <p className="text-sm text-muted-foreground">
-          Fuente operacional del contrato organizada por tipo de entidad.
-        </p>
-      </header>
+      <PageHeader
+        description="Fuente operacional del contrato organizada por tipo de entidad."
+        metadata={<StatusBadge variant="info">{data.entityTypes.length} tipo{data.entityTypes.length === 1 ? "" : "s"} activo{data.entityTypes.length === 1 ? "" : "s"}</StatusBadge>}
+        title="Registros"
+      />
 
       {data.entityTypes.length > 0 ? (
         <div className="grid gap-6">
           {groupedEntityTypes.map((group) => (
-            <section className="grid gap-2" key={group.value}>
-              <header className="flex items-center gap-3 border-b border-border pb-1.5">
+            <section className="grid gap-3" key={group.value}>
+              <header className="flex flex-wrap items-center gap-3 border-b border-border pb-1.5">
                 <h2 className="text-base font-semibold">{group.title}</h2>
-                <span className="rounded-md border border-border bg-muted/40 px-2 py-0.5 text-xs text-muted-foreground">
+                <StatusBadge variant={entityNatureVariant(group.value)}>
                   {group.entityTypes.length}
-                </span>
+                </StatusBadge>
               </header>
 
               <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
                 {group.entityTypes.map((entityType) => (
-                  <Card key={entityType.id}>
-                    <CardHeader className="px-4 py-3">
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0 space-y-0.5">
-                          <CardTitle className="flex items-center gap-2 text-base">
-                            <EntityIcon className="text-muted-foreground" icon={entityType.icon} />
-                            {entityType.name}
-                          </CardTitle>
-                          <CardDescription>{entityType.description}</CardDescription>
-                        </div>
-                        <span className="shrink-0 rounded-md border border-border bg-muted/40 px-2 py-0.5 text-xs font-medium text-muted-foreground">
-                          {getEntityNatureLabel(entityType.nature)}
-                        </span>
-                      </div>
-                    </CardHeader>
-                    <CardContent className="flex items-center justify-between gap-3 px-4 pb-4 pt-0">
-                      <div className="text-sm text-muted-foreground">
-                        <span className="font-medium text-foreground">
-                          {entityType._count.records}
-                        </span>{" "}
-                        registros
-                      </div>
+                  <SummaryCard
+                    actions={(
                       <Button asChild className="h-8 px-3 text-xs" size="sm" variant="outline">
                         <Link href={`/app/contracts/${contractId}/records/${entityType.id}`}>
                           Abrir
                         </Link>
                       </Button>
-                    </CardContent>
-                  </Card>
+                    )}
+                    badges={(
+                      <StatusBadge variant={entityNatureVariant(entityType.nature)}>
+                        {getEntityNatureLabel(entityType.nature)}
+                      </StatusBadge>
+                    )}
+                    description={entityType.description}
+                    icon={<EntityIcon icon={entityType.icon} />}
+                    key={entityType.id}
+                    metadata={[
+                      { label: "Registros", value: entityType._count.records },
+                    ]}
+                    title={entityType.name}
+                  />
                 ))}
               </div>
             </section>
           ))}
         </div>
       ) : (
-        <section>
-          <Card>
-            <CardContent className="pt-6">
-              <p className="text-sm text-muted-foreground">
-                No hay tipos de entidad activos para registrar.
-              </p>
-            </CardContent>
-          </Card>
-        </section>
+        <EmptyState
+          description="Configura o activa tipos de entidad para comenzar a registrar información."
+          title="No hay tipos de entidad activos para registrar."
+        />
       )}
     </div>
   );
+}
+
+function entityNatureVariant(nature: string) {
+  if (nature === "MASTER") return "info";
+  if (nature === "TRANSACTION") return "warning";
+  return "neutral";
 }

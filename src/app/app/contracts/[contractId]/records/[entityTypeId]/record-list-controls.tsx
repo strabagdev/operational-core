@@ -84,7 +84,7 @@ export function RecordListControls({
   }
 
   return (
-    <div className="grid gap-2 sm:grid-cols-[minmax(180px,1fr)_auto_150px] sm:items-center">
+    <div className="grid gap-2 sm:grid-cols-[minmax(180px,1fr)_auto_150px] sm:items-center" data-record-list-controls="true">
       <div className="relative">
         <input
           aria-label="Buscar registros"
@@ -110,6 +110,7 @@ export function RecordListControls({
       </div>
       <p className="whitespace-nowrap text-sm text-muted-foreground">
         {totalRecords} registro{totalRecords === 1 ? "" : "s"}
+        {query ? <span className="ml-2 rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-xs text-sky-950">Filtro activo</span> : null}
       </p>
       <select
         aria-label="Registros por página"
