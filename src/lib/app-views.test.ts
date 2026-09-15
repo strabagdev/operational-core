@@ -1762,6 +1762,32 @@ describe("PANEL AppView config", () => {
     ]);
   });
 
+  it("parses legacy PANEL layout without distribution for compatibility", () => {
+    const config = parseAppViewConfig({
+      config: panelConfig(),
+      type: "PANEL",
+    } as never);
+
+    expect(config.type).toBe("PANEL");
+    if (config.type !== "PANEL") return;
+    expect(config.layout.distribution).toBeUndefined();
+  });
+
+  it("parses PANEL layout distribution when explicitly persisted", () => {
+    for (const distribution of ["AUTO", "MANUAL"] as const) {
+      const config = parseAppViewConfig({
+        config: panelConfig({
+          layout: { columns: 12, rowHeight: 8, distribution },
+        }),
+        type: "PANEL",
+      } as never);
+
+      expect(config.type).toBe("PANEL");
+      if (config.type !== "PANEL") return;
+      expect(config.layout.distribution).toBe(distribution);
+    }
+  });
+
   it("rejects overlapping PANEL module layouts when saving", async () => {
     const config = panelConfig({
       modules: [

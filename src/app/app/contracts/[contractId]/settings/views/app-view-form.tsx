@@ -44,6 +44,7 @@ import {
   type PanelFilter,
   type PanelKpiConfig,
   type PanelKpiFormat,
+  type PanelLayoutDistribution,
   type PanelMetric,
   type PanelMetricAggregation,
   type PanelMetricCondition,
@@ -458,6 +459,9 @@ export function AppViewForm({
   const [panelLayoutRowHeight, setPanelLayoutRowHeight] = useState(
     initialPanelConfig?.layout.rowHeight ?? 8,
   );
+  const [panelLayoutDistribution, setPanelLayoutDistribution] = useState<PanelLayoutDistribution>(
+    initialPanelConfig?.layout.distribution ?? (initialValues?.config.type === "PANEL" ? "MANUAL" : "AUTO"),
+  );
   const [panelNotice, setPanelNotice] = useState("");
   const [activePanelSection, setActivePanelSection] = useState<PanelEditorSectionId>(
     firstPanelErrorSection(state.fieldErrors) ?? "datos-generales",
@@ -476,6 +480,7 @@ export function AppViewForm({
     metrics: panelMetrics,
     modules: panelModules,
     columns: panelLayoutColumns,
+    distribution: panelLayoutDistribution,
     rowHeight: panelLayoutRowHeight,
   });
   const normalizedInitialPanelConfig = initialValues?.config.type === "PANEL"
@@ -486,6 +491,7 @@ export function AppViewForm({
         metrics: initialValues.config.metrics,
         modules: initialValues.config.modules,
         columns: initialValues.config.layout.columns,
+        distribution: initialValues.config.layout.distribution ?? "MANUAL",
         rowHeight: initialValues.config.layout.rowHeight ?? 8,
       })
     : undefined;
@@ -687,6 +693,7 @@ export function AppViewForm({
           filters={panelFilters}
           generalSection={generalSection}
           layoutColumns={panelLayoutColumns}
+          layoutDistribution={panelLayoutDistribution}
           layoutRowHeight={panelLayoutRowHeight}
           modules={panelModules}
           metrics={panelMetrics}
@@ -696,6 +703,7 @@ export function AppViewForm({
           setDatasets={setPanelDatasets}
           setFilters={setPanelFilters}
           setLayoutColumns={setPanelLayoutColumns}
+          setLayoutDistribution={setPanelLayoutDistribution}
           setLayoutRowHeight={setPanelLayoutRowHeight}
           setModules={setPanelModules}
           setMetrics={setPanelMetrics}
@@ -831,6 +839,7 @@ function PanelConfigFields({
   filters,
   generalSection,
   layoutColumns,
+  layoutDistribution,
   layoutRowHeight,
   metrics,
   modules,
@@ -840,6 +849,7 @@ function PanelConfigFields({
   setDatasets,
   setFilters,
   setLayoutColumns,
+  setLayoutDistribution,
   setLayoutRowHeight,
   setMetrics,
   setModules,
@@ -854,6 +864,7 @@ function PanelConfigFields({
   filters: PanelEditorFilter[];
   generalSection: ReactNode;
   layoutColumns: number;
+  layoutDistribution: PanelLayoutDistribution;
   layoutRowHeight: number;
   metrics: PanelEditorMetric[];
   modules: PanelEditorModule[];
@@ -863,6 +874,7 @@ function PanelConfigFields({
   setDatasets: (value: PanelEditorDataset[]) => void;
   setFilters: (value: PanelEditorFilter[]) => void;
   setLayoutColumns: (value: number) => void;
+  setLayoutDistribution: (value: PanelLayoutDistribution) => void;
   setLayoutRowHeight: (value: number) => void;
   setMetrics: (value: PanelEditorMetric[]) => void;
   setModules: (value: PanelEditorModule[]) => void;
@@ -873,6 +885,9 @@ function PanelConfigFields({
   const [sheet, setSheet] = useState<PanelEditorSheetState>(null);
   const [selectedLayoutModuleId, setSelectedLayoutModuleId] = useState(modules[0]?.id ?? "");
   const selectedLayoutModule = modules.find((module) => module.id === selectedLayoutModuleId) ?? modules[0];
+  const applyLayoutDistribution = (nextModules: PanelEditorModule[]) =>
+    distributePanelModules(nextModules, layoutColumns, layoutDistribution);
+  const updateModules = (nextModules: PanelEditorModule[]) => setModules(applyLayoutDistribution(nextModules));
   const sections = panelEditorSections({
     activeSection,
     datasets,
@@ -939,7 +954,7 @@ function PanelConfigFields({
                           setDatasets(next.datasets);
                           setFilters(next.filters);
                           setMetrics(next.metrics);
-                          setModules(next.modules);
+                          updateModules(next.modules);
                         }}
                         onEdit={() => openSheet("dataset", index)}
                       />
@@ -1008,7 +1023,7 @@ function PanelConfigFields({
                           const next = removePanelMetricAt({ metrics, modules }, index);
 
                           setMetrics(next.metrics);
-                          setModules(next.modules);
+                          updateModules(next.modules);
                         }}
                         onEdit={() => openSheet("metric", index)}
                       />
@@ -1054,12 +1069,12 @@ function PanelConfigFields({
                           key={module.id}
                           metric={moduleMetric}
                           module={module}
-                          onDelete={() => setModules(removePanelModuleAt(modules, index))}
+                          onDelete={() => updateModules(removePanelModuleAt(modules, index))}
                           onEdit={() => openSheet("module", index)}
-                          onMoveDown={spatialIndex === spatialModules.length - 1
+                          onMoveDown={layoutDistribution === "MANUAL" || spatialIndex === spatialModules.length - 1
                             ? undefined
                             : () => setModules(packPanelModules(moveAt(spatialModules, spatialIndex, 1), layoutColumns))}
-                          onMoveUp={spatialIndex === 0
+                          onMoveUp={layoutDistribution === "MANUAL" || spatialIndex === 0
                             ? undefined
                             : () => setModules(packPanelModules(moveAt(spatialModules, spatialIndex, -1), layoutColumns))}
                           warnings={overlapWarnings}
@@ -1074,10 +1089,10 @@ function PanelConfigFields({
             {activeSection === "diseno" ? (
               <section className="grid gap-4" data-panel-section="diseno" id="diseno">
                 <PanelSectionHeader
-                  actionLabel="Organizar automáticamente"
-                  description="Ajusta la grilla de 12 columnas, posiciones y tamaño de cada módulo."
+                  actionLabel={modules.length === 0 ? undefined : "Organizar una vez"}
+                  description="Ajusta la grilla de 12 columnas, posiciones, tamaño y distribución de cada módulo."
                   id="panel-section-diseno"
-                  onAction={layoutOverlaps.length === 0 ? undefined : () => setModules(packPanelModules(modules, layoutColumns))}
+                  onAction={modules.length === 0 ? undefined : () => setModules(packPanelModules(modules, layoutColumns))}
                   title="Diseño"
                   tone="layout"
                 />
@@ -1091,7 +1106,38 @@ function PanelConfigFields({
                   </div>
                 ) : null}
                 <div className="grid gap-3 sm:grid-cols-2">
-                  <NumberControl label="Columnas de grilla" max={24} min={1} onChange={setLayoutColumns} value={layoutColumns} />
+                  <SelectControl
+                    helpText={layoutDistribution === "AUTO"
+                      ? "Los módulos se acomodan al cambiar su tamaño u orden."
+                      : "Define el tamaño y la posición de cada módulo."}
+                    label="Distribución"
+                    name="panelLayoutDistribution"
+                    onChange={(distribution) => {
+                      const nextDistribution = distribution as PanelLayoutDistribution;
+
+                      setLayoutDistribution(nextDistribution);
+                      if (nextDistribution === "AUTO") {
+                        setModules(packPanelModules(modules, layoutColumns));
+                      }
+                    }}
+                    options={[
+                      { label: "Automática", value: "AUTO" },
+                      { label: "Manual", value: "MANUAL" },
+                    ]}
+                    value={layoutDistribution}
+                  />
+                  <NumberControl
+                    label="Columnas de grilla"
+                    max={24}
+                    min={1}
+                    onChange={(columns) => {
+                      setLayoutColumns(columns);
+                      if (layoutDistribution === "AUTO") {
+                        setModules(packPanelModules(modules, columns));
+                      }
+                    }}
+                    value={layoutColumns}
+                  />
                   <NumberControl label="Alto de fila" max={64} min={1} onChange={setLayoutRowHeight} value={layoutRowHeight} />
                 </div>
                 <PanelLayoutCanvas
@@ -1107,18 +1153,27 @@ function PanelConfigFields({
                     <p className="text-sm text-muted-foreground">{selectedLayoutModule.title || selectedLayoutModule.id}</p>
                     <div className="grid gap-3 sm:grid-cols-4">
                       {(["x", "y", "w", "h"] as const).map((key) => (
-                        <NumberControl
-                          key={key}
-                          label={key.toUpperCase()}
-                          max={key === "w" ? layoutColumns : 99}
-                          min={key === "x" || key === "y" ? 0 : 1}
-                          onChange={(value) => setModules(modules.map((module) =>
-                            module.id === selectedLayoutModule.id
-                              ? { ...module, layout: { ...module.layout, [key]: value } }
-                              : module,
-                          ))}
-                          value={selectedLayoutModule.layout[key]}
-                        />
+                        layoutDistribution === "AUTO" && (key === "x" || key === "y") ? (
+                          <ReadOnlyControl key={key} label={key.toUpperCase()} value={selectedLayoutModule.layout[key]} />
+                        ) : (
+                          <NumberControl
+                            key={key}
+                            label={key.toUpperCase()}
+                            max={key === "w" ? layoutColumns : 99}
+                            min={key === "x" || key === "y" ? 0 : 1}
+                            onChange={(value) => setModules(distributePanelModules(
+                              updatePanelModuleLayoutValue(
+                                modules,
+                                selectedLayoutModule.id,
+                                key,
+                                value,
+                              ),
+                              layoutColumns,
+                              layoutDistribution,
+                            ))}
+                            value={selectedLayoutModule.layout[key]}
+                          />
+                        )
                       ))}
                     </div>
                     <FieldError errors={fieldErrors?.layout} />
@@ -1156,6 +1211,8 @@ function PanelConfigFields({
           fieldErrors={fieldErrors}
           filters={filters}
           index={sheet.index}
+          layoutColumns={layoutColumns}
+          layoutDistribution={layoutDistribution}
           metrics={metrics}
           modules={modules}
           onClose={() => setSheet(null)}
@@ -1197,6 +1254,7 @@ function PanelConfigFields({
           fieldErrors={fieldErrors}
           index={sheet.index}
           layoutColumns={layoutColumns}
+          layoutDistribution={layoutDistribution}
           metrics={metrics}
           modules={modules}
           onClose={() => setSheet(null)}
@@ -1588,6 +1646,8 @@ function PanelDatasetSheet({
   fieldErrors,
   filters,
   index,
+  layoutColumns,
+  layoutDistribution,
   metrics,
   modules,
   onClose,
@@ -1603,6 +1663,8 @@ function PanelDatasetSheet({
   fieldErrors?: Record<string, string[]>;
   filters: PanelEditorFilter[];
   index: number | null;
+  layoutColumns: number;
+  layoutDistribution: PanelLayoutDistribution;
   metrics: PanelEditorMetric[];
   modules: PanelEditorModule[];
   onClose: () => void;
@@ -1634,7 +1696,7 @@ function PanelDatasetSheet({
         setDatasets(clonePanelEditorValue(draftDatasets));
         setFilters(clonePanelEditorValue(draftFilters));
         setMetrics(clonePanelEditorValue(draftMetrics));
-        setModules(clonePanelEditorValue(draftModules));
+        setModules(distributePanelModules(clonePanelEditorValue(draftModules), layoutColumns, layoutDistribution));
         if (draftNotice) {
           setNotice(draftNotice);
         }
@@ -1774,6 +1836,7 @@ function PanelModuleSheet({
   fieldErrors,
   index,
   layoutColumns,
+  layoutDistribution,
   metrics,
   modules,
   onClose,
@@ -1785,6 +1848,7 @@ function PanelModuleSheet({
   fieldErrors?: Record<string, string[]>;
   index: number | null;
   layoutColumns: number;
+  layoutDistribution: PanelLayoutDistribution;
   metrics: PanelEditorMetric[];
   modules: PanelEditorModule[];
   onClose: () => void;
@@ -1792,7 +1856,9 @@ function PanelModuleSheet({
   setModules: (value: PanelEditorModule[]) => void;
 }) {
   const draftIndex = index ?? modules.length;
-  const initialModules = index === null ? packPanelModules([...modules, defaultPanelModule(datasets, metrics, modules, layoutColumns)], layoutColumns) : modules;
+  const initialModules = index === null
+    ? distributePanelModules([...modules, defaultPanelModule(datasets, metrics, modules, layoutColumns)], layoutColumns, layoutDistribution)
+    : modules;
   const [draftModules, setDraftModules] = useState(() => clonePanelEditorValue(initialModules));
   const dirty = JSON.stringify(draftModules) !== JSON.stringify(initialModules);
   const spatialModules = sortPanelModulesByLayout(draftModules);
@@ -1805,7 +1871,7 @@ function PanelModuleSheet({
       description="Configura tipo, dataset, columnas o KPI, y layout del módulo."
       onClose={onClose}
       onSave={() => {
-        setModules(clonePanelEditorValue(draftModules));
+        setModules(distributePanelModules(clonePanelEditorValue(draftModules), layoutColumns, layoutDistribution));
         onClose();
       }}
       open={open}
@@ -1818,6 +1884,7 @@ function PanelModuleSheet({
           fieldErrors={fieldErrors}
           index={draftIndex}
           layoutColumns={layoutColumns}
+          layoutDistribution={layoutDistribution}
           metrics={metrics}
           module={draftModule}
           modules={draftModules}
@@ -2004,7 +2071,7 @@ function defaultPanelModule(
           format: "NUMBER",
         },
       },
-      layout: { x: 0, y: modules.length, w: Math.min(4, layoutColumns), h: 2 },
+      layout: { x: 0, y: modules.length, w: Math.min(2, layoutColumns), h: 2 },
     };
   }
 
@@ -2663,6 +2730,7 @@ function PanelModuleEditor({
   entityTypes,
   index,
   layoutColumns,
+  layoutDistribution,
   metrics,
   module,
   modules,
@@ -2675,6 +2743,7 @@ function PanelModuleEditor({
   entityTypes: AppViewEntityTypeOption[];
   index: number;
   layoutColumns: number;
+  layoutDistribution: PanelLayoutDistribution;
   metrics: PanelEditorMetric[];
   module: PanelEditorModule;
   modules: PanelEditorModule[];
@@ -2952,16 +3021,31 @@ function PanelModuleEditor({
       </fieldset>
       )}
       <div className="grid min-w-0 gap-3 sm:grid-cols-2">
-        <NumberControl label="Ancho" max={layoutColumns} min={1} onChange={(w) => updateModule({ ...module, layout: { ...module.layout, w } })} value={module.layout.w} />
-        <NumberControl label="Orden" max={99} min={0} onChange={(y) => updateModule({ ...module, layout: { ...module.layout, y } })} value={module.layout.y} />
+        <NumberControl label="Ancho" max={layoutColumns} min={1} onChange={(w) => updateModule(updatePanelModuleLayoutValue([module], module.id, "w", w)[0] ?? module)} value={module.layout.w} />
+        <NumberControl label="Alto" max={99} min={1} onChange={(h) => updateModule(updatePanelModuleLayoutValue([module], module.id, "h", h)[0] ?? module)} value={module.layout.h} />
+        {layoutDistribution === "MANUAL" ? (
+          <>
+            <NumberControl label="X" max={layoutColumns} min={0} onChange={(x) => updateModule(updatePanelModuleLayoutValue([module], module.id, "x", x)[0] ?? module)} value={module.layout.x} />
+            <NumberControl label="Y" max={99} min={0} onChange={(y) => updateModule(updatePanelModuleLayoutValue([module], module.id, "y", y)[0] ?? module)} value={module.layout.y} />
+          </>
+        ) : (
+          <>
+            <ReadOnlyControl label="X" value={module.layout.x} />
+            <ReadOnlyControl label="Y" value={module.layout.y} />
+          </>
+        )}
       </div>
       <div className="flex flex-wrap justify-end gap-2">
-        <button aria-label={`Subir módulo ${module.title || module.id}`} className="rounded border border-input px-3 py-1 text-sm disabled:opacity-40" disabled={spatialIndex === 0} onClick={() => moveModuleSpatially(-1)} type="button">
-          Subir
-        </button>
-        <button aria-label={`Bajar módulo ${module.title || module.id}`} className="rounded border border-input px-3 py-1 text-sm disabled:opacity-40" disabled={spatialIndex === spatialModules.length - 1} onClick={() => moveModuleSpatially(1)} type="button">
-          Bajar
-        </button>
+        {layoutDistribution === "AUTO" ? (
+          <>
+            <button aria-label={`Subir módulo ${module.title || module.id}`} className="rounded border border-input px-3 py-1 text-sm disabled:opacity-40" disabled={spatialIndex === 0} onClick={() => moveModuleSpatially(-1)} type="button">
+              Subir
+            </button>
+            <button aria-label={`Bajar módulo ${module.title || module.id}`} className="rounded border border-input px-3 py-1 text-sm disabled:opacity-40" disabled={spatialIndex === spatialModules.length - 1} onClick={() => moveModuleSpatially(1)} type="button">
+              Bajar
+            </button>
+          </>
+        ) : null}
         <button className="rounded border border-input px-3 py-1 text-sm" onClick={() => setModules(modules.filter((_, itemIndex) => itemIndex !== index))} type="button">
           Eliminar
         </button>
@@ -3172,10 +3256,10 @@ function PanelPreviewKpi({
   const updatedAt = "Actualizado 12-09-2026 09:30 (ejemplo)";
 
   return (
-    <div className="grid min-w-0 gap-2 rounded-md border border-emerald-100 bg-emerald-50/40 p-3">
+    <div className="grid min-w-0 gap-1 rounded-md border border-emerald-100 bg-emerald-50/40 p-2">
       <p className="truncate text-xs font-medium text-emerald-900" title={label} aria-label={label}>{label}</p>
-      <p className="truncate text-3xl font-semibold tracking-normal" title={value} aria-label={`Valor de ejemplo ${value}`}>{value}</p>
-      <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]" title={updatedAt}>{updatedAt}</p>
+      <p className="truncate text-xl font-semibold tracking-normal" title={value} aria-label={`Valor de ejemplo ${value}`}>{value}</p>
+      <p className="truncate text-xs text-muted-foreground" title={updatedAt}>{updatedAt}</p>
     </div>
   );
 }
@@ -4183,10 +4267,33 @@ function NumberControl({
         className="h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 text-sm font-normal outline-none ring-ring focus-visible:ring-2"
         max={max}
         min={min}
-        onChange={(event) => onChange(Number(event.target.value))}
+        onChange={(event) => {
+          if (event.target.value === "") {
+            return;
+          }
+
+          const nextValue = Number(event.target.value);
+
+          if (Number.isNaN(nextValue)) {
+            return;
+          }
+
+          onChange(nextValue);
+        }}
         type="number"
         value={value}
       />
+    </label>
+  );
+}
+
+function ReadOnlyControl({ label, value }: { label: string; value: number }) {
+  return (
+    <label className="grid min-w-0 gap-2 text-sm font-medium">
+      {label}
+      <span className="flex h-10 w-full min-w-0 items-center rounded-md border border-border bg-muted/30 px-3 text-sm font-normal text-muted-foreground">
+        {value}
+      </span>
     </label>
   );
 }
@@ -4285,6 +4392,7 @@ function OptionSelect({
 
 function SelectControl({
   disabled = false,
+  helpText,
   label,
   name,
   onChange,
@@ -4292,6 +4400,7 @@ function SelectControl({
   value,
 }: {
   disabled?: boolean;
+  helpText?: string;
   label: string;
   name: string;
   onChange: (value: string) => void;
@@ -4314,6 +4423,7 @@ function SelectControl({
           </option>
         ))}
       </select>
+      {helpText ? <span className="text-xs font-normal text-muted-foreground">{helpText}</span> : null}
     </label>
   );
 }
@@ -4593,6 +4703,7 @@ function reportSelectDisplayFields(
 function buildPanelConfig({
   baseConfig,
   columns,
+  distribution,
   datasets,
   filters,
   metrics,
@@ -4601,6 +4712,7 @@ function buildPanelConfig({
 }: {
   baseConfig?: PanelConfig;
   columns: number;
+  distribution: PanelLayoutDistribution;
   datasets: PanelEditorDataset[];
   filters: PanelEditorFilter[];
   metrics: PanelEditorMetric[];
@@ -4626,6 +4738,7 @@ function buildPanelConfig({
     layout: {
       ...baseConfig?.layout,
       columns,
+      distribution,
       rowHeight,
     },
     filters: panelFilters,
@@ -5077,6 +5190,29 @@ export function sortPanelModulesByLayout<T extends { layout: { x: number; y: num
     left.layout.x - right.layout.x ||
     left.id.localeCompare(right.id),
   );
+}
+
+export function updatePanelModuleLayoutValue<
+  T extends { id: string; layout: { x: number; y: number; w: number; h: number } },
+>(
+  modules: T[],
+  moduleId: string,
+  key: keyof T["layout"],
+  value: number,
+) {
+  return modules.map((module) =>
+    module.id === moduleId
+      ? { ...module, layout: { ...module.layout, [key]: value } }
+      : module,
+  );
+}
+
+export function distributePanelModules<T extends { layout: { x: number; y: number; w: number; h: number } }>(
+  modules: T[],
+  layoutColumns: number,
+  distribution: PanelLayoutDistribution,
+) {
+  return distribution === "AUTO" ? packPanelModules(modules, layoutColumns) : modules;
 }
 
 export function packPanelModules<T extends { layout: { x: number; y: number; w: number; h: number } }>(

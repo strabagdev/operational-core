@@ -566,7 +566,7 @@ Config shapes by `type`:
   },
   "PANEL": {
     "schemaVersion": 1,
-    "layout": { "columns": 12 },
+    "layout": { "columns": 12, "distribution": "AUTO" },
     "filters": [],
     "datasets": [
       {
@@ -627,6 +627,8 @@ Returns executable data for a configured `PANEL` AppView assigned to the authent
 - `filters`: optional JSON object keyed by panel filter id. Values are validated by the dataset bindings and translated to typed field filters; SELECT and MULTISELECT filters may use stable option ids. For dataset rows, all provided filters bound by the executed dataset apply. For KPI metrics, only required filters and the optional filters listed in `metric.filterIds` apply.
 
 PANEL v1 supports only `source.type = ENTITY`, transformations `RECORDS` and `LATEST_BY_RELATION`, visualizations `TABLE` and `KPI`, and metric aggregations `COUNT`, `COUNT_VALUES`, `COUNT_DISTINCT`, `SUM`, `AVG`, `MIN`, and `MAX`. `calculatedFields` must remain an empty array until the formula engine exists. `Versionado` entities are normal transactional entities; latest-per-related-record behavior is represented by `LATEST_BY_RELATION`, not by a versioning-specific report type.
+
+`layout.distribution` is optional for older PANEL configs. When present, `AUTO` means Opco Web recalculates module `x/y` positions from the explicit module order while preserving module `w/h`; `MANUAL` means persisted `x/y/w/h` coordinates are edited directly. API consumers should render the coordinates received and do not need to implement the organizer.
 
 KPI modules reference metrics by stable id:
 

@@ -68,6 +68,7 @@ export type PanelConfig = {
   schemaVersion: 1;
   layout: {
     columns: number;
+    distribution?: PanelLayoutDistribution;
     rowHeight?: number;
   };
   filters: PanelFilter[];
@@ -76,6 +77,8 @@ export type PanelConfig = {
   calculatedFields: [];
   modules: PanelModule[];
 };
+
+export type PanelLayoutDistribution = "AUTO" | "MANUAL";
 
 export type PanelMetricAggregation =
   | "COUNT"
@@ -1452,6 +1455,7 @@ const panelConfigInputSchema = z.object({
   schemaVersion: z.literal(1),
   layout: z.object({
     columns: z.number().int().min(1).max(24),
+    distribution: z.enum(["AUTO", "MANUAL"]).optional(),
     rowHeight: z.number().int().min(1).optional(),
   }).strict(),
   filters: z.array(panelFilterSchema),

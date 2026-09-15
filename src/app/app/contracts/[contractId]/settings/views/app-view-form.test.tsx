@@ -11,6 +11,7 @@ import {
   cleanPanelMetricConditionForField,
   cleanPanelMetricsForDatasets,
   cleanPanelModulesForDatasets,
+  distributePanelModules,
   incompatiblePanelColumns,
   packPanelModules,
   panelModuleLayoutOverlaps,
@@ -19,6 +20,7 @@ import {
   removePanelMetricAt,
   removePanelModuleAt,
   sortPanelModulesByLayout,
+  updatePanelModuleLayoutValue,
 } from "./app-view-form";
 import type { AppViewActionState } from "./actions";
 import type { PanelConfig } from "@/lib/app-views";
@@ -205,6 +207,56 @@ describe("AppViewForm", () => {
     expect(html).toContain("DD-MM-YYYY");
     expect(html).toContain('name="panelConfig"');
     expect(html).not.toContain("<textarea");
+  });
+
+  it("defaults new PANEL configs to automatic distribution", () => {
+    const html = renderToStaticMarkup(
+      <AppViewForm
+        action={noopAction}
+        entityTypes={panelEntityTypes()}
+        initialActionState={{
+          success: false,
+          values: {
+            name: "Panel nuevo",
+            slug: "panel-nuevo",
+            type: "PANEL",
+          },
+        }}
+        submitLabel="Crear experiencia"
+      />,
+    );
+
+    expect(hiddenInputValue(html, "panelConfig")).toContain("&quot;distribution&quot;:&quot;AUTO&quot;");
+  });
+
+  it("hydrates existing PANEL configs without distribution as manual without marking dirty", () => {
+    const html = renderToStaticMarkup(
+      <AppViewForm
+        action={noopAction}
+        entityTypes={panelEntityTypes()}
+        initialValues={panelInitialValues()}
+        submitLabel="Guardar experiencia"
+      />,
+    );
+
+    expect(html).toContain("&quot;distribution&quot;:&quot;MANUAL&quot;");
+    expect(html).not.toContain("Cambios sin guardar");
+  });
+
+  it("persists existing PANEL distribution when saving and reopening", () => {
+    const html = renderToStaticMarkup(
+      <AppViewForm
+        action={noopAction}
+        entityTypes={panelEntityTypes()}
+        initialValues={panelInitialValues({
+          layout: { columns: 12, rowHeight: 8, distribution: "AUTO" },
+        })}
+        submitLabel="Guardar experiencia"
+      />,
+    );
+
+    expect(hiddenInputValue(html, "panelConfig")).toContain("&quot;distribution&quot;:&quot;AUTO&quot;");
+    expect(html).not.toContain("Cambios sin guardar");
   });
 
   it("keeps general fields and panelConfig mounted for submit from every PANEL section", () => {
@@ -866,6 +918,187 @@ describe("AppViewForm", () => {
       { x: 0, y: 0, w: 4, h: 2 },
       { x: 4, y: 0, w: 4, h: 2 },
       { x: 8, y: 0, w: 4, h: 2 },
+      { x: 0, y: 2, w: 12, h: 6 },
+    ]);
+  });
+
+  it("keeps KPI width 2 when organizing five KPI modules before a TABLE", () => {
+    const kpi = (id: string) => ({ id, layout: { x: 0, y: 0, w: 2, h: 2 } });
+    const table = { id: "table-1", layout: { x: 0, y: 0, w: 12, h: 6 } };
+
+    expect(packPanelModules([
+      kpi("kpi-1"),
+      kpi("kpi-2"),
+      kpi("kpi-3"),
+      kpi("kpi-4"),
+      kpi("kpi-5"),
+      table,
+    ], 12).map((module) => module.layout)).toEqual([
+      { x: 0, y: 0, w: 2, h: 2 },
+      { x: 2, y: 0, w: 2, h: 2 },
+      { x: 4, y: 0, w: 2, h: 2 },
+      { x: 6, y: 0, w: 2, h: 2 },
+      { x: 8, y: 0, w: 2, h: 2 },
+      { x: 0, y: 2, w: 12, h: 6 },
+    ]);
+  });
+
+  it("keeps six KPI modules with width 2 in the first row", () => {
+    const modules = Array.from({ length: 6 }, (_, index) => ({
+      id: `kpi-${index + 1}`,
+      layout: { x: 0, y: 0, w: 2, h: 2 },
+    }));
+
+    expect(packPanelModules(modules, 12).map((module) => module.layout)).toEqual([
+      { x: 0, y: 0, w: 2, h: 2 },
+      { x: 2, y: 0, w: 2, h: 2 },
+      { x: 4, y: 0, w: 2, h: 2 },
+      { x: 6, y: 0, w: 2, h: 2 },
+      { x: 8, y: 0, w: 2, h: 2 },
+      { x: 10, y: 0, w: 2, h: 2 },
+    ]);
+  });
+
+  it("renders and serializes PANEL modules with KPI width 2 unchanged", () => {
+    const metrics = Array.from({ length: 5 }, (_, index) => ({
+      id: `metric-${index + 1}`,
+      name: `Indicador ${index + 1}`,
+      datasetId: "latest-procedure-status",
+      aggregation: "COUNT" as const,
+      fieldId: null,
+      filterIds: [],
+    }));
+    const modules = [
+      ...metrics.map((metric, index) => ({
+        id: `kpi-${index + 1}`,
+        title: metric.name,
+        datasetId: "latest-procedure-status",
+        visualization: {
+          type: "KPI" as const,
+          config: { metricId: metric.id, label: metric.name, format: "INTEGER" as const },
+        },
+        layout: { x: index * 2, y: 0, w: 2, h: 2 },
+      })),
+      {
+        ...panelConfigFixture().modules[0],
+        id: "table-1",
+        title: "Tabla",
+        layout: { x: 0, y: 2, w: 12, h: 6 },
+      },
+    ];
+
+    const html = renderToStaticMarkup(
+      <AppViewForm
+        action={noopAction}
+        entityTypes={panelEntityTypes()}
+        initialValues={panelInitialValues({ metrics, modules })}
+        submitLabel="Guardar experiencia"
+      />,
+    );
+
+    expect(html).toContain("x0 y0 · 2x2");
+    expect(html).toContain("x8 y0 · 2x2");
+    expect(html).toContain("x0 y2 · 12x6");
+    expect(html).toContain("&quot;w&quot;:2");
+    expect(html).not.toContain("&quot;w&quot;:3");
+    expect(html.indexOf("x8 y0 · 2x2")).toBeLessThan(html.indexOf("x0 y2 · 12x6"));
+  });
+
+  it("changes existing KPI width from 3 to 2 through editor layout updates before organizing and reopening", () => {
+    const metrics = Array.from({ length: 5 }, (_, index) => ({
+      id: `metric-${index + 1}`,
+      name: `Indicador ${index + 1}`,
+      datasetId: "latest-procedure-status",
+      aggregation: "COUNT" as const,
+      fieldId: null,
+      filterIds: [],
+    }));
+    const existingKpis = metrics.map((metric, index) => ({
+      id: `kpi-${index + 1}`,
+      title: metric.name,
+      datasetId: "latest-procedure-status",
+      visualization: {
+        type: "KPI" as const,
+        config: { metricId: metric.id, label: metric.name, format: "INTEGER" as const },
+      },
+      layout: { x: index * 3, y: 0, w: 3, h: 2 },
+    }));
+    const table = {
+      ...panelConfigFixture().modules[0],
+      id: "table-1",
+      title: "Tabla",
+      layout: { x: 0, y: 2, w: 12, h: 6 },
+    };
+
+    const editedByModuleControl = existingKpis.reduce(
+      (current, module) => updatePanelModuleLayoutValue(current, module.id, "w", 2),
+      [...existingKpis, table],
+    );
+    expect(editedByModuleControl.slice(0, 5).map((module) => module.layout.w)).toEqual([2, 2, 2, 2, 2]);
+
+    const editedByInspector = updatePanelModuleLayoutValue(editedByModuleControl, "kpi-5", "w", 2);
+    const organized = packPanelModules(editedByInspector, 12);
+    const config = panelConfigFixture({ metrics, modules: organized });
+    const html = renderToStaticMarkup(
+      <AppViewForm
+        action={noopAction}
+        entityTypes={panelEntityTypes()}
+        initialValues={panelInitialValues(config)}
+        submitLabel="Guardar experiencia"
+      />,
+    );
+
+    expect(organized.map((module) => module.layout)).toEqual([
+      { x: 0, y: 0, w: 2, h: 2 },
+      { x: 2, y: 0, w: 2, h: 2 },
+      { x: 4, y: 0, w: 2, h: 2 },
+      { x: 6, y: 0, w: 2, h: 2 },
+      { x: 8, y: 0, w: 2, h: 2 },
+      { x: 0, y: 2, w: 12, h: 6 },
+    ]);
+    expect(html).toContain("x8 y0 · 2x2");
+    expect(html).toContain("&quot;w&quot;:2");
+    expect(html).not.toContain("&quot;w&quot;:3");
+  });
+
+  it("automatic distribution repacks after resizing even when modules did not overlap", () => {
+    const modules = [
+      { id: "kpi-1", layout: { x: 0, y: 0, w: 3, h: 2 } },
+      { id: "kpi-2", layout: { x: 3, y: 0, w: 3, h: 2 } },
+      { id: "kpi-3", layout: { x: 6, y: 0, w: 3, h: 2 } },
+      { id: "kpi-4", layout: { x: 9, y: 0, w: 3, h: 2 } },
+      { id: "kpi-5", layout: { x: 0, y: 2, w: 3, h: 2 } },
+      { id: "table-1", layout: { x: 0, y: 4, w: 12, h: 6 } },
+    ];
+    const resized = modules.reduce(
+      (current, module) => module.id.startsWith("kpi-")
+        ? updatePanelModuleLayoutValue(current, module.id, "w", 2)
+        : current,
+      modules,
+    );
+
+    expect(panelModuleLayoutOverlaps(resized)).toEqual([]);
+    expect(distributePanelModules(resized, 12, "AUTO").map((module) => module.layout)).toEqual([
+      { x: 0, y: 0, w: 2, h: 2 },
+      { x: 2, y: 0, w: 2, h: 2 },
+      { x: 4, y: 0, w: 2, h: 2 },
+      { x: 6, y: 0, w: 2, h: 2 },
+      { x: 8, y: 0, w: 2, h: 2 },
+      { x: 0, y: 2, w: 12, h: 6 },
+    ]);
+  });
+
+  it("manual distribution preserves positions after resizing", () => {
+    const modules = [
+      { id: "kpi-1", layout: { x: 0, y: 0, w: 3, h: 2 } },
+      { id: "kpi-2", layout: { x: 3, y: 0, w: 3, h: 2 } },
+      { id: "table-1", layout: { x: 0, y: 2, w: 12, h: 6 } },
+    ];
+    const resized = updatePanelModuleLayoutValue(modules, "kpi-1", "w", 2);
+
+    expect(distributePanelModules(resized, 12, "MANUAL").map((module) => module.layout)).toEqual([
+      { x: 0, y: 0, w: 2, h: 2 },
+      { x: 3, y: 0, w: 3, h: 2 },
       { x: 0, y: 2, w: 12, h: 6 },
     ]);
   });
