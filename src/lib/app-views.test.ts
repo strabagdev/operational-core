@@ -3,10 +3,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   appViewFieldErrors,
+  appViewConfigDiagnostic,
   createAppView,
   friendlyAppViewError,
   getAppViewAdminData,
   getAppViewInput,
+  isExpectedAppViewConfigParseError,
   parseAppViewConfig,
   setAppViewActive,
   updateAppView,
@@ -1622,6 +1624,29 @@ describe("AppView administration", () => {
       valueDisplay: {},
       type: "REPORT",
     });
+  });
+
+  it("classifies only expected AppView config parse failures for isolation", () => {
+    const error = captureError(() => parseAppViewConfig({
+      config: { entityTypeId: "" },
+      type: "RECORDS",
+    } as never));
+
+    expect(isExpectedAppViewConfigParseError(error)).toBe(true);
+    expect(appViewConfigDiagnostic({
+      error,
+      view: { id: "view_invalid", type: "RECORDS" },
+    } as never)).toMatchObject({
+      code: "too_small",
+      path: "entityTypeId",
+      reference: "appView=view_invalid;type=RECORDS;code=too_small;path=entityTypeId",
+    });
+
+    expect(isExpectedAppViewConfigParseError(new Error("Database connection closed"))).toBe(false);
+    expect(appViewConfigDiagnostic({
+      error: new Error("Database connection closed"),
+      view: { id: "view_1", type: "PANEL" },
+    } as never)).toBeNull();
   });
 });
 

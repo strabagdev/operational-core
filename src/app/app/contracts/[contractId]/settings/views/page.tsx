@@ -12,12 +12,16 @@ import {
 import { EntityIcon } from "@/components/entity-icon";
 import { Button } from "@/components/ui/button";
 import {
+  appViewConfigDiagnostic,
   getAppViewAdminData,
   getAppViewTypeLabel,
+  isExpectedAppViewConfigParseError,
+  logAppViewConfigDiagnostic,
   parseAppViewConfig,
   summarizeAppViewConfig,
 } from "@/lib/app-views";
 
+import { DiagnosticReferenceCopyButton } from "./diagnostic-reference-copy-button";
 import { toggleAppViewAction } from "./actions";
 
 export default async function AppViewsPage({
@@ -69,7 +73,63 @@ export default async function AppViewsPage({
       <section className="grid gap-3 lg:grid-cols-2">
         {data.appViews.length > 0 ? (
           data.appViews.map((view) => {
-            const config = parseAppViewConfig(view);
+            let config: ReturnType<typeof parseAppViewConfig> | null = null;
+            let invalidDiagnostic: ReturnType<typeof appViewConfigDiagnostic> = null;
+
+            try {
+              config = parseAppViewConfig(view);
+            } catch (error) {
+              if (!isExpectedAppViewConfigParseError(error)) {
+                throw error;
+              }
+
+              invalidDiagnostic = appViewConfigDiagnostic({ error, view });
+
+              if (invalidDiagnostic) {
+                logAppViewConfigDiagnostic({ diagnostic: invalidDiagnostic, view });
+              }
+            }
+
+            if (!config && invalidDiagnostic) {
+              return (
+                <SummaryCard
+                  actions={(
+                    <>
+                      <Button asChild size="sm" variant="outline">
+                        <Link href={`/app/contracts/${contractId}/settings/views/${view.id}`}>
+                          Revisar
+                        </Link>
+                      </Button>
+                      <DiagnosticReferenceCopyButton reference={invalidDiagnostic.reference} />
+                    </>
+                  )}
+                  badges={(
+                    <>
+                      <StatusBadge variant={appViewTypeVariant(view.type)}>
+                        {getAppViewTypeLabel(view.type)}
+                      </StatusBadge>
+                      <StatusBadge variant="warning">
+                        Configuración incompatible o inválida
+                      </StatusBadge>
+                    </>
+                  )}
+                  description={view.slug}
+                  icon={<EntityIcon icon={view.icon} />}
+                  key={view.id}
+                  metadata={[
+                    { label: "Entidades", value: "No disponible" },
+                    { label: "Orden", value: view.sortOrder },
+                    { label: "Estado", value: "Configuración incompatible o inválida" },
+                    { label: "Detalle", value: invalidDiagnostic.explanation },
+                  ]}
+                  title={view.name}
+                />
+              );
+            }
+
+            if (!config) {
+              throw new Error("Expected parsed AppView config.");
+            }
 
             return (
               <SummaryCard

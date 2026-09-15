@@ -615,11 +615,18 @@ export async function setAppViewActive(
   });
 }
 
+export type AppViewConfigDiagnostic = {
+  code: string;
+  explanation: string;
+  path: string;
+  reference: string;
+};
+
 export function parseAppViewConfig(view: Pick<AppView, "config" | "type">): AppViewConfig {
   const config = view.config;
 
   if (!config || typeof config !== "object" || Array.isArray(config)) {
-    throw new Error("Invalid AppView config.");
+    throw new AppViewConfigError("La configuración guardada no tiene un formato compatible.", "config");
   }
 
   const raw = config as Record<string, unknown>;
@@ -695,6 +702,50 @@ export function summarizeAppViewConfig({
   }
 
   return config.entityTypeIds.map(entityName).join(", ");
+}
+
+export function isExpectedAppViewConfigParseError(error: unknown) {
+  return error instanceof z.ZodError || error instanceof AppViewConfigError;
+}
+
+export function appViewConfigDiagnostic({
+  error,
+  view,
+}: {
+  error: unknown;
+  view: Pick<AppView, "id" | "type">;
+}): AppViewConfigDiagnostic | null {
+  if (!isExpectedAppViewConfigParseError(error)) {
+    return null;
+  }
+
+  const firstIssue = error instanceof z.ZodError ? error.issues[0] : undefined;
+  const code = firstIssue?.code ?? "app_view_config_error";
+  const path = firstIssue?.path.map(String).join(".") || (
+    error instanceof AppViewConfigError ? error.fieldName : undefined
+  ) || "config";
+
+  return {
+    code,
+    explanation: "La configuración guardada no coincide con el contrato actual de esta experiencia.",
+    path,
+    reference: `appView=${view.id};type=${view.type};code=${code};path=${path}`,
+  };
+}
+
+export function logAppViewConfigDiagnostic({
+  diagnostic,
+  view,
+}: {
+  diagnostic: AppViewConfigDiagnostic;
+  view: Pick<AppView, "id" | "type">;
+}) {
+  console.warn("Invalid AppView config.", {
+    appViewId: view.id,
+    code: diagnostic.code,
+    path: diagnostic.path,
+    type: view.type,
+  });
 }
 
 export function friendlyAppViewError(error: unknown) {

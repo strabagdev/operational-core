@@ -3,7 +3,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { auth } from "@/auth";
 import {
+  appViewConfigDiagnostic,
+  type AppViewConfig,
   getAppViewAdminData,
+  isExpectedAppViewConfigParseError,
+  logAppViewConfigDiagnostic,
   parseAppViewConfig,
   summarizeAppViewConfig,
 } from "@/lib/app-views";
@@ -24,6 +28,12 @@ vi.mock("@/auth", () => ({
 }));
 
 vi.mock("@/lib/app-views", () => ({
+  appViewConfigDiagnostic: vi.fn(() => ({
+    code: "invalid_type",
+    explanation: "La configuración guardada no coincide con el contrato actual de esta experiencia.",
+    path: "datasets",
+    reference: "appView=view_invalid;type=PANEL;code=invalid_type;path=datasets",
+  })),
   getAppViewAdminData: vi.fn(),
   getAppViewTypeLabel: vi.fn((type: string) => ({
     BOARD: "Tablero",
@@ -33,7 +43,9 @@ vi.mock("@/lib/app-views", () => ({
     REPORT: "Reporte",
     WORKFLOW: "Flujo",
   }[type] ?? type)),
-  parseAppViewConfig: vi.fn((view) => view.config ?? { type: view.type }),
+  isExpectedAppViewConfigParseError: vi.fn((error) => error instanceof Error && error.message === "Invalid config"),
+  logAppViewConfigDiagnostic: vi.fn(),
+  parseAppViewConfig: vi.fn((view) => (view.config ?? { type: view.type }) as AppViewConfig),
   summarizeAppViewConfig: vi.fn(() => "Versionado"),
 }));
 
@@ -42,7 +54,10 @@ vi.mock("./actions", () => ({
 }));
 
 const authMock = vi.mocked(auth);
+const appViewConfigDiagnosticMock = vi.mocked(appViewConfigDiagnostic);
 const getAppViewAdminDataMock = vi.mocked(getAppViewAdminData);
+const isExpectedAppViewConfigParseErrorMock = vi.mocked(isExpectedAppViewConfigParseError);
+const logAppViewConfigDiagnosticMock = vi.mocked(logAppViewConfigDiagnostic);
 const parseAppViewConfigMock = vi.mocked(parseAppViewConfig);
 const summarizeAppViewConfigMock = vi.mocked(summarizeAppViewConfig);
 
@@ -50,6 +65,14 @@ describe("AppViewsPage visual layout", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     authMock.mockResolvedValue({ user: { id: "user_1" } } as never);
+    appViewConfigDiagnosticMock.mockReturnValue({
+      code: "invalid_type",
+      explanation: "La configuración guardada no coincide con el contrato actual de esta experiencia.",
+      path: "datasets",
+      reference: "appView=view_invalid;type=PANEL;code=invalid_type;path=datasets",
+    });
+    isExpectedAppViewConfigParseErrorMock.mockImplementation((error) => error instanceof Error && error.message === "Invalid config");
+    parseAppViewConfigMock.mockImplementation((view) => (view.config ?? { type: view.type }) as AppViewConfig);
     summarizeAppViewConfigMock.mockReturnValue("Versionado");
   });
 
@@ -127,5 +150,101 @@ describe("AppViewsPage visual layout", () => {
     expect(html).toContain('data-empty-state="true"');
     expect(html).toContain("/app/contracts/contract_1/settings/views/new");
     expect(html).toContain("/app/contracts/contract_1/settings/views/access");
+  });
+
+  it("isolates invalid AppView config in its own card without hiding valid views", async () => {
+    parseAppViewConfigMock.mockImplementation((view) => {
+      const appView = view as { config?: unknown; id: string; type: string };
+
+      if (appView.id === "view_invalid") {
+        throw new Error("Invalid config");
+      }
+
+      return (appView.config ?? { type: appView.type }) as AppViewConfig;
+    });
+    getAppViewAdminDataMock.mockResolvedValue({
+      appViews: [
+        {
+          active: true,
+          config: { type: "PANEL" },
+          icon: "folder",
+          id: "view_valid_1",
+          name: "Panel Operativo",
+          slug: "panel-operativo",
+          sortOrder: 1,
+          type: "PANEL",
+        },
+        {
+          active: true,
+          config: { datasets: [] },
+          icon: "clipboard-check",
+          id: "view_invalid",
+          name: "Panel Incompatible",
+          slug: "panel-incompatible",
+          sortOrder: 2,
+          type: "PANEL",
+        },
+        {
+          active: false,
+          config: { type: "REPORT" },
+          icon: null,
+          id: "view_valid_2",
+          name: "Reporte Vigente",
+          slug: "reporte-vigente",
+          sortOrder: 3,
+          type: "REPORT",
+        },
+      ],
+      entityTypes: [{ id: "versions", name: "Versionado" }],
+    } as never);
+
+    const html = renderToStaticMarkup(await AppViewsPage({
+      params: Promise.resolve({ contractId: "contract_1" }),
+      searchParams: Promise.resolve({}),
+    }));
+
+    expect(html).toContain("Panel Operativo");
+    expect(html).toContain("Reporte Vigente");
+    expect(html).toContain("Panel Incompatible");
+    expect(html).toContain("Configuración incompatible o inválida");
+    expect(html).toContain("La configuración guardada no coincide con el contrato actual de esta experiencia.");
+    expect(html).toContain("Copiar diagnóstico");
+    expect(html).toContain("Revisar");
+    expect(html).toContain("/app/contracts/contract_1/settings/views/view_invalid");
+    expect(html).toContain("Desactivar");
+    expect(html).toContain("Activar");
+    expect(summarizeAppViewConfigMock).toHaveBeenCalledTimes(2);
+    expect(appViewConfigDiagnosticMock).toHaveBeenCalledTimes(1);
+    expect(logAppViewConfigDiagnosticMock).toHaveBeenCalledWith(expect.objectContaining({
+      view: expect.objectContaining({ id: "view_invalid", type: "PANEL" }),
+    }));
+  });
+
+  it("does not hide unexpected AppView parse failures", async () => {
+    const unexpected = new Error("Database connection closed");
+    isExpectedAppViewConfigParseErrorMock.mockReturnValue(false);
+    parseAppViewConfigMock.mockImplementation(() => {
+      throw unexpected;
+    });
+    getAppViewAdminDataMock.mockResolvedValue({
+      appViews: [
+        {
+          active: true,
+          config: { type: "PANEL" },
+          icon: "folder",
+          id: "view_1",
+          name: "Panel Operativo",
+          slug: "panel-operativo",
+          sortOrder: 1,
+          type: "PANEL",
+        },
+      ],
+      entityTypes: [],
+    } as never);
+
+    await expect(AppViewsPage({
+      params: Promise.resolve({ contractId: "contract_1" }),
+      searchParams: Promise.resolve({}),
+    })).rejects.toThrow(unexpected);
   });
 });
