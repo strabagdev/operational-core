@@ -706,7 +706,7 @@ describe("AppViewForm", () => {
     expect(html).toContain("Procedimiento ejemplo");
   });
 
-  it("keeps PANEL card actions inside their cards with accessible labels", () => {
+  it("renders PANEL editor items as compact horizontal rows with accessible actions", () => {
     const longTitle = "Nombre extremadamente largo para confirmar que las acciones no salen de la tarjeta ni pisan el contenido principal";
     const config = panelConfigFixture({
       filters: [
@@ -758,11 +758,13 @@ describe("AppViewForm", () => {
       const cardHtml = html.slice(cardStart, cardEnd);
 
       expect(cardStart).toBeGreaterThan(-1);
+      expect(html).toContain("md:grid-cols-[minmax(12rem,0.9fr)_minmax(0,1.6fr)_auto]");
       expect(cardHtml).toContain('data-panel-card-header="true"');
       expect(cardHtml).toContain("flex-wrap");
-      expect(cardHtml).toContain("min-w-0 flex-1");
+      expect(cardHtml).toContain("break-words");
+      expect(cardHtml).toContain('data-panel-card-body="true"');
       expect(cardHtml).toContain('data-panel-card-actions="true"');
-      expect(cardHtml).toContain("flex shrink-0 items-center gap-1");
+      expect(cardHtml).toContain("flex min-w-0 flex-wrap items-center justify-start gap-1 md:justify-end");
       expect(cardHtml).toContain(`aria-label="${editLabel}"`);
       expect(cardHtml).toContain(`title="${editLabel}"`);
       expect(cardHtml).toContain(`aria-label="${deleteLabel}"`);
@@ -772,11 +774,17 @@ describe("AppViewForm", () => {
     }
   });
 
+  it("keeps PANEL editor item lists full-width instead of multi-column card grids", () => {
+    expect(appViewFormSource).toContain('<div className="grid gap-2">');
+    expect(appViewFormSource).not.toContain('className="grid gap-3 lg:grid-cols-2"');
+  });
+
   it("renders PANEL KPI metrics and preview without exposing raw JSON", () => {
     const html = renderToStaticMarkup(
       <AppViewForm
         action={noopAction}
         entityTypes={panelEntityTypes()}
+        initialActionState={{ success: false, fieldErrors: { metrics: ["Revisar métricas"] } }}
         initialValues={panelInitialValues({
           metrics: [
             {
@@ -814,6 +822,8 @@ describe("AppViewForm", () => {
     expect(html).toContain("Valor de ejemplo 1.234");
     expect(html).toContain("Actualizado 12-09-2026 09:30 (ejemplo)");
     expect(html).toContain("Total de registros");
+    expect(html).toContain("Contar registros en Versionado.");
+    expect(html).not.toContain("Contar registros registros");
     expect(html).not.toContain("<textarea");
   });
 

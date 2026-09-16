@@ -942,7 +942,7 @@ function PanelConfigFields({
                 {datasets.length === 0 ? (
                   <PanelEmptyState label="No hay datasets configurados." />
                 ) : (
-                  <div className="grid gap-3 lg:grid-cols-2">
+                  <div className="grid gap-2">
                     {datasets.map((dataset, index) => (
                       <PanelDatasetCard
                         dataset={dataset}
@@ -977,7 +977,7 @@ function PanelConfigFields({
                 {filters.length === 0 ? (
                   <PanelEmptyState label="Sin filtros de panel." />
                 ) : (
-                  <div className="grid gap-3 lg:grid-cols-2">
+                  <div className="grid gap-2">
                     {filters.map((filter, index) => (
                       <PanelFilterCard
                         datasets={datasets}
@@ -1012,7 +1012,7 @@ function PanelConfigFields({
                 {metrics.length === 0 ? (
                   <PanelEmptyState label="Sin métricas configuradas." />
                 ) : (
-                  <div className="grid gap-3 lg:grid-cols-2">
+                  <div className="grid gap-2">
                     {metrics.map((metric, index) => (
                       <PanelMetricCard
                         datasets={datasets}
@@ -1047,7 +1047,7 @@ function PanelConfigFields({
                 {modules.length === 0 ? (
                   <PanelEmptyState label="No hay módulos configurados." />
                 ) : (
-                  <div className="grid gap-3 lg:grid-cols-2">
+                  <div className="grid gap-2">
                     {sortPanelModulesByLayout(modules).map((module, spatialIndex, spatialModules) => {
                       const index = modules.findIndex((item) => item.id === module.id);
                       const overlapWarnings = layoutOverlaps
@@ -1351,8 +1351,8 @@ function PanelSectionHeader({
   tone: "datasets" | "filters" | "general" | "layout" | "metrics" | "modules";
 }) {
   return (
-    <div className={cn("flex flex-wrap items-start justify-between gap-3 rounded-md border px-3 py-3", panelToneClassName(tone))}>
-      <div className="min-w-0">
+    <div className={cn("flex min-w-0 flex-wrap items-start justify-between gap-3 rounded-md border px-3 py-2.5", panelToneClassName(tone))}>
+      <div className="min-w-0 flex-1">
         <h3 className="text-sm font-semibold" id={id}>{title}</h3>
         <p className="mt-1 text-sm text-muted-foreground">{description}</p>
       </div>
@@ -1449,7 +1449,7 @@ function PanelMetricCard({
   const summary = panelMetricReadableSummary(metric, dataset, field, fields);
 
   return (
-    <PanelSummaryCard actions={<CardActions deleteLabel="Eliminar métrica" editLabel="Editar métrica" onDelete={onDelete} onEdit={onEdit} />} eyebrow={metric.aggregation} tone="metrics" title={metric.name || "Métrica sin nombre"}>
+    <PanelSummaryCard actions={<CardActions deleteLabel="Eliminar métrica" editLabel="Editar métrica" onDelete={onDelete} onEdit={onEdit} />} eyebrow={panelMetricAggregationLabel(metric.aggregation)} tone="metrics" title={metric.name || "Métrica sin nombre"}>
       <p className="text-sm text-muted-foreground">{summary}</p>
       <PanelInfoGrid items={[
         ["Dataset", dataset?.name || dataset?.id || "Sin dataset"],
@@ -1486,7 +1486,7 @@ function PanelModuleCard({
   return (
     <PanelSummaryCard
       actions={(
-        <div className="flex flex-wrap justify-end gap-1">
+        <div className="flex flex-wrap justify-end gap-1" data-panel-module-actions="true">
           <IconButton disabled={!onMoveUp} label="Subir módulo" onClick={onMoveUp} icon={ArrowUp} />
           <IconButton disabled={!onMoveDown} label="Bajar módulo" onClick={onMoveDown} icon={ArrowDown} />
           <CardActions deleteLabel="Eliminar módulo" editLabel="Editar módulo" onDelete={onDelete} onEdit={onEdit} />
@@ -1529,28 +1529,28 @@ function PanelSummaryCard({
   warning?: boolean;
 }) {
   return (
-    <article className={cn("grid min-w-0 gap-3 rounded-md border bg-background p-3 shadow-sm", warning ? "border-destructive/50" : "border-border")} data-panel-card={tone}>
-      <div className="flex min-w-0 flex-wrap items-start justify-between gap-3" data-panel-card-header="true">
-        <div className="min-w-0 flex-1">
-          <p className={cn("w-fit rounded-full px-2 py-0.5 text-xs font-medium", panelBadgeClassName(tone))}>{eyebrow}</p>
-          <h4 className="mt-2 truncate text-sm font-semibold" title={title}>{title}</h4>
-        </div>
-        <div className="flex shrink-0 items-center gap-1" data-panel-card-actions="true">
-          {actions}
-        </div>
+    <article className={cn("grid w-full min-w-0 gap-3 rounded-md border bg-background p-2.5 shadow-sm md:grid-cols-[minmax(12rem,0.9fr)_minmax(0,1.6fr)_auto] md:items-start", warning ? "border-destructive/50" : "border-border")} data-panel-card={tone}>
+      <div className="flex min-w-0 flex-wrap items-start gap-2" data-panel-card-header="true">
+        <h4 className="min-w-0 flex-1 break-words text-sm font-semibold leading-5" title={title}>{title}</h4>
+        <p className={cn("shrink-0 rounded-full px-2 py-0.5 text-xs font-medium", panelBadgeClassName(tone))}>{eyebrow}</p>
       </div>
-      {children}
+      <div className="min-w-0 space-y-2" data-panel-card-body="true">
+        {children}
+      </div>
+      <div className="flex min-w-0 flex-wrap items-center justify-start gap-1 md:justify-end" data-panel-card-actions="true">
+        {actions}
+      </div>
     </article>
   );
 }
 
 function PanelInfoGrid({ items }: { items: Array<[string, string]> }) {
   return (
-    <dl className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
+    <dl className="grid min-w-0 gap-x-4 gap-y-1.5 text-xs text-muted-foreground sm:grid-cols-2 xl:grid-cols-3">
       {items.map(([label, value]) => (
         <div className="min-w-0" key={label}>
           <dt className="font-medium text-foreground">{label}</dt>
-          <dd className="truncate" title={value}>{value}</dd>
+          <dd className="break-words" title={value}>{value}</dd>
         </div>
       ))}
     </dl>
@@ -2186,17 +2186,27 @@ function panelMetricReadableSummary(
   field: AppViewEntityTypeOption["fields"][number] | undefined,
   fields: AppViewEntityTypeOption["fields"],
 ) {
-  const aggregation = panelMetricAggregationOptions().find((option) => option.value === metric.aggregation)?.label ?? metric.aggregation;
+  const aggregation = panelMetricAggregationLabel(metric.aggregation);
   const target = field?.name ?? (metric.aggregation === "COUNT" ? "registros" : "campo sin seleccionar");
   const conditions = metric.conditions ?? [];
 
   if (conditions.length === 0) {
+    if (metric.aggregation === "COUNT") {
+      return `${aggregation} en ${dataset?.name || dataset?.id || "dataset sin seleccionar"}.`;
+    }
+
     return `${aggregation} ${target} en ${dataset?.name || dataset?.id || "dataset sin seleccionar"}.`;
   }
 
-  return `${aggregation} ${target} donde ${conditions
+  const targetText = metric.aggregation === "COUNT" ? "" : ` ${target}`;
+
+  return `${aggregation}${targetText} donde ${conditions
     .map((condition) => panelMetricConditionSummary(condition, fields.find((item) => item.id === condition.fieldId)))
     .join(" y ")}.`;
+}
+
+function panelMetricAggregationLabel(aggregation: PanelMetricAggregation) {
+  return panelMetricAggregationOptions().find((option) => option.value === aggregation)?.label ?? aggregation;
 }
 
 function PanelDatasetEditor({

@@ -248,6 +248,10 @@ Opco Web administration edits PANEL AppViews through a visual configuration form
 
 Panel responses include a stable `configRevision` SHA-256 hash of the effective normalized config and a runtime `calculatedAt` timestamp. `schemaVersion` identifies the contract version only; clients must not use it as the cache invalidator for changes to a specific AppView config. Offline snapshots can key by contract id, AppView id, dataset id, normalized filter values, pagination/search parameters, and `configRevision`.
 
+## Opco Web Administration UX
+
+The PANEL editor is visual and sectioned: data sources, filters, metrics, modules, and layout. Complex edits open in sheets with cancel/close paths that preserve the last saved config unless the user explicitly applies changes. The editor keeps feature-complete hidden form state mounted for submit, shows a preview from the in-memory editor state, and marks unsaved changes without writing them. Canceling a sheet or closing a dirty sheet must not persist defaults over a stored config. Dataset, filter, metric, and module summaries render as compact full-width horizontal rows in the central editor area: name and type badge on the left, calculation/configuration metadata in the middle, and actions on the right. On narrow widths those details and actions wrap inside the row, keeping warnings visible and avoiding global horizontal overflow; this presentation does not change the PANEL layout canvas, preview geometry, serialization, or API contract.
+
 `state-update` is the generic workflow primitive for operational experiences where one subject record has one or more state fields changed, optional extra fields captured, optional date semantics, configurable uniqueness, and optional current-record update behavior. Its config stores:
 
 - `sourceEntityTypeId`: entity being operated on, such as Equipos or Personas.
