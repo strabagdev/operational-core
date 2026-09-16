@@ -55,6 +55,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - Read `docs/STATE_UPDATE.md` before changing the state-update engine, workflow adapters, idempotency, conflicts, or offline reconciliation.
 - Leer `docs/OPERATIONS.md` antes de trabajo productivo de DB, deploy o recovery.
 - Mantener docs sincronizados cuando cambie contrato.
+- Todo cambio de comportamiento, contrato, arquitectura o flujo operacional debe actualizar su documentacion en el mismo commit. La entrega debe identificar los documentos actualizados. Si no aplica documentacion, debe justificarlo explicitamente. No se considera terminado un cambio con documentacion pendiente.
 - No usar Playwright salvo solicitud explícita.
 - Preferir verificación productiva read-only.
 - Datos temporales de prueba deben identificarse y limpiarse.

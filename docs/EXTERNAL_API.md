@@ -1244,6 +1244,8 @@ Request:
 
 Values are normalized with the same dynamic field validation used by record writes: text values are trimmed, numeric/date/time values use the canonical storage representation, `SELECT` uses option value, and `MULTISELECT` uses the validated option-value array. Clients should send exactly the value they plan to submit in `values`.
 
+This endpoint is authenticated with the normal external API bearer token and contract/app membership checks. It is generic for any `EntityField.isUnique`; clients must not hardcode explanations to RUT or any other domain-specific identifier. It can report only conflicts visible through the requested contract/entity context and only for values included in the request. It does not reserve values and cannot prevent a second device from creating the same value while offline; create/update writes remain authoritative and can still return a unique conflict later.
+
 Success response:
 
 ```json
@@ -1265,6 +1267,16 @@ Success response:
 ```
 
 `conflictingRecordId` is scoped to the authenticated app/user contract context and never points outside the requested entity type.
+
+Expected error handling:
+
+- `400 INVALID_UNIQUE_VALIDATION_BODY`: malformed body, duplicate field ids, unsupported field type, inactive/non-unique field, too many fields, or a submitted `recordId` outside the requested active entity type.
+- `401` API auth codes: missing, invalid, expired, or stale bearer token. Clients may run the normal refresh path when applicable; this endpoint does not create a local validation success.
+- `403 CONTRACT_FORBIDDEN` or app inactive errors: caller cannot validate this contract/entity context.
+- `404 CONTRACT_NOT_FOUND`, `ENTITY_NOT_FOUND`, or `RECORD_NOT_FOUND`: active contract/entity or submitted edit record is unavailable.
+- `5xx` and network/timeouts: retryable service/connectivity failures. Clients should keep the form editable and either fall back to local-only advisory checks or defer to authoritative write validation.
+
+Late responses are advisory. Clients should bind a validation response to the current field value/request generation before displaying it; a stale response for an older value must not overwrite newer form state.
 
 ### Record Value Serialization
 
@@ -1342,6 +1354,8 @@ Invalid hours, full dates, timestamps, and free text are rejected with the stand
 | 404 | `CONTRACT_NOT_FOUND` | Active contract does not exist. |
 | 404 | `ENTITY_NOT_FOUND` | Active entity type does not exist in the contract. |
 | 404 | `RECORD_NOT_FOUND` | Record does not exist inside the requested entity type. |
+
+`INVALID_RELATION` predates the newer field-specific relation diagnostics and remains a 400 compatibility code for relation inputs that point to invalid, incompatible, cross-contract, or self-referential records. `UNIQUE_CONSTRAINT` is the legacy unique response retained for older clients. New explicit unique field conflicts use `409 UNIQUE_FIELD_CONFLICT` and include field conflict details when available. Clients should treat both unique codes as definitive write failures, surface the affected field when details exist, and preserve local intent for explicit user recovery rather than silently discarding a pending operation.
 
 ## Multiple Memberships
 

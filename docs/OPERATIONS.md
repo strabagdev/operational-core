@@ -188,6 +188,26 @@ No se modifica `opco-client` en esta fase.
 
 ## Incident Runbook
 
+### Incident Note: AppViews Listing Unavailable
+
+On 2026-09-15, the Web administration listing for Experiencias became unavailable because one stored AppView config raised during render. The observed trigger was a `layout.distribution` value persisted before the deployed parser/editor path was compatible with that shape. A single AppView parse exception escaped the card boundary and brought down the whole listing, hiding otherwise valid AppViews.
+
+During investigation it was confirmed that the local development environment was sharing the production-backed database connection. Do not create invalid AppView configs or repair production data from localhost to reproduce this class of issue. The immediate code fix was twofold: publish the compatible PANEL parser/editor support for `layout.distribution`, and isolate expected AppView configuration validation failures per AppView card/detail. Invalid AppViews now render a controlled card/detail state and server-side diagnostic; authentication, database, and unexpected runtime errors still propagate.
+
+The source that wrote the incompatible value was not proven from available evidence. Do not attribute it to a person, tool, or process without audit evidence. Do not log or publish complete AppView configs, credentials, or personal data when diagnosing similar incidents.
+
+Pending operational hardening: separate development and production databases so local validation cannot accidentally inspect or mutate production-backed state.
+
+Current real pending items after this incident and the recent UI/recovery work:
+
+- Separate development and production databases; local development must not share production-backed data by default.
+- Add day-based navigation for contract activity when that product scope is approved.
+- Finish migrating any remaining Web screens that still predate the shared visual language.
+- Confirm on the affected user's device before marking historical retained RECORDS errors as resolved in the field.
+- Complete authenticated visual validation for protected Web listings/details when a safe session is available; health/ready checks are not visual validation.
+- The Client PANEL position/height repair was visually confirmed by the user in production after OPCL-PANEL-010D; this is user visual confirmation, not an automated Playwright/Chromium check.
+- Keep Client worktree retirement closed. It is not an open pending item after consolidation.
+
 ### DB Unavailable
 
 1. Confirmar `/api/v1/health`.
