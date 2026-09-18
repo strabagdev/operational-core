@@ -1529,16 +1529,18 @@ function PanelSummaryCard({
   warning?: boolean;
 }) {
   return (
-    <article className={cn("grid w-full min-w-0 gap-3 rounded-md border bg-background p-2.5 shadow-sm md:grid-cols-[minmax(12rem,0.9fr)_minmax(0,1.6fr)_auto] md:items-start", warning ? "border-destructive/50" : "border-border")} data-panel-card={tone}>
-      <div className="flex min-w-0 flex-wrap items-start gap-2" data-panel-card-header="true">
-        <h4 className="min-w-0 flex-1 break-words text-sm font-semibold leading-5" title={title}>{title}</h4>
+    <article className={cn("grid w-full min-w-0 gap-2.5 rounded-md border bg-background p-2.5 shadow-sm", warning ? "border-destructive/50" : "border-border")} data-panel-card={tone}>
+      <div className="flex min-w-0 items-start gap-3" data-panel-card-header="true">
+        <h4 className="min-w-0 flex-1 whitespace-normal break-words text-sm font-semibold leading-5 [overflow-wrap:anywhere]" title={title}>{title}</h4>
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-1" data-panel-card-actions="true">
+          {actions}
+        </div>
+      </div>
+      <div className="flex min-w-0 flex-col items-start gap-2 sm:flex-row" data-panel-card-body="true">
         <p className={cn("shrink-0 rounded-full px-2 py-0.5 text-xs font-medium", panelBadgeClassName(tone))}>{eyebrow}</p>
-      </div>
-      <div className="min-w-0 space-y-2" data-panel-card-body="true">
-        {children}
-      </div>
-      <div className="flex min-w-0 flex-wrap items-center justify-start gap-1 md:justify-end" data-panel-card-actions="true">
-        {actions}
+        <div className="min-w-0 flex-1 space-y-2">
+          {children}
+        </div>
       </div>
     </article>
   );
@@ -1546,11 +1548,11 @@ function PanelSummaryCard({
 
 function PanelInfoGrid({ items }: { items: Array<[string, string]> }) {
   return (
-    <dl className="grid min-w-0 gap-x-4 gap-y-1.5 text-xs text-muted-foreground sm:grid-cols-2 xl:grid-cols-3">
+    <dl className="grid min-w-0 grid-cols-1 gap-x-4 gap-y-1.5 text-xs text-muted-foreground sm:grid-cols-2 2xl:grid-cols-3">
       {items.map(([label, value]) => (
         <div className="min-w-0" key={label}>
           <dt className="font-medium text-foreground">{label}</dt>
-          <dd className="break-words" title={value}>{value}</dd>
+          <dd className="whitespace-normal break-words [overflow-wrap:anywhere]" title={value}>{value}</dd>
         </div>
       ))}
     </dl>

@@ -707,15 +707,16 @@ describe("AppViewForm", () => {
   });
 
   it("renders PANEL editor items as compact horizontal rows with accessible actions", () => {
-    const longTitle = "Nombre extremadamente largo para confirmar que las acciones no salen de la tarjeta ni pisan el contenido principal";
+    const datasetTitle = "Procedimientos versionados";
+    const moduleTitle = "Última versión por procedimiento";
     const config = panelConfigFixture({
       filters: [
-        { id: "status-filter", label: longTitle, valueType: "OPTION" },
+        { id: "status-filter", label: "Estado vigente del procedimiento", valueType: "OPTION" },
       ],
       metrics: [
         {
           id: "status-count",
-          name: longTitle,
+          name: "Cantidad de procedimientos versionados",
           datasetId: "latest-procedure-status",
           aggregation: "COUNT",
           fieldId: null,
@@ -725,25 +726,25 @@ describe("AppViewForm", () => {
       modules: [
         {
           ...panelConfigFixture().modules[0],
-          title: longTitle,
+          title: moduleTitle,
         },
       ],
       datasets: [
         {
           ...panelConfigFixture().datasets[0],
-          name: longTitle,
+          name: datasetTitle,
         },
       ],
     });
 
     const cases = [
-      ["datasets", "datasets", "Editar dataset", "Eliminar dataset"],
-      ["filters", "filters", "Editar filtro", "Eliminar filtro"],
-      ["metrics", "metrics", "Editar métrica", "Eliminar métrica"],
-      ["modules", "modules", "Editar módulo", "Eliminar módulo"],
-    ] satisfies Array<[string, string, string, string]>;
+      ["datasets", "datasets", datasetTitle, "Editar dataset", "Eliminar dataset"],
+      ["filters", "filters", "Estado vigente del procedimiento", "Editar filtro", "Eliminar filtro"],
+      ["metrics", "metrics", "Cantidad de procedimientos versionados", "Editar métrica", "Eliminar métrica"],
+      ["modules", "modules", moduleTitle, "Editar módulo", "Eliminar módulo"],
+    ] satisfies Array<[string, string, string, string, string]>;
 
-    for (const [sectionId, cardKind, editLabel, deleteLabel] of cases) {
+    for (const [sectionId, cardKind, title, editLabel, deleteLabel] of cases) {
       const html = renderToStaticMarkup(
         <AppViewForm
           action={noopAction}
@@ -756,20 +757,23 @@ describe("AppViewForm", () => {
       const cardStart = html.indexOf(`data-panel-card="${cardKind}"`);
       const cardEnd = html.indexOf("</article>", cardStart);
       const cardHtml = html.slice(cardStart, cardEnd);
+      const headerStart = cardHtml.indexOf('data-panel-card-header="true"');
+      const titleStart = cardHtml.indexOf(`>${title}</h4>`);
+      const actionsStart = cardHtml.indexOf('data-panel-card-actions="true"');
+      const bodyStart = cardHtml.indexOf('data-panel-card-body="true"');
 
       expect(cardStart).toBeGreaterThan(-1);
-      expect(html).toContain("md:grid-cols-[minmax(12rem,0.9fr)_minmax(0,1.6fr)_auto]");
-      expect(cardHtml).toContain('data-panel-card-header="true"');
-      expect(cardHtml).toContain("flex-wrap");
-      expect(cardHtml).toContain("break-words");
-      expect(cardHtml).toContain('data-panel-card-body="true"');
-      expect(cardHtml).toContain('data-panel-card-actions="true"');
-      expect(cardHtml).toContain("flex min-w-0 flex-wrap items-center justify-start gap-1 md:justify-end");
+      expect(headerStart).toBeGreaterThan(-1);
+      expect(titleStart).toBeGreaterThan(headerStart);
+      expect(actionsStart).toBeGreaterThan(titleStart);
+      expect(bodyStart).toBeGreaterThan(actionsStart);
+      expect(cardHtml).toContain(`title="${title}"`);
       expect(cardHtml).toContain(`aria-label="${editLabel}"`);
       expect(cardHtml).toContain(`title="${editLabel}"`);
       expect(cardHtml).toContain(`aria-label="${deleteLabel}"`);
       expect(cardHtml).toContain(`title="${deleteLabel}"`);
       expect(cardHtml).not.toContain("absolute");
+      expect(cardHtml).not.toMatch(/\b(?:break-all|truncate|line-clamp-)\b/);
       expect(cardHtml).not.toMatch(/\b(?:-right|-left|-top|-bottom|translate-x|translate-y|left-full|right-full)\b/);
     }
   });
