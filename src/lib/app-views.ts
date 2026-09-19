@@ -1,34 +1,28 @@
 import { Prisma, type AppView, type AppViewType } from "@prisma/client";
 import { z } from "zod";
 
+import {
+  appViewTypeOptions,
+} from "./app-view-editor-options";
 import { getAuthorizedContractAdmin } from "./contracts";
 import { dateOnlyToUtcDate } from "./date-only";
 import { isEntityIconKey } from "./entity-icons";
 import { getRelationConfig } from "./field-validation";
-import { slugify } from "./format";
 import { prisma } from "./prisma";
 import {
   getWorkflowLabel,
   workflowKeys,
-  workflowOptions,
 } from "./workflow-catalog";
+
+export {
+  appViewTypeOptions,
+  appViewWorkflowOptions,
+  suggestedAppViewSlug,
+} from "./app-view-editor-options";
 
 const slugRegex = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const appViewTypeValues = ["RECORDS", "WORKFLOW", "REPORT", "BOARD", "DASHBOARD", "PANEL"] as const;
 type PrismaClientLike = typeof prisma | Prisma.TransactionClient;
-
-export const appViewTypeOptions = [
-  { label: "Registros", value: "RECORDS" },
-  { label: "Flujo", value: "WORKFLOW" },
-  { label: "Reporte", value: "REPORT" },
-  { label: "Tablero", value: "BOARD" },
-  { label: "Dashboard", value: "DASHBOARD" },
-  { label: "Panel", value: "PANEL" },
-] as const satisfies Array<{ label: string; value: AppViewType }>;
-
-export const appViewWorkflowOptions = [
-  ...workflowOptions,
-] as const;
 
 export const appViewCommonSchema = z.object({
   name: z.string().trim().min(2, "El nombre debe tener al menos 2 caracteres."),
@@ -2776,8 +2770,4 @@ class AppViewConfigError extends Error {
     this.name = "AppViewConfigError";
     this.fieldName = fieldName;
   }
-}
-
-export function suggestedAppViewSlug(name: string) {
-  return slugify(name);
 }
