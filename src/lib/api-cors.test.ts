@@ -118,10 +118,10 @@ describe("API CORS helpers", () => {
 });
 
 describe("API CORS proxy integration", () => {
-  it("returns 204 for authorized /api/v1 OPTIONS preflight", () => {
+  it("returns 204 for authorized /api/v1 OPTIONS preflight", async () => {
     process.env.API_ALLOWED_ORIGINS = `${allowedOrigin},${secondAllowedOrigin}`;
 
-    const response = proxy(nextRequest({
+    const response = await proxy(nextRequest({
       method: "OPTIONS",
       origin: secondAllowedOrigin,
     }));
@@ -133,10 +133,10 @@ describe("API CORS proxy integration", () => {
     expect(response.headers.get("Vary")).toBe("Origin");
   });
 
-  it("does not return ACAO for unauthorized preflight origins", () => {
+  it("does not return ACAO for unauthorized preflight origins", async () => {
     process.env.API_ALLOWED_ORIGINS = allowedOrigin;
 
-    const response = proxy(nextRequest({
+    const response = await proxy(nextRequest({
       method: "OPTIONS",
       origin: deniedOrigin,
     }));
@@ -146,11 +146,11 @@ describe("API CORS proxy integration", () => {
     expect(response.headers.get("Vary")).toBe("Origin");
   });
 
-  it("adds CORS headers to normal GET and POST API requests", () => {
+  it("adds CORS headers to normal GET and POST API requests", async () => {
     process.env.API_ALLOWED_ORIGINS = allowedOrigin;
 
-    const getResponse = proxy(nextRequest({ method: "GET" }));
-    const postResponse = proxy(nextRequest({
+    const getResponse = await proxy(nextRequest({ method: "GET" }));
+    const postResponse = await proxy(nextRequest({
       method: "POST",
       url: "http://localhost/api/v1/auth/login",
     }));
@@ -161,10 +161,10 @@ describe("API CORS proxy integration", () => {
     expect(postResponse.headers.get("Vary")).toBe("Origin");
   });
 
-  it("does not add ACAO to normal API requests from unauthorized origins", () => {
+  it("does not add ACAO to normal API requests from unauthorized origins", async () => {
     process.env.API_ALLOWED_ORIGINS = allowedOrigin;
 
-    const response = proxy(nextRequest({ origin: deniedOrigin }));
+    const response = await proxy(nextRequest({ origin: deniedOrigin }));
 
     expect(response.headers.get("Access-Control-Allow-Origin")).toBeNull();
     expect(response.headers.get("Vary")).toBe("Origin");

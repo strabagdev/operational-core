@@ -142,6 +142,9 @@ Criterios:
 - No se ejecuta logout ni limpieza de cookies por fallas de infraestructura.
 - Usuarios inactivos o credenciales invalidas siguen invalidando acceso de forma normal cuando la DB responde.
 - La API externa tambien separa refresh-token invalido de `DB_UNAVAILABLE`.
+- La recuperacion de una cookie Auth.js vencida, corrupta o emitida con otro secreto ocurre antes
+  de los Server Components: expira solo cookies de sesion propias y conserva el callback relativo.
+  Errores inesperados y fallas de base no se clasifican como una sesion invalida.
 
 ## Hardening 1C
 
