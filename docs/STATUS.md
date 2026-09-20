@@ -1,28 +1,33 @@
 # Current Status
 
-## Selective Stabilization Candidate
+## Stabilization Closed
 
-This local release candidate is based on `origin/main` and contains only the reviewed functional
-changes selected from `local/opco-stabilization-2026-09-19`:
+Selective stabilization was published to production at
+`62e349089ff5faadc39fef74282b4b60387800a6`. It includes the AppView editor client/server boundary
+and narrow invalid-session recovery. Production health and database readiness returned `200`, and
+the deployed session-recovery behavior was identified through its public invalid-cookie response.
 
-- AppView editor client/server import separation from `6d1bec3`/`dcc2fb9`, plus only the
-  `server-only` Prisma boundary and test alias extracted from environment commit `b4f4e66`.
-- Narrow invalid web-session recovery from `da58cea`/`321ad61`: valid sessions remain valid,
-  expected JWT/JWE expiry or decryption failures clear project-owned session cookies, and
-  unexpected decode errors continue to propagate.
+The user completed the remaining production read/navigation checks:
 
-The candidate excludes ENV-024 database guards, local destinations, PostgreSQL scripts, seeds,
-credentials, development configuration, data, and production configuration. The editor imports
-browser-safe static options; Prisma and private database environment access remain server-only.
+- An existing Core AppView editor opens correctly.
+- A Client RECORDS experience loads and supports search.
+- Client Attendance shows the list and counter for the selected date.
 
-The editor and AUTH repairs have no functional dependency on each other. Their shared STATUS file
-was consolidated from review documentation `8d6ee62` and `69a4f66`.
+This closes the stabilization incident. The local environment remains separated on its preserved
+local branches and private configuration. ENV-024, local destinations, PostgreSQL development
+scripts, seeds, credentials, and development-only guards were not published.
 
-Integrated validation passed: complete suite (108 files passed, 1 skipped; 1,063 tests passed,
-8 skipped), TypeScript, lint, `git diff --check`, and the habitual Turbopack production build. The
-build ran in a same-filesystem detached validation worktree with ephemeral synthetic `AUTH_SECRET`
-and non-operational `DATABASE_URL` process values; no environment file was written and no database
-connection was required. The user's existing browser confirmation belongs to the complete local
-stabilization branch and was not repeated here.
+The lack of an automated browser OPFS/WASM concurrency test remains a Client coverage limitation;
+it is not evidence of an open production incident. Existing unit/integration checks and the user's
+production confirmation remain distinct forms of evidence.
 
-Publication is not authorized. Do not push, merge, or deploy this branch without explicit approval.
+## Unrelated Pending Work
+
+- Add day-based contract activity navigation only when that product scope is approved.
+- Finish migrating remaining Web screens that predate the shared visual language.
+- Confirm historical retained RECORDS errors on the affected user's device.
+- Complete authenticated visual validation for protected Web listings/details beyond the editor
+  confirmed during this stabilization.
+
+Operational staging, backup, restore, and deployment hardening remain tracked in
+[`OPERATIONS.md`](OPERATIONS.md) and are not started by this closure.
