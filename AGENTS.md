@@ -10,6 +10,12 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 # Project
 
+- Read `docs/STATUS.md` first for the current handoff and `docs/DEVELOPMENT.md` before changing or
+  operating the isolated WSL/Linux development environment.
+- `dev/local-environment` contains local-only tooling and configuration. Review changes selectively
+  against `main`; do not merge or deploy the branch as an application release.
+- Documentation never replaces verification of the current code and Git diff.
+
 - Nombre: Opco / operational-core.
 - Stack: Next.js, TypeScript, Prisma, PostgreSQL.
 - Organizations y Contracts viven centralmente en Opco.

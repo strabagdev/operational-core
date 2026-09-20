@@ -31,3 +31,10 @@ production confirmation remain distinct forms of evidence.
 
 Operational staging, backup, restore, and deployment hardening remain tracked in
 [`OPERATIONS.md`](OPERATIONS.md) and are not started by this closure.
+
+## Local Development Branch
+
+`dev/local-environment` is based on this published `main` and carries only the isolated WSL/Linux
+development database, synthetic seed, exact-target guards, examples, and operating documentation.
+ENV-024 remains excluded from production. Follow [`DEVELOPMENT.md`](DEVELOPMENT.md); never merge or
+deploy this branch wholesale, and select any future functional publication independently.

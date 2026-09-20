@@ -40,10 +40,14 @@ The MVP is closed for controlled real use. It includes:
 
 ## Local Development
 
-Configure environment variables from `.env.example`, then run:
+Local development is isolated from production. Follow [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)
+to install and initialize PostgreSQL, create private `.env.local` values, prepare the synthetic
+database, and start Core plus Client. The supported procedure currently requires WSL/Linux.
+
+After the environment is prepared, routine Core startup is:
 
 ```bash
-npm install
+npm run db:local:start
 npm run dev
 ```
 
@@ -56,4 +60,4 @@ npm run lint
 npm run build
 ```
 
-See `docs/ARCHITECTURE.md` and `docs/DEVELOPMENT.md` for the current architecture, environment variables, Prisma workflow, and manual verification checklist.
+See `docs/STATUS.md` for the current handoff and `docs/ARCHITECTURE.md` for the application architecture.

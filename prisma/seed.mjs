@@ -1,10 +1,19 @@
 import bcrypt from "bcrypt";
 import { PrismaClient } from "@prisma/client";
 
+import { assertLocalDevelopmentDatabaseEnvironment } from "../scripts/local-development-target.mjs";
+
+assertLocalDevelopmentDatabaseEnvironment(process.env);
+
+const seedPassword = process.env.OPCO_DEV_SEED_PASSWORD;
+if (!seedPassword || seedPassword.length < 12) {
+  throw new Error("OPCO_DEV_SEED_PASSWORD must contain at least 12 characters.");
+}
+
 const prisma = new PrismaClient();
 
 async function main() {
-  const passwordHash = await bcrypt.hash("admin123456", 12);
+  const passwordHash = await bcrypt.hash(seedPassword, 12);
 
   const admin = await prisma.user.upsert({
     where: { email: "admin@operational-core.local" },
@@ -27,6 +36,23 @@ async function main() {
     create: {
       name: "Demo Organization",
       slug: "demo",
+    },
+  });
+
+  await prisma.externalApp.upsert({
+    where: { clientId: "opco_local_client" },
+    update: {
+      active: true,
+      name: "Opco Client local",
+      organizationId: organization.id,
+      slug: "opco-client-local",
+    },
+    create: {
+      active: true,
+      clientId: "opco_local_client",
+      name: "Opco Client local",
+      organizationId: organization.id,
+      slug: "opco-client-local",
     },
   });
 
@@ -174,7 +200,7 @@ async function main() {
     sortOrder: 2,
   });
 
-  await upsertEntityField(equipos.id, {
+  const equipoCodigo = await upsertEntityField(equipos.id, {
     name: "Código",
     key: "codigo",
     type: "TEXT",
@@ -183,7 +209,7 @@ async function main() {
     searchable: true,
     sortOrder: 1,
   });
-  await upsertEntityField(equipos.id, {
+  const equipoTipo = await upsertEntityField(equipos.id, {
     name: "Tipo",
     key: "tipo",
     type: "TEXT",
@@ -231,6 +257,84 @@ async function main() {
   await upsertOption(equipoEstado.id, {
     label: "Fuera de servicio",
     value: "fuera_de_servicio",
+    sortOrder: 2,
+  });
+
+  const seguimientos = await upsertEntityType(contract.id, {
+    name: "Seguimientos",
+    slug: "seguimientos",
+    description: "Actualizaciones sintéticas de estado de equipos.",
+    icon: "activity",
+  });
+  const seguimientoEquipo = await upsertEntityField(seguimientos.id, {
+    name: "Equipo",
+    key: "equipo",
+    type: "RELATION",
+    required: true,
+    sortOrder: 1,
+    config: { targetEntityTypeId: equipos.id, relationKind: "ONE" },
+  });
+  const seguimientoEstado = await upsertEntityField(seguimientos.id, {
+    name: "Estado",
+    key: "estado",
+    type: "SELECT",
+    required: true,
+    sortOrder: 2,
+  });
+  const seguimientoOperativo = await upsertOption(seguimientoEstado.id, {
+    label: "Operativo",
+    value: "operativo",
+    sortOrder: 1,
+  });
+  await upsertOption(seguimientoEstado.id, {
+    label: "Revisión requerida",
+    value: "revision_requerida",
+    sortOrder: 2,
+  });
+  const seguimientoFecha = await upsertEntityField(seguimientos.id, {
+    name: "Fecha",
+    key: "fecha",
+    type: "DATE",
+    required: true,
+    sortOrder: 3,
+  });
+
+  const asistencias = await upsertEntityType(contract.id, {
+    name: "Asistencias",
+    slug: "asistencias",
+    description: "Asistencia sintética para desarrollo local.",
+    icon: "calendar-check",
+  });
+  const asistenciaPersona = await upsertEntityField(asistencias.id, {
+    name: "Persona",
+    key: "persona",
+    type: "RELATION",
+    required: true,
+    sortOrder: 1,
+    config: { targetEntityTypeId: personas.id, relationKind: "ONE" },
+  });
+  const asistenciaFecha = await upsertEntityField(asistencias.id, {
+    name: "Fecha",
+    key: "fecha",
+    type: "DATE",
+    required: true,
+    sortOrder: 2,
+  });
+  const asistenciaEstado = await upsertEntityField(asistencias.id, {
+    name: "Estado",
+    key: "estado",
+    type: "SELECT",
+    required: true,
+    sortOrder: 3,
+  });
+  const asistenciaPresente = await upsertOption(asistenciaEstado.id, {
+    label: "Presente",
+    value: "presente",
+    sortOrder: 1,
+  });
+  await upsertOption(asistenciaEstado.id, {
+    label: "Ausente",
+    value: "ausente",
     sortOrder: 2,
   });
 
@@ -313,6 +417,130 @@ async function main() {
         newValue: relationAuditValue(equipoDemo, equipos),
       },
     ],
+  });
+
+  const appViews = [
+    await upsertAppView(contract.id, {
+      name: "Equipos",
+      slug: "equipos",
+      type: "RECORDS",
+      sortOrder: 10,
+      config: { entityTypeId: equipos.id },
+    }),
+    await upsertAppView(contract.id, {
+      name: "Resumen de equipos",
+      slug: "resumen-equipos",
+      type: "PANEL",
+      sortOrder: 20,
+      config: {
+        schemaVersion: 1,
+        layout: { columns: 12, rowHeight: 8, distribution: "MANUAL" },
+        filters: [],
+        datasets: [{
+          id: "equipos",
+          name: "Equipos locales",
+          source: { type: "ENTITY", entityTypeId: equipos.id },
+          transformation: {
+            type: "RECORDS",
+            fieldIds: [equipoCodigo.id, equipoTipo.id, equipoEstado.id],
+            pagination: { pageSize: 25 },
+          },
+        }],
+        metrics: [{
+          id: "total_equipos",
+          name: "Total equipos",
+          datasetId: "equipos",
+          aggregation: "COUNT",
+          filterIds: [],
+        }],
+        calculatedFields: [],
+        modules: [
+          {
+            id: "total_equipos",
+            title: "Total equipos",
+            datasetId: "equipos",
+            visualization: {
+              type: "KPI",
+              config: { metricId: "total_equipos", label: "Total equipos", format: "INTEGER" },
+            },
+            layout: { x: 0, y: 0, w: 3, h: 2 },
+          },
+          {
+            id: "tabla_equipos",
+            title: "Equipos",
+            datasetId: "equipos",
+            visualization: {
+              type: "TABLE",
+              config: {
+                columns: [
+                  { fieldId: equipoCodigo.id, label: "Código" },
+                  { fieldId: equipoTipo.id, label: "Tipo" },
+                  { fieldId: equipoEstado.id, label: "Estado", valueDisplay: "LABEL" },
+                ],
+                searchable: true,
+                paginated: true,
+              },
+            },
+            layout: { x: 0, y: 2, w: 12, h: 6 },
+          },
+        ],
+      },
+    }),
+    await upsertAppView(contract.id, {
+      name: "Estado de equipos",
+      slug: "estado-equipos",
+      type: "WORKFLOW",
+      sortOrder: 30,
+      config: {
+        workflowKey: "state-update",
+        sourceEntityTypeId: equipos.id,
+        targetEntityTypeId: seguimientos.id,
+        subjectFieldId: seguimientoEquipo.id,
+        stateFields: [{ fieldId: seguimientoEstado.id, required: true, defaultOptionId: seguimientoOperativo.id }],
+        extraFieldIds: [],
+        dateFieldId: seguimientoFecha.id,
+        uniqueness: { mode: "subject-date" },
+        historyMode: "update-current",
+      },
+    }),
+    await upsertAppView(contract.id, {
+      name: "Asistencia",
+      slug: "asistencia",
+      type: "WORKFLOW",
+      sortOrder: 40,
+      config: {
+        workflowKey: "attendance",
+        sourceEntityTypeId: personas.id,
+        targetEntityTypeId: asistencias.id,
+        personFieldId: asistenciaPersona.id,
+        dateFieldId: asistenciaFecha.id,
+        statusFieldId: asistenciaEstado.id,
+        defaultCheckInOptionId: asistenciaPresente.id,
+        contextFieldIds: [],
+      },
+    }),
+  ];
+
+  for (const appView of appViews) {
+    await prisma.userAppViewAccess.upsert({
+      where: {
+        userId_contractId_appViewId: {
+          userId: admin.id,
+          contractId: contract.id,
+          appViewId: appView.id,
+        },
+      },
+      update: {},
+      create: { userId: admin.id, contractId: contract.id, appViewId: appView.id },
+    });
+  }
+}
+
+async function upsertAppView(contractId, data) {
+  return prisma.appView.upsert({
+    where: { contractId_slug: { contractId, slug: data.slug } },
+    update: { active: true, config: data.config, name: data.name, sortOrder: data.sortOrder, type: data.type },
+    create: { active: true, contractId, config: data.config, name: data.name, slug: data.slug, sortOrder: data.sortOrder, type: data.type },
   });
 }
 
