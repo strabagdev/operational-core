@@ -38,3 +38,8 @@ Operational staging, backup, restore, and deployment hardening remain tracked in
 development database, synthetic seed, exact-target guards, examples, and operating documentation.
 ENV-024 remains excluded from production. Follow [`DEVELOPMENT.md`](DEVELOPMENT.md); never merge or
 deploy this branch wholesale, and select any future functional publication independently.
+
+Remote backup of this branch is authorized only as `origin/dev/local-environment`. The user
+confirmed Core Railway production is connected to `main`, Client Railway has the same branch
+configuration, and no other deployment integrations exist. Do not change Railway configuration,
+open a PR, merge, deploy, or publish any other ref as part of this backup.
