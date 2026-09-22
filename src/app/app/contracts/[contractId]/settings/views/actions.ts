@@ -29,6 +29,7 @@ function viewPath(contractId: string, appViewId: string) {
 }
 
 export type AppViewActionState = {
+  saveRequestId?: string;
   fieldErrors?: Record<string, string[]>;
   message?: string;
   success: boolean;
@@ -80,13 +81,14 @@ export async function updateAppViewAction(
     return {
       success: false,
       message: "No se encontró la vista.",
+      ...(formData.get("saveRequestId") ? { saveRequestId: String(formData.get("saveRequestId")) } : {}),
       values: preserveAppViewValues(formData),
     };
   }
 
   revalidatePath(viewsPath(contractId));
   revalidatePath(viewPath(contractId, appViewId));
-  redirect(withActionMessage(viewPath(contractId, appViewId), "notice", "Vista guardada."));
+  return { success: true, message: "Experiencia guardada", saveRequestId: String(formData.get("saveRequestId") ?? "") };
 }
 
 export async function toggleAppViewAction(
@@ -113,6 +115,7 @@ function appViewErrorState(
 
   return {
     success: false,
+    ...(formData.get("saveRequestId") ? { saveRequestId: String(formData.get("saveRequestId")) } : {}),
     message: message === "No fue posible guardar la vista." ? fallbackMessage : message,
     fieldErrors: appViewFieldErrors(error),
     values: preserveAppViewValues(formData),

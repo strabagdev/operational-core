@@ -151,6 +151,18 @@ describe("AppView settings actions", () => {
     expect(revalidatePathMock).toHaveBeenCalledWith("/app/contracts/contract_1/settings/views");
     expect(redirectMock).toHaveBeenCalledWith("/app/contracts/contract_1/settings/views/view_1");
   });
+
+  it("confirms an edit only after persistence without redirecting", async () => {
+    updateAppViewMock.mockResolvedValue({ id: "view_1" } as never);
+    const form = appViewFormData({ name: "Último valor", saveRequestId: "request-1" });
+
+    await expect(updateAppViewAction("contract_1", "view_1", initialState(), form)).resolves.toEqual({
+      success: true, message: "Experiencia guardada", saveRequestId: "request-1",
+    });
+    expect(updateAppViewMock).toHaveBeenCalledOnce();
+    expect(updateAppViewMock.mock.calls[0][3]).toMatchObject({ common: { name: "Último valor" } });
+    expect(redirectMock).not.toHaveBeenCalled();
+  });
 });
 
 function initialState(): AppViewActionState {

@@ -2495,6 +2495,30 @@ describe("PANEL AppView config", () => {
     ).rejects.toThrow("El KPI debe usar una métrica del mismo dataset.");
   });
 
+  it("validates both composite KPI references and numeric result types", async () => {
+    entityTypeFindFirst.mockResolvedValue(panelEntityType() as never);
+    const metrics = [
+      { id: "a", name: "A", datasetId: "version-records", aggregation: "COUNT", filterIds: [] },
+      { id: "date", name: "Fecha", datasetId: "version-records", aggregation: "MAX", fieldId: "date_field", filterIds: [] },
+    ];
+    const combined = (metricBId: string) => recordsPanelConfig({ metrics, modules: [{
+      id: "combined", datasetId: "version-records", visualization: { type: "KPI", config: {
+        composition: { metricAId: "a", metricBId, operation: "DIVIDE" }, label: "Resultado", format: "NUMBER",
+      } }, layout: { x: 0, y: 0, w: 4, h: 2 },
+    }] });
+
+    await expect(createAppView("contract_1", "user_1", panelInput(combined("missing"))))
+      .rejects.toThrow("El KPI combinado referencia una métrica inexistente.");
+    await expect(createAppView("contract_1", "user_1", panelInput(combined("date"))))
+      .rejects.toThrow("Combina solo métricas con resultado numérico.");
+    expect(() => parseAppViewConfig({ config: recordsPanelConfig({ modules: [{
+      id: "invalid", datasetId: "version-records", visualization: { type: "KPI", config: {
+        metricId: "a", composition: { metricAId: "a", metricBId: "date", operation: "ADD" },
+        label: "Doble", format: "NUMBER",
+      } }, layout: { x: 0, y: 0, w: 4, h: 2 },
+    }] }), type: "PANEL" } as never)).toThrow();
+  });
+
   it("rejects duplicate dataset fields and module columns", () => {
     expect(() => parseAppViewConfig({
       config: {
@@ -2637,6 +2661,19 @@ describe("PANEL AppView config", () => {
         ],
       }))),
     ).rejects.toThrow("Selecciona un campo activo válido para campos del dataset.");
+  });
+
+  it("rejects cross-dataset option bindings with different internal values", async () => {
+    entityTypeFindFirst.mockResolvedValue(panelEntityType({ fields: [...panelFields(), {
+      config: null, id: "other_status", isActive: true, key: "otro", multiple: false, name: "Otro",
+      options: [{ id: "other_ok", isActive: true, label: "Vigente", value: "distinto" }], type: "SELECT",
+    }] }) as never);
+    const base = recordsPanelConfig();
+    await expect(createAppView("contract_1", "user_1", panelInput(recordsPanelConfig({
+      datasets: [base.datasets[0], { ...base.datasets[0], id: "other", filters: [
+        { type: "PANEL_FILTER", filterId: "status", fieldId: "other_status", operator: "EQ" },
+      ] }],
+    })))).rejects.toThrow("no comparten opciones o entidad relacionada");
   });
 
   it("accepts PANEL metrics without conditions for compatibility", () => {

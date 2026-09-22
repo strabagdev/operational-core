@@ -4,6 +4,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   AppViewForm,
+  applicablePanelMetricFilters,
+  affectedPanelModules,
+  buildPanelConfig,
   clonePanelEditorValue,
   cleanPanelDatasetForEntity,
   cleanPanelFiltersForEntity,
@@ -14,6 +17,7 @@ import {
   distributePanelModules,
   incompatiblePanelColumns,
   packPanelModules,
+  panelEditorFilters,
   panelModuleLayoutOverlaps,
   removePanelDatasetAt,
   removePanelFilterAt,
@@ -206,6 +210,8 @@ describe("AppViewForm", () => {
     expect(html).toContain("Tabla de asistencia");
     expect(html).toContain("DD-MM-YYYY");
     expect(html).toContain('name="panelConfig"');
+    expect(html.match(/Guardar experiencia/g)).toHaveLength(1);
+    expect(html).toContain('name="saveRequestId"');
     expect(html).not.toContain("<textarea");
   });
 
@@ -1766,6 +1772,63 @@ describe("AppViewForm", () => {
     ]);
   });
 
+  it("round-trips distinct PANEL filter bindings without copying them to unrelated datasets", () => {
+    const first = panelConfigFixture().datasets[0];
+    const second = { ...first, id: "other", name: "Otro", filters: [{ type: "PANEL_FILTER" as const,
+      filterId: "status", fieldId: "status_field", operator: "EQ" as const }] };
+    const config = panelConfigFixture({
+      filters: [{ id: "status", label: "Estado", valueType: "OPTION", required: true }],
+      datasets: [{ ...first, filters: [{ type: "PANEL_FILTER", filterId: "status", fieldId: "status_field", operator: "EQ" }] }, second],
+    });
+    const filters = panelEditorFilters(config);
+    expect(filters[0].bindings?.map((binding) => binding.datasetId)).toEqual([first.id, second.id]);
+    const saved = buildPanelConfig({ baseConfig: config, columns: 12, distribution: "MANUAL", rowHeight: 8,
+      datasets: config.datasets, filters: [{ ...filters[0], bindings: filters[0].bindings?.filter((binding) => binding.datasetId === second.id) }],
+      metrics: config.metrics, modules: config.modules });
+    expect(saved.filters[0]).toEqual(config.filters[0]);
+    expect(saved.datasets[0].filters).toEqual([]);
+    expect(saved.datasets[1].filters).toEqual(second.filters);
+  });
+
+  it("offers a newly bound optional filter to its dataset metric before saving the panel", () => {
+    const first = panelConfigFixture().datasets[0];
+    const second = { ...first, id: "other", name: "Otro" };
+    const datasets = [first, second];
+    const filters = [{ id: "area", label: "Area", valueType: "OPTION" as const, required: false,
+      bindings: [{ datasetId: first.id, fieldId: "status_field", operator: "EQ" as const }] }];
+    const metric = { id: "total", name: "Total", datasetId: first.id, aggregation: "COUNT" as const,
+      fieldId: null, filterIds: [] as string[], conditions: [] };
+
+    expect(first.filters).toBeUndefined();
+    expect(applicablePanelMetricFilters(metric.datasetId, filters).map((filter) => filter.id)).toEqual(["area"]);
+    expect(applicablePanelMetricFilters(second.id, filters)).toEqual([]);
+    expect(metric.filterIds).toEqual([]);
+
+    const selectedMetric = { ...metric, filterIds: [filters[0].id] };
+    const saved = buildPanelConfig({ columns: 12, distribution: "MANUAL", rowHeight: 8,
+      datasets, filters, metrics: [selectedMetric], modules: [] });
+    expect(saved.metrics[0].filterIds).toEqual(["area"]);
+    expect(saved.datasets[0].filters).toEqual([{ type: "PANEL_FILTER", filterId: "area",
+      fieldId: "status_field", operator: "EQ" }]);
+    expect(saved.datasets[1].filters).toEqual([]);
+  });
+
+  it("lists only tables and metrics actually affected by an optional filter", () => {
+    const config = panelConfigFixture();
+    const binding = { datasetId: config.datasets[0].id, fieldId: "status_field", operator: "EQ" as const };
+    const metrics = [
+      { id: "selected", name: "Seleccionada", datasetId: binding.datasetId, aggregation: "COUNT" as const, filterIds: ["status"] },
+      { id: "independent", name: "Independiente", datasetId: binding.datasetId, aggregation: "COUNT" as const, filterIds: [] },
+    ];
+    const modules = [config.modules[0], ...metrics.map((metric, index) => ({ id: metric.id, datasetId: binding.datasetId,
+      visualization: { type: "KPI" as const, config: { metricId: metric.id, label: metric.name, format: "NUMBER" as const } },
+      layout: { x: index * 2, y: 6, w: 2, h: 2 } }))];
+    expect(affectedPanelModules({ id: "status", valueType: "OPTION" }, [binding], metrics, modules).map((module) => module.id))
+      .toEqual([config.modules[0].id, "selected"]);
+    expect(affectedPanelModules({ id: "status", valueType: "OPTION", required: true }, [binding], metrics, modules).map((module) => module.id))
+      .toEqual([config.modules[0].id, "selected", "independent"]);
+  });
+
   it("places PANEL validation errors in the affected navigation section and element", () => {
     const html = renderToStaticMarkup(
       <AppViewForm
@@ -1870,6 +1933,14 @@ describe("AppViewForm", () => {
     expect(appViewFormSource).toContain("Este formato solo cambia la presentación del resultado.");
     expect(appViewFormSource).toContain('if (config.format === "INTEGER")');
     expect(appViewFormSource).toContain('if (config.format === "DECIMAL")');
+  });
+
+  it("keeps composite operands while changing presentation format", () => {
+    const composition = { metricAId: "a", metricBId: "b", operation: "DIVIDE" as const };
+    expect(cleanPanelKpiConfigForFormat({ composition, label: "Razón", format: "NUMBER" }, "PERCENT"))
+      .toEqual({ composition, label: "Razón", format: "PERCENT", percentScale: "RATIO" });
+    expect(appViewFormSource).toContain("Combinar métricas");
+    expect(appViewFormSource).toContain("A ÷ B");
   });
 });
 

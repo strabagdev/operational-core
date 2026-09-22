@@ -37,7 +37,7 @@ export default async function AppViewDetailPage({
     notFound();
   }
 
-  const { error, notice } = await searchParams;
+  const { error } = await searchParams;
 
   const isPanel = data.appView.type === "PANEL";
   const parsedAppViews = data.appViews.flatMap((appView) => {
@@ -99,7 +99,7 @@ export default async function AppViewDetailPage({
         </Button>
       </header>
 
-      <ActionMessage error={error} notice={notice} />
+      <ActionMessage error={error} />
 
       {invalidDiagnostic ? (
         <Card>

@@ -148,6 +148,43 @@ export async function getApiPanel({
   }
 
   const calculatedAt = new Date().toISOString();
+  const executionsByDatasetId = new Map([[dataset.id, executedDataset.execution]]);
+  const unavailableDatasets = new Map<string, string>();
+  const compositeModules = config.modules.filter((module) =>
+    module.datasetId === dataset.id && module.visualization.type === "KPI" && Boolean(module.visualization.config.composition));
+  const operandDatasetIds = new Set(compositeModules.flatMap((module) => {
+    if (module.visualization.type !== "KPI" || !module.visualization.config.composition) return [];
+    return [module.visualization.config.composition.metricBId];
+  }).map((metricId) => config.metrics.find((metric) => metric.id === metricId)?.datasetId).filter((id): id is string => Boolean(id)));
+
+  for (const operandDatasetId of operandDatasetIds) {
+    if (executionsByDatasetId.has(operandDatasetId)) continue;
+    const operandDataset = config.datasets.find((item) => item.id === operandDatasetId);
+    if (!operandDataset) {
+      unavailableDatasets.set(operandDatasetId, "La métrica B no tiene un dataset disponible.");
+      continue;
+    }
+    const missingFilter = missingRequiredPanelFilter(config, operandDataset, panelFilterValues.values);
+    if (missingFilter) {
+      unavailableDatasets.set(operandDatasetId, `Selecciona ${missingFilter.label || missingFilter.id} para calcular la métrica B.`);
+      continue;
+    }
+    try {
+      const operandExecution = await executePanelDataset({
+        config, contractId, dataset: operandDataset, panelFilterValues: panelFilterValues.values,
+        query: { ...query, datasetId: operandDatasetId, page: "1", pageSize: "1" },
+      });
+      if (operandExecution.ok) executionsByDatasetId.set(operandDatasetId, operandExecution.execution);
+      else unavailableDatasets.set(operandDatasetId, "No se pudo cargar la métrica B con esta selección.");
+    } catch {
+      unavailableDatasets.set(operandDatasetId, "No se pudo cargar la métrica B con esta selección.");
+    }
+  }
+  const metrics = calculatePanelMetrics({ calculatedAt, config, executionsByDatasetId, panelFilterValues: panelFilterValues.values });
+  const operandMetricIds = new Set(compositeModules.flatMap((module) =>
+    module.visualization.type === "KPI" && module.visualization.config.composition
+      ? [module.visualization.config.composition.metricBId]
+      : []));
 
   return {
     ok: true as const,
@@ -162,15 +199,42 @@ export async function getApiPanel({
       calculatedAt,
       filters: config.filters,
       datasets: [executedDataset.data],
-      metrics: calculatePanelMetrics({
-        calculatedAt,
-        config,
-        executionsByDatasetId: new Map([[dataset.id, executedDataset.execution]]),
-        panelFilterValues: panelFilterValues.values,
-      }),
+      metrics: metrics.filter((metric) => metric.datasetId === dataset.id || operandMetricIds.has(metric.id)),
+      moduleResults: compositeModules.map((module) => {
+        if (module.visualization.type !== "KPI" || !module.visualization.config.composition) return null;
+        const { metricAId, metricBId, operation } = module.visualization.config.composition;
+        const metricB = config.metrics.find((metric) => metric.id === metricBId);
+        const result = metricB && unavailableDatasets.has(metricB.datasetId)
+          ? { value: null, reason: unavailableDatasets.get(metricB.datasetId)! }
+          : composePanelMetricValues(metrics.find((metric) => metric.id === metricAId)?.value,
+              metrics.find((metric) => metric.id === metricBId)?.value, operation);
+        return { moduleId: module.id, ...result };
+      }).filter((result) => result !== null),
       modules: config.modules,
     },
   };
+}
+
+export function composePanelMetricValues(
+  a: number | string | null | undefined,
+  b: number | string | null | undefined,
+  operation: "ADD" | "SUBTRACT" | "MULTIPLY" | "DIVIDE",
+) {
+  const left = typeof a === "number" ? a : null;
+  const right = typeof b === "number" ? b : null;
+  if (left === null || right === null || !Number.isFinite(left) || !Number.isFinite(right)) {
+    return { value: null, reason: "Una métrica no tiene un valor numérico disponible." };
+  }
+  if (operation === "DIVIDE" && right === 0) {
+    return { value: null, reason: "No se puede dividir por cero." };
+  }
+  const value = operation === "ADD" ? left + right
+    : operation === "SUBTRACT" ? left - right
+    : operation === "MULTIPLY" ? left * right
+    : left / right;
+  return Number.isFinite(value)
+    ? { value, reason: null }
+    : { value: null, reason: "El resultado no es un número finito." };
 }
 
 export function panelConfigRevision(config: PanelConfig) {
@@ -219,6 +283,10 @@ async function executePanelDataset({
   panelFilterValues: Record<string, unknown>;
   query: PanelQuery;
 }) {
+  const missingFilter = missingRequiredPanelFilter(config, dataset, panelFilterValues);
+  if (missingFilter) {
+    return { ok: false as const, response: badRequest(`Selecciona ${missingFilter.label || missingFilter.id}.`, "PANEL_FILTER_REQUIRED") };
+  }
   const entity = await prisma.entityType.findFirst({
     include: {
       fields: {
@@ -324,6 +392,12 @@ async function executePanelDataset({
       records: records as PanelRecord[],
     },
   };
+}
+
+function missingRequiredPanelFilter(config: PanelConfig, dataset: DatasetDefinition, values: Record<string, unknown>) {
+  return config.filters.find((filter) => filter.required &&
+    dataset.filters?.some((binding) => binding.type === "PANEL_FILTER" && binding.filterId === filter.id) &&
+    !panelFilterHasValue(values[filter.id]));
 }
 
 function panelDatasetFieldIds(dataset: DatasetDefinition) {
@@ -603,6 +677,9 @@ function panelRecordComparableValues(record: PanelRecord, field: PanelField) {
   const value = record.values.find((item) => item.entityFieldId === field.id);
 
   if (!value) return [];
+  if (field.type === "MULTISELECT" && Array.isArray(value.jsonValue)) {
+    return value.jsonValue.filter((item): item is string => typeof item === "string");
+  }
   if (value.integerValue !== null && value.integerValue !== undefined) return [String(value.integerValue)];
   if (value.decimalValue !== null && value.decimalValue !== undefined) return [value.decimalValue.toString()];
   if (value.booleanValue !== null && value.booleanValue !== undefined) return [String(value.booleanValue)];
@@ -687,13 +764,20 @@ function panelStoredFilterValue(field: PanelField, value: unknown) {
   if (field.type === "INTEGER" && typeof value === "number") return value;
   if ((field.type === "DECIMAL" || field.type === "MONEY") && typeof value === "number") return value;
   if (field.type === "BOOLEAN" && typeof value === "boolean") return value;
-  if ((field.type === "DATE" || field.type === "DATETIME") && typeof value === "string") return dateOnlyToUtcDate(value);
+  if (field.type === "DATE" && typeof value === "string") return dateOnlyToUtcDate(value) ?? undefined;
+  if (field.type === "DATETIME" && typeof value === "string") {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? undefined : date;
+  }
   if (typeof value === "string") return value;
 
   return undefined;
 }
 
 function panelStoredValueWhere(field: PanelField, value: unknown) {
+  if (field.type === "MULTISELECT") {
+    return { jsonValue: { array_contains: [value as string] } };
+  }
   if (field.type === "INTEGER") {
     return { integerValue: value as number };
   }

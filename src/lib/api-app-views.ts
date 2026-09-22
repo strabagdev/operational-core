@@ -2,11 +2,13 @@ import type { AppView, AppViewType } from "@prisma/client";
 
 import { getEffectiveAppViewsForUserContract } from "./app-view-access";
 import { parseAppViewConfig, type AppViewConfig } from "./app-views";
+import { panelConfigRevision } from "./panels";
 
 type ApiAppView = Pick<AppView, "config" | "icon" | "id" | "name" | "slug" | "sortOrder" | "type">;
 
 export type SerializedApiAppView = {
   config: Omit<AppViewConfig, "type">;
+  configRevision?: string;
   icon: string | null;
   id: string;
   name: string;
@@ -47,6 +49,7 @@ export function serializeApiAppView(view: ApiAppView): SerializedApiAppView | nu
 
     return {
       config: normalizedConfig as Omit<AppViewConfig, "type">,
+      ...(config.type === "PANEL" ? { configRevision: panelConfigRevision(config) } : {}),
       icon: view.icon ?? null,
       id: view.id,
       name: view.name,

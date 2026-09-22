@@ -15,17 +15,13 @@ import {
 import { cn } from "@/lib/utils";
 
 export function PanelEditorTopBar({
-  actionPending,
   active,
   dirty,
   name,
-  submitLabel,
 }: {
-  actionPending: boolean;
   active: boolean;
   dirty: boolean;
   name: string;
-  submitLabel: string;
 }) {
   return (
     <div className="sticky top-0 z-20 flex flex-wrap items-center justify-between gap-3 rounded-md border border-border bg-background/95 px-4 py-3 shadow-sm backdrop-blur">
@@ -49,9 +45,6 @@ export function PanelEditorTopBar({
           </div>
         </div>
       </div>
-      <Button disabled={actionPending} type="submit">
-        {actionPending ? "Guardando..." : submitLabel}
-      </Button>
     </div>
   );
 }

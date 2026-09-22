@@ -5,7 +5,7 @@ import { userCanAccessAppView } from "@/lib/app-view-access";
 import { latestByRelationRecords } from "@/lib/latest-by-relation";
 import { prisma } from "@/lib/prisma";
 
-import { getApiPanel, panelConfigRevision } from "./panels";
+import { composePanelMetricValues, getApiPanel, panelConfigRevision } from "./panels";
 
 vi.mock("@/lib/app-view-access", () => ({
   userCanAccessAppView: vi.fn(),
@@ -52,6 +52,124 @@ beforeEach(() => {
 });
 
 describe("getApiPanel", () => {
+  it.each([
+    ["ADD", 2.5, 1.25, 3.75],
+    ["SUBTRACT", 2.5, 4, -1.5],
+    ["MULTIPLY", -2, 1.5, -3],
+    ["DIVIDE", 3, 4, 0.75],
+    ["DIVIDE", 0, 4, 0],
+  ] as const)("composes numeric metrics with %s", (operation, a, b, expected) => {
+    expect(composePanelMetricValues(a, b, operation)).toEqual({ value: expected, reason: null });
+  });
+
+  it("keeps missing, invalid, and zero-divisor operands unavailable", () => {
+    expect(composePanelMetricValues(null, 2, "ADD").value).toBeNull();
+    expect(composePanelMetricValues("2", 2, "ADD").value).toBeNull();
+    expect(composePanelMetricValues(Infinity, 2, "ADD").value).toBeNull();
+    expect(composePanelMetricValues(2, 0, "DIVIDE")).toEqual({ value: null, reason: "No se puede dividir por cero." });
+    expect(composePanelMetricValues(Number.MAX_VALUE, 2, "MULTIPLY").value).toBeNull();
+  });
+
+  it("combines full metrics from two datasets in one filtered execution", async () => {
+    appViewFindFirst.mockResolvedValueOnce({
+      active: true,
+      config: panelConfig({
+        filters: [{ id: "status", valueType: "OPTION" }],
+        datasets: [
+          { id: "records", source: { type: "ENTITY", entityTypeId: "versions" },
+            filters: [{ type: "PANEL_FILTER", filterId: "status", fieldId: "status_field", operator: "EQ" }],
+            transformation: { type: "RECORDS", fieldIds: ["status_field", "decimal_field"], pagination: { pageSize: 1 } } },
+          { id: "other", source: { type: "ENTITY", entityTypeId: "versions" },
+            filters: [{ type: "PANEL_FILTER", filterId: "status", fieldId: "status_field", operator: "EQ" }],
+            transformation: { type: "RECORDS", fieldIds: ["status_field", "decimal_field"], pagination: { pageSize: 1 } } },
+        ],
+        metrics: [
+          { id: "a", name: "Filtrados", datasetId: "records", aggregation: "COUNT", filterIds: ["status"] },
+          { id: "b", name: "Total", datasetId: "other", aggregation: "SUM", fieldId: "decimal_field", filterIds: [] },
+        ],
+        modules: [{ id: "combined", datasetId: "records", visualization: { type: "KPI", config: {
+          composition: { metricAId: "a", metricBId: "b", operation: "SUBTRACT" }, label: "Diferencia", format: "DECIMAL",
+        } }, layout: { x: 0, y: 0, w: 2, h: 2 } }],
+      }),
+      contractId: "contract_1", id: "panel_1", name: "Panel", slug: "panel", type: "PANEL",
+    } as never);
+    const rows = [panelRecord("one", "2026-09-01", 1, "vigente", new Prisma.Decimal("1.2")),
+      panelRecord("two", "2026-09-02", 2, "e1", new Prisma.Decimal("2.3"))];
+    entityRecordFindMany.mockResolvedValueOnce(rows as never).mockResolvedValueOnce(rows as never);
+    const result = await getApiPanel({ appViewId: "panel_1", contractId: "contract_1",
+      query: { datasetId: "records", filters: JSON.stringify({ status: "status_current" }), pageSize: "1" }, userId: "user_1" });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.datasets[0]?.rows).toHaveLength(1);
+    expect(result.data.metrics.map((metric) => [metric.id, metric.value])).toEqual([["a", 1], ["b", 3.5]]);
+    expect(result.data.moduleResults).toEqual([{ moduleId: "combined", value: -2.5, reason: null }]);
+    expect(entityRecordFindMany).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the primary dataset available when the secondary operand cannot load", async () => {
+    appViewFindFirst.mockResolvedValueOnce({
+      active: true, contractId: "contract_1", id: "panel_1", name: "Panel", slug: "panel", type: "PANEL",
+      config: panelConfig({
+        datasets: [panelConfig().datasets[0], { id: "other", source: { type: "ENTITY", entityTypeId: "versions" },
+          transformation: { type: "RECORDS", fieldIds: ["revision_field"] } }],
+        metrics: [{ id: "a", name: "A", datasetId: "records", aggregation: "COUNT", filterIds: [] },
+          { id: "b", name: "B", datasetId: "other", aggregation: "COUNT", filterIds: [] }],
+        modules: [panelConfig().modules[0], { id: "combined", datasetId: "records", visualization: { type: "KPI", config: {
+          composition: { metricAId: "a", metricBId: "b", operation: "DIVIDE" }, label: "Razón", format: "PERCENT", percentScale: "RATIO",
+        } }, layout: { x: 0, y: 6, w: 2, h: 2 } }],
+      }),
+    } as never);
+    entityTypeFindFirst.mockResolvedValueOnce(panelEntityType() as never).mockResolvedValueOnce(null as never);
+    const result = await getApiPanel({ appViewId: "panel_1", contractId: "contract_1", query: {}, userId: "user_1" });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.datasets[0]?.rows).toHaveLength(1);
+    expect(result.data.metrics).toMatchObject([{ id: "a", value: 1 }]);
+    expect(result.data.moduleResults).toEqual([{
+      moduleId: "combined", value: null, reason: "No se pudo cargar la métrica B con esta selección.",
+    }]);
+  });
+
+  it("does not request a secondary dataset with a pending required filter", async () => {
+    appViewFindFirst.mockResolvedValueOnce({
+      active: true, contractId: "contract_1", id: "panel_1", name: "Panel", slug: "panel", type: "PANEL",
+      config: panelConfig({
+        filters: [{ id: "selection", label: "Periodo", valueType: "DATE", required: true }],
+        datasets: [panelConfig().datasets[0], { id: "other", source: { type: "ENTITY", entityTypeId: "versions" },
+          filters: [{ type: "PANEL_FILTER", filterId: "selection", fieldId: "date_field", operator: "EQ" }],
+          transformation: { type: "RECORDS", fieldIds: ["date_field"] } }],
+        metrics: [{ id: "a", name: "A", datasetId: "records", aggregation: "COUNT", filterIds: [] },
+          { id: "b", name: "B", datasetId: "other", aggregation: "COUNT", filterIds: [] }],
+        modules: [{ id: "combined", datasetId: "records", visualization: { type: "KPI", config: {
+          composition: { metricAId: "a", metricBId: "b", operation: "ADD" }, label: "Total", format: "NUMBER",
+        } }, layout: { x: 0, y: 0, w: 2, h: 2 } }],
+      }),
+    } as never);
+    const result = await getApiPanel({ appViewId: "panel_1", contractId: "contract_1", query: {}, userId: "user_1" });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.moduleResults).toEqual([{ moduleId: "combined", value: null,
+      reason: "Selecciona Periodo para calcular la métrica B." }]);
+    expect(entityTypeFindFirst).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves a typed DATETIME filter value instead of converting it to an empty date", async () => {
+    appViewFindFirst.mockResolvedValueOnce({ active: true, contractId: "contract_1", id: "panel_1",
+      name: "Panel", slug: "panel", type: "PANEL", config: panelConfig({
+        filters: [{ id: "instant", valueType: "DATE", required: true }],
+        datasets: [{ id: "records", source: { type: "ENTITY", entityTypeId: "versions" },
+          filters: [{ type: "PANEL_FILTER", filterId: "instant", fieldId: "date_field", operator: "EQ" }],
+          transformation: { type: "RECORDS", fieldIds: ["date_field"] } }],
+      }) } as never);
+    const entity = panelEntityType();
+    entityTypeFindFirst.mockResolvedValueOnce({ ...entity, fields: entity.fields.map((field) => field.id === "date_field"
+      ? { ...field, type: "DATETIME" } : field) } as never);
+    const instant = "2026-09-02T12:30:00.000Z";
+    const result = await getApiPanel({ appViewId: "panel_1", contractId: "contract_1",
+      query: { filters: JSON.stringify({ instant }) }, userId: "user_1" });
+    expect(result.ok).toBe(true);
+    expect(JSON.stringify(entityRecordFindMany.mock.calls[0]?.[0]?.where)).toContain(instant);
+  });
   it("authorizes the AppView and returns a RECORDS dataset keyed by stable field ids", async () => {
     const result = await getApiPanel({
       appViewId: "panel_1",
@@ -663,14 +781,16 @@ describe("getApiPanel", () => {
     });
   });
 
-  it("supports MULTISELECT metric conditions", async () => {
+  it("supports MULTISELECT metric conditions and selected interactive filters", async () => {
     appViewFindFirst.mockResolvedValueOnce({
       active: true,
       config: panelConfig({
+        filters: [{ id: "tags", valueType: "OPTION" }],
         datasets: [
           {
             id: "records",
             source: { type: "ENTITY", entityTypeId: "versions" },
+            filters: [{ type: "PANEL_FILTER", filterId: "tags", fieldId: "tags_field", operator: "IN" }],
             transformation: {
               type: "RECORDS",
               fieldIds: ["tags_field", "date_field"],
@@ -681,6 +801,7 @@ describe("getApiPanel", () => {
         metrics: [
           { id: "tag-a", name: "Tag A", datasetId: "records", aggregation: "COUNT", fieldId: null, filterIds: [], conditions: [{ fieldId: "tags_field", operator: "EQUALS", value: { type: "OPTION", optionId: "tag_a" } }] },
           { id: "tag-b-in", name: "Tag B", datasetId: "records", aggregation: "COUNT", fieldId: null, filterIds: [], conditions: [{ fieldId: "tags_field", operator: "IN", values: [{ type: "OPTION", optionId: "tag_b" }] }] },
+          { id: "tag-b-interactive", name: "Tag B interactivo", datasetId: "records", aggregation: "COUNT", fieldId: null, filterIds: ["tags"] },
         ],
       }),
       contractId: "contract_1",
@@ -703,7 +824,7 @@ describe("getApiPanel", () => {
     const result = await getApiPanel({
       appViewId: "panel_1",
       contractId: "contract_1",
-      query: {},
+      query: { filters: JSON.stringify({ tags: "b" }) },
       userId: "user_1",
     });
 
@@ -712,6 +833,7 @@ describe("getApiPanel", () => {
     expect(Object.fromEntries(result.data.metrics.map((metric) => [metric.id, metric.value]))).toEqual({
       "tag-a": 2,
       "tag-b-in": 1,
+      "tag-b-interactive": 1,
     });
   });
 
@@ -830,6 +952,13 @@ describe("getApiPanel", () => {
             transformation: { type: "RECORDS", fieldIds: ["status_field"] },
           },
         ],
+        metrics: [
+          { id: "a", name: "A", datasetId: "records", aggregation: "COUNT", filterIds: [] },
+          { id: "b", name: "B", datasetId: "records", aggregation: "COUNT", filterIds: [] },
+        ],
+        modules: [{ id: "combined", datasetId: "records", visualization: { type: "KPI", config: {
+          composition: { metricAId: "a", metricBId: "b", operation: "ADD" }, label: "Total", format: "NUMBER",
+        } }, layout: { x: 0, y: 0, w: 2, h: 2 } }],
       }),
       contractId: "contract_1",
       icon: null,
@@ -850,6 +979,7 @@ describe("getApiPanel", () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.response.status).toBe(400);
+    expect(entityRecordFindMany).not.toHaveBeenCalled();
   });
 
   it("reduces LATEST_BY_RELATION rows after configured filters and resolves ties by record id", async () => {

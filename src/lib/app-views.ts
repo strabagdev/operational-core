@@ -117,28 +117,31 @@ export type PanelKpiFormat =
 
 export type PanelPercentScale = "RATIO" | "WHOLE";
 
-export type PanelKpiConfig =
-  | {
-      metricId: string;
-      label: string;
-      format: Exclude<PanelKpiFormat, "MONEY" | "PERCENT">;
-      currencyCode?: never;
-      percentScale?: never;
-    }
-  | {
-      metricId: string;
-      label: string;
-      format: "MONEY";
-      currencyCode: string;
-      percentScale?: never;
-    }
-  | {
-      metricId: string;
-      label: string;
-      format: "PERCENT";
-      percentScale: PanelPercentScale;
-      currencyCode?: never;
-    };
+export type PanelMetricComposition = {
+  metricAId: string;
+  metricBId: string;
+  operation: "ADD" | "SUBTRACT" | "MULTIPLY" | "DIVIDE";
+};
+
+export type PanelKpiConfig = {
+  metricId?: string;
+  composition?: PanelMetricComposition;
+} & ({
+  label: string;
+  format: Exclude<PanelKpiFormat, "MONEY" | "PERCENT">;
+  currencyCode?: never;
+  percentScale?: never;
+} | {
+  label: string;
+  format: "MONEY";
+  currencyCode: string;
+  percentScale?: never;
+} | {
+  label: string;
+  format: "PERCENT";
+  percentScale: PanelPercentScale;
+  currencyCode?: never;
+});
 
 export type PanelMetric = {
   id: string;
@@ -1445,7 +1448,12 @@ const panelTableModuleVisualizationSchema = z.object({
   }).strict(),
 }).strict();
 const panelKpiConfigBaseSchema = {
-  metricId: z.string().trim().min(1, "Selecciona una métrica para el KPI."),
+  metricId: z.string().trim().min(1, "Selecciona una métrica para el KPI.").optional(),
+  composition: z.object({
+    metricAId: z.string().trim().min(1),
+    metricBId: z.string().trim().min(1),
+    operation: z.enum(["ADD", "SUBTRACT", "MULTIPLY", "DIVIDE"]),
+  }).strict().optional(),
   label: z.string().trim().min(1, "Escribe una etiqueta para el KPI."),
 };
 const panelKpiModuleVisualizationSchema = z.object({
@@ -1467,7 +1475,11 @@ const panelKpiModuleVisualizationSchema = z.object({
       format: z.literal("PERCENT"),
       percentScale: panelPercentScaleSchema,
     }).strict(),
-  ]),
+  ]).superRefine((config, ctx) => {
+    if (Boolean(config.metricId) === Boolean(config.composition)) {
+      ctx.addIssue({ code: "custom", message: "Selecciona una métrica o combina dos métricas.", path: ["metricId"] });
+    }
+  }),
 }).strict();
 const panelMetricSchema = z.object({
   id: panelIdSchema,
@@ -1551,7 +1563,8 @@ const panelConfigInputSchema = z.object({
         `modules.${index}.visualization.config.columns`,
       );
     }
-    if (module.visualization.type === "KPI" && !metricIds.has(module.visualization.config.metricId)) {
+    if (module.visualization.type === "KPI" && !module.visualization.config.composition &&
+        !metricIds.has(module.visualization.config.metricId ?? "")) {
       ctx.addIssue({
         code: "custom",
         message: "El KPI referencia una métrica inexistente.",
@@ -1925,6 +1938,7 @@ async function validatePanelAppViewConfig({
   const datasetFiltersById = new Map<string, Set<string>>();
   const datasetNamesById = new Map<string, string>();
   const fieldNamesById = new Map<string, string>();
+  const filterDomains = new Map<string, string>();
   const layoutOverlap = panelModuleLayoutOverlaps(config.modules)[0];
 
   if (layoutOverlap) {
@@ -1966,6 +1980,12 @@ async function validatePanelAppViewConfig({
         if (!panelFilterValueTargetsField(panelFilter.valueType, field.type)) {
           throw new AppViewConfigError("El filtro de panel no es compatible con el campo enlazado.", "filters");
         }
+        const domain = panelFilterFieldDomain(panelFilter.valueType, field);
+        const previousDomain = filterDomains.get(filter.filterId);
+        if (!domain || (previousDomain && previousDomain !== domain)) {
+          throw new AppViewConfigError("Los campos enlazados al filtro no comparten opciones o entidad relacionada.", "filters");
+        }
+        filterDomains.set(filter.filterId, domain);
       }
     }
 
@@ -2108,6 +2128,25 @@ async function validatePanelAppViewConfig({
     }
 
     if (panelModule.visualization.type === "KPI") {
+      const composition = panelModule.visualization.config.composition;
+      if (composition) {
+        const metricA = config.metrics.find((item) => item.id === composition.metricAId);
+        const metricB = config.metrics.find((item) => item.id === composition.metricBId);
+        if (!metricA || !metricB) {
+          throw new AppViewConfigError("El KPI combinado referencia una métrica inexistente.", "modules");
+        }
+        if (metricA.datasetId !== panelModule.datasetId) {
+          throw new AppViewConfigError("La métrica A debe pertenecer al dataset del módulo.", "modules");
+        }
+        if (!panelMetricReturnsNumber(metricA, datasetFieldsById.get(metricA.datasetId)) ||
+            !panelMetricReturnsNumber(metricB, datasetFieldsById.get(metricB.datasetId))) {
+          throw new AppViewConfigError("Combina solo métricas con resultado numérico.", "modules");
+        }
+        if (panelModule.visualization.config.format === "DATE" || panelModule.visualization.config.format === "DATETIME") {
+          throw new AppViewConfigError("El KPI combinado requiere formato numérico.", "modules");
+        }
+        continue;
+      }
       const metricId = panelModule.visualization.config.metricId;
       const metric = config.metrics.find((item) => item.id === metricId);
 
@@ -2128,6 +2167,12 @@ async function validatePanelAppViewConfig({
       }
     }
   }
+}
+
+function panelMetricReturnsNumber(metric: PanelMetric, fields: Map<string, { type: string }> | undefined) {
+  if (["COUNT", "COUNT_VALUES", "COUNT_DISTINCT", "SUM", "AVG"].includes(metric.aggregation)) return true;
+  const fieldType = metric.fieldId ? fields?.get(metric.fieldId)?.type : undefined;
+  return fieldType === "INTEGER" || fieldType === "DECIMAL" || fieldType === "MONEY";
 }
 
 function requireUniqueConfigIds(ids: string[], message: string, fieldName?: string) {
@@ -2154,6 +2199,19 @@ function panelFilterValueTargetsField(valueType: PanelFilter["valueType"], field
   }
 
   return fieldType === "RELATION";
+}
+
+function panelFilterFieldDomain(
+  valueType: PanelFilter["valueType"],
+  field: { config: unknown; options: Array<{ isActive: boolean; value: string }> },
+) {
+  if (valueType === "OPTION") {
+    return JSON.stringify(field.options.filter((option) => option.isActive).map((option) => option.value).sort());
+  }
+  if (valueType === "RECORD") {
+    return getRelationConfig(field.config).targetEntityTypeId || null;
+  }
+  return valueType;
 }
 
 function panelMetricAggregationTargetsField(aggregation: PanelMetricAggregation, fieldType: string) {

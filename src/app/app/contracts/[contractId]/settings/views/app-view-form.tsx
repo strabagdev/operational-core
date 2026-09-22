@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useMemo, useState } from "react";
+import { useActionState, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type { AppViewType } from "@prisma/client";
 import {
@@ -27,6 +27,7 @@ import {
 import { EntityIcon } from "@/components/entity-icon";
 import { IconPicker, getIconPickerFormValue } from "@/components/icon-picker";
 import { Button } from "@/components/ui/button";
+import { getRelationConfig } from "@/lib/field-validation";
 import {
   Sheet,
   SheetContent,
@@ -99,6 +100,7 @@ type ReportVirtualFieldOption = {
 
 type PanelEditorDataset = DatasetDefinition;
 type PanelEditorFilter = PanelFilter & {
+  bindings?: Array<{ datasetId: string; fieldId: string; operator: "EQ" | "IN" }>;
   fieldId?: string;
   operator?: "EQ" | "IN";
 };
@@ -155,6 +157,29 @@ export function AppViewForm({
     action,
     initialActionState ?? { success: false },
   );
+  const formRef = useRef<HTMLFormElement>(null);
+  const submittingRef = useRef(false);
+  const submittedRef = useRef<{ id: string; snapshot: string; panelSnapshot: string } | null>(null);
+  const handledResponseRef = useRef("");
+  const [saveFeedback, setSaveFeedback] = useState<{ kind: "success" | "error"; text: string } | null>(null);
+  const [savedFormSnapshot, setSavedFormSnapshot] = useState("");
+  useEffect(() => {
+    if (!state.saveRequestId || state.saveRequestId === handledResponseRef.current) return;
+    handledResponseRef.current = state.saveRequestId;
+    submittingRef.current = false;
+    if (state.success) {
+      const matchesSubmission = submittedRef.current?.id === state.saveRequestId &&
+        formRef.current && formSnapshot(new FormData(formRef.current)) === submittedRef.current.snapshot;
+      setSaveFeedback({ kind: "success", text: matchesSubmission
+        ? "Experiencia guardada"
+        : "Cambios anteriores guardados; hay cambios sin guardar." });
+      if (matchesSubmission) {
+        setSavedFormSnapshot(submittedRef.current?.panelSnapshot ?? "");
+      }
+    } else {
+      setSaveFeedback({ kind: "error", text: state.message || "No fue posible guardar la experiencia." });
+    }
+  }, [state]);
   useEffect(() => {
     const url = new URL(window.location.href);
 
@@ -500,14 +525,17 @@ export function AppViewForm({
   const initialPanelSnapshot = normalizedInitialPanelConfig
     ? JSON.stringify(panelConfigFormValue(normalizedInitialPanelConfig))
     : "";
-  const panelDirty = type === "PANEL" && (
+  const panelCurrentSnapshot = JSON.stringify({ name, slug, icon, active, sortOrder, config: panelConfigFormValue(panelConfig) });
+  const panelDirty = type === "PANEL" && (savedFormSnapshot
+    ? panelCurrentSnapshot !== savedFormSnapshot
+    : (
     name !== (initialValues?.name ?? "") ||
     slug !== (initialValues?.slug ?? "") ||
     icon !== (initialValues?.icon ?? "") ||
     active !== (initialValues?.active ?? true) ||
     sortOrder !== String(initialValues?.sortOrder ?? 0) ||
     JSON.stringify(panelConfigFormValue(panelConfig)) !== initialPanelSnapshot
-  );
+  ));
 
   useEffect(() => {
     if (type !== "PANEL") {
@@ -661,15 +689,24 @@ export function AppViewForm({
   );
 
   return (
-    <form action={formAction} className={type === "PANEL" ? "grid w-full gap-4" : "grid gap-4"}>
+    <form action={formAction} className={type === "PANEL" ? "grid w-full gap-4 pb-20" : "grid gap-4 pb-20"}
+      onChange={() => { if (saveFeedback?.kind === "success") setSaveFeedback(null); }}
+      onSubmit={(event) => {
+        if (submittingRef.current || actionPending) { event.preventDefault(); return; }
+        const id = crypto.randomUUID();
+        const token = event.currentTarget.elements.namedItem("saveRequestId");
+        if (token instanceof HTMLInputElement) token.value = id;
+        submittedRef.current = { id, snapshot: formSnapshot(new FormData(event.currentTarget)), panelSnapshot: panelCurrentSnapshot };
+        submittingRef.current = true;
+        setSaveFeedback(null);
+      }} ref={formRef}>
+      <input name="saveRequestId" type="hidden" defaultValue="" />
       <ActionErrorSummary state={state} />
       {type === "PANEL" ? (
         <PanelEditorTopBar
-          actionPending={actionPending}
           active={active}
           dirty={panelDirty}
           name={name || "Panel sin nombre"}
-          submitLabel={submitLabel}
         />
       ) : null}
       {type === "PANEL" && activePanelSection !== "datos-generales" ? (
@@ -823,13 +860,18 @@ export function AppViewForm({
         </div>
       ) : null}
 
-      <div className="sticky bottom-0 z-10 flex justify-end border-t border-border bg-background/95 py-3">
+      {saveFeedback ? <div className="fixed bottom-20 right-4 z-50 max-w-[calc(100vw-2rem)] rounded-md border border-border bg-background px-4 py-3 shadow-lg" role={saveFeedback.kind === "error" ? "alert" : "status"}>{saveFeedback.text}</div> : null}
+      <div className="sticky bottom-0 z-30 flex justify-end border-t border-border bg-background/95 px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
         <Button disabled={actionPending} type="submit">
           {actionPending ? "Guardando..." : submitLabel}
         </Button>
       </div>
     </form>
   );
+}
+
+function formSnapshot(formData: FormData) {
+  return JSON.stringify([...formData.entries()].filter(([key]) => key !== "saveRequestId"));
 }
 
 function PanelConfigFields({
@@ -982,9 +1024,11 @@ function PanelConfigFields({
                   <div className="grid gap-2">
                     {filters.map((filter, index) => (
                       <PanelFilterCard
-                        datasets={datasets}
-                        entityTypes={entityTypes}
-                        filter={filter}
+                          datasets={datasets}
+                          entityTypes={entityTypes}
+                          filter={filter}
+                          metrics={metrics}
+                          modules={modules}
                         key={filter.id}
                         onDelete={() => {
                           const next = removePanelFilterAt({ filters, metrics }, index);
@@ -1070,6 +1114,7 @@ function PanelConfigFields({
                           entityTypes={entityTypes}
                           key={module.id}
                           metric={moduleMetric}
+                          metrics={metrics}
                           module={module}
                           onDelete={() => updateModules(removePanelModuleAt(modules, index))}
                           onEdit={() => openSheet("module", index)}
@@ -1254,6 +1299,7 @@ function PanelConfigFields({
           datasets={datasets}
           entityTypes={entityTypes}
           fieldErrors={fieldErrors}
+          filters={filters}
           index={sheet.index}
           layoutColumns={layoutColumns}
           layoutDistribution={layoutDistribution}
@@ -1409,27 +1455,53 @@ function PanelFilterCard({
   datasets,
   entityTypes,
   filter,
+  metrics,
+  modules,
   onDelete,
   onEdit,
 }: {
   datasets: PanelEditorDataset[];
   entityTypes: AppViewEntityTypeOption[];
   filter: PanelEditorFilter;
+  metrics: PanelEditorMetric[];
+  modules: PanelEditorModule[];
   onDelete: () => void;
   onEdit: () => void;
 }) {
-  const dataset = datasets.find((item) => item.filters?.some((binding) => binding.type === "PANEL_FILTER" && binding.filterId === filter.id)) ?? datasets[0];
-  const field = fieldsForPanelDataset(dataset, entityTypes).find((item) => item.id === filter.fieldId);
+  const bindings = filter.bindings ?? [];
+  const affectedModules = affectedPanelModules(filter, bindings, metrics, modules);
 
   return (
     <PanelSummaryCard actions={<CardActions deleteLabel="Eliminar filtro" editLabel="Editar filtro" onDelete={onDelete} onEdit={onEdit} />} eyebrow={filter.required ? "Requerido" : "Opcional"} tone="filters" title={filter.label || "Filtro sin nombre"}>
       <PanelInfoGrid items={[
-        ["Dataset", dataset?.name || dataset?.id || "Sin dataset"],
-        ["Campo", field?.name ?? "Sin campo"],
-        ["Operador", filter.operator === "IN" ? "Incluye" : "Es igual"],
+        ["Datasets", bindings.map((binding) => {
+          const dataset = datasets.find((item) => item.id === binding.datasetId);
+          const field = fieldsForPanelFilterDataset(dataset, entityTypes).find((item) => item.id === binding.fieldId);
+          return `${dataset?.name || dataset?.id || binding.datasetId}: ${field?.name ?? "Sin campo"}`;
+        }).join("; ") || "Sin vínculos"],
+        ["Tablas y KPI", affectedModules.map((module) => module.title || module.id).join(", ") || "Ninguno"],
       ]} />
     </PanelSummaryCard>
   );
+}
+
+export function affectedPanelModules(
+  filter: PanelEditorFilter,
+  bindings: NonNullable<PanelEditorFilter["bindings"]>,
+  metrics: PanelEditorMetric[],
+  modules: PanelEditorModule[],
+) {
+  return modules.filter((module) => {
+    if (module.visualization.type === "TABLE") return bindings.some((binding) => binding.datasetId === module.datasetId);
+    const ids = module.visualization.config.composition
+      ? [module.visualization.config.composition.metricAId, module.visualization.config.composition.metricBId]
+      : [module.visualization.config.metricId];
+    return ids.some((id) => {
+      const metric = metrics.find((item) => item.id === id);
+      return metric && bindings.some((binding) => binding.datasetId === metric.datasetId) &&
+        (filter.required || metric.filterIds.includes(filter.id));
+    });
+  });
 }
 
 function PanelMetricCard({
@@ -1465,6 +1537,7 @@ function PanelModuleCard({
   datasets,
   entityTypes,
   metric,
+  metrics,
   module,
   onDelete,
   onEdit,
@@ -1475,6 +1548,7 @@ function PanelModuleCard({
   datasets: PanelEditorDataset[];
   entityTypes: AppViewEntityTypeOption[];
   metric?: PanelEditorMetric;
+  metrics: PanelEditorMetric[];
   module: PanelEditorModule;
   onDelete: () => void;
   onEdit: () => void;
@@ -1484,6 +1558,11 @@ function PanelModuleCard({
 }) {
   const dataset = datasets.find((item) => item.id === module.datasetId);
   const entityType = entityTypes.find((item) => item.id === dataset?.source.entityTypeId);
+  const composition = module.visualization.type === "KPI" ? module.visualization.config.composition : undefined;
+  const operationSymbol = composition ? { ADD: "+", SUBTRACT: "−", MULTIPLY: "×", DIVIDE: "÷" }[composition.operation] : "";
+  const metricDescription = composition
+    ? `${metrics.find((item) => item.id === composition.metricAId)?.name ?? "A sin métrica"} ${operationSymbol} ${metrics.find((item) => item.id === composition.metricBId)?.name ?? "B sin métrica"}`
+    : metric?.name ?? "Sin métrica";
 
   return (
     <PanelSummaryCard
@@ -1502,7 +1581,7 @@ function PanelModuleCard({
       <PanelInfoGrid items={[
         ["Dataset", dataset?.name || dataset?.id || "Sin dataset"],
         ["Entidad", entityType?.name ?? "Sin entidad"],
-        ["Métrica", module.visualization.type === "KPI" ? metric?.name ?? "Sin métrica" : "No aplica"],
+        ["Métrica", module.visualization.type === "KPI" ? metricDescription : "No aplica"],
         ["Tamaño", `${module.layout.w}x${module.layout.h}`],
         ["Posición", `x${module.layout.x} y${module.layout.y}`],
       ]} />
@@ -1755,6 +1834,7 @@ function PanelFilterSheet({
   const draftIndex = index ?? filters.length;
   const initialFilters = index === null ? [...filters, defaultPanelFilter(datasets, entityTypes, filters)] : filters;
   const [draftFilters, setDraftFilters] = useState(() => clonePanelEditorValue(initialFilters));
+  const [notice, setNotice] = useState("");
   const dirty = JSON.stringify(draftFilters) !== JSON.stringify(initialFilters);
 
   return (
@@ -1763,12 +1843,17 @@ function PanelFilterSheet({
       description="Define el nombre, campo y operador del filtro."
       onClose={onClose}
       onSave={() => {
+        if (!draftFilters[draftIndex]?.bindings?.length) {
+          setNotice("Selecciona al menos un dataset y su campo para este filtro.");
+          return;
+        }
         setFilters(clonePanelEditorValue(draftFilters));
         onClose();
       }}
       open={open}
       title={index === null ? "Agregar filtro" : "Editar filtro"}
     >
+      {notice ? <p className="text-sm text-destructive" role="alert">{notice}</p> : null}
       {draftFilters[draftIndex] ? (
         <PanelFilterEditor
           datasets={datasets}
@@ -1838,6 +1923,7 @@ function PanelModuleSheet({
   datasets,
   entityTypes,
   fieldErrors,
+  filters,
   index,
   layoutColumns,
   layoutDistribution,
@@ -1850,6 +1936,7 @@ function PanelModuleSheet({
   datasets: PanelEditorDataset[];
   entityTypes: AppViewEntityTypeOption[];
   fieldErrors?: Record<string, string[]>;
+  filters: PanelEditorFilter[];
   index: number | null;
   layoutColumns: number;
   layoutDistribution: PanelLayoutDistribution;
@@ -1886,6 +1973,7 @@ function PanelModuleSheet({
           datasets={datasets}
           entityTypes={entityTypes}
           fieldErrors={fieldErrors}
+          filters={filters}
           index={draftIndex}
           layoutColumns={layoutColumns}
           layoutDistribution={layoutDistribution}
@@ -2033,8 +2121,7 @@ function defaultPanelFilter(
     id: nextPanelId("filter", filters.map((filter) => filter.id)),
     label: "Filtro",
     valueType: panelValueTypeForField(field),
-    fieldId: field?.id ?? "",
-    operator: "EQ",
+    bindings: dataset && field ? [{ datasetId: dataset.id, fieldId: field.id, operator: panelOperatorsForField(field)[0].value as "EQ" | "IN" }] : [],
   };
 }
 
@@ -2119,7 +2206,9 @@ export function removePanelDatasetAt(
   const metricIds = new Set(metrics.map((metric) => metric.id));
   const modules = state.modules
     .filter((module) => datasetIds.has(module.datasetId))
-    .filter((module) => module.visualization.type !== "KPI" || metricIds.has(module.visualization.config.metricId))
+    .filter((module) => module.visualization.type !== "KPI" || (module.visualization.config.composition
+      ? metricIds.has(module.visualization.config.composition.metricAId) && metricIds.has(module.visualization.config.composition.metricBId)
+      : metricIds.has(module.visualization.config.metricId ?? "")))
     .map((module) => ({
       ...module,
       visualization: cleanPanelModuleVisualizationForDataset(
@@ -2131,7 +2220,9 @@ export function removePanelDatasetAt(
 
   return {
     datasets,
-    filters: datasets.length === 0 ? [] : state.filters,
+    filters: datasets.length === 0 ? [] : state.filters.map((filter) => filter.bindings
+      ? { ...filter, bindings: filter.bindings.filter((binding) => datasetIds.has(binding.datasetId)) }
+      : filter),
     metrics,
     modules,
   };
@@ -2175,7 +2266,9 @@ export function removePanelMetricAt(
   return {
     metrics: state.metrics.filter((_, itemIndex) => itemIndex !== index),
     modules: state.modules.filter((module) =>
-      module.visualization.type !== "KPI" || module.visualization.config.metricId !== metric.id,
+      module.visualization.type !== "KPI" || (module.visualization.config.composition
+        ? module.visualization.config.composition.metricAId !== metric.id && module.visualization.config.composition.metricBId !== metric.id
+        : module.visualization.config.metricId !== metric.id),
     ),
   };
 }
@@ -2273,7 +2366,7 @@ function PanelDatasetEditor({
             const nextDatasets = replaceAt(datasets, index, nextDataset);
 
             setDatasets(nextDatasets);
-            setFilters(cleanPanelFiltersForEntity(filters, nextEntity));
+            setFilters(cleanPanelFiltersForEntity(filters, nextEntity, dataset.id));
             setMetrics(cleanPanelMetricsForDatasets(metrics, nextDatasets));
             setModules(cleanPanelModulesForDatasets(modules, nextDatasets));
             setNotice("Actualizamos los campos porque cambiaste la entidad.");
@@ -2404,11 +2497,10 @@ function PanelFilterEditor({
   index: number;
   setFilters: (value: PanelEditorFilter[]) => void;
 }) {
-  const dataset = datasets[0];
-  const entityType = entityTypes.find((item) => item.id === dataset?.source.entityTypeId);
-  const compatibleFields = entityType?.fields.filter((field) => field.isActive) ?? [];
-  const selectedField = compatibleFields.find((field) => field.id === filter.fieldId);
-  const operators = panelOperatorsForField(selectedField);
+  const bindings = filter.bindings ?? [];
+  const referenceBinding = bindings[0];
+  const referenceDataset = datasets.find((item) => item.id === referenceBinding?.datasetId);
+  const referenceField = fieldsForPanelFilterDataset(referenceDataset, entityTypes).find((item) => item.id === referenceBinding?.fieldId);
   const updateFilter = (next: PanelEditorFilter) => setFilters(replaceAt(filters, index, next));
 
   return (
@@ -2416,29 +2508,52 @@ function PanelFilterEditor({
       <div className="grid min-w-0 gap-3 sm:grid-cols-2">
         <TextControl label="Etiqueta" onChange={(label) => updateFilter({ ...filter, label })} value={filter.label ?? ""} />
         <TextControl label="Identificador interno" onChange={(id) => updateFilter({ ...filter, id })} value={filter.id} />
-        <FieldSelect
-          fields={compatibleFields}
-          label="Campo objetivo"
-          name={`panelFilterField:${filter.id}`}
-          onChange={(fieldId) => {
-            const field = compatibleFields.find((item) => item.id === fieldId);
-            updateFilter({
-              ...filter,
-              fieldId,
-              valueType: panelValueTypeForField(field),
-              operator: panelOperatorsForField(field)[0]?.value as PanelEditorFilter["operator"],
-            });
-          }}
-          preferredType="SELECT"
-          value={filter.fieldId ?? ""}
-        />
-        <SelectControl
-          label="Operador"
-          name={`panelFilterOperator:${filter.id}`}
-          onChange={(operator) => updateFilter({ ...filter, operator: operator as PanelEditorFilter["operator"] })}
-          options={operators}
-          value={filter.operator ?? operators[0]?.value ?? "EQ"}
-        />
+        <label className="flex items-center gap-2 text-sm">
+          <input checked={Boolean(filter.required)} onChange={(event) => updateFilter({ ...filter, required: event.target.checked })} type="checkbox" />
+          Requerido
+        </label>
+      </div>
+      <div className="grid gap-2">
+        {datasets.map((dataset) => {
+          const binding = bindings.find((item) => item.datasetId === dataset.id);
+          const fields = fieldsForPanelFilterDataset(dataset, entityTypes).filter((field) => field.isActive &&
+            (!referenceField || binding?.datasetId === referenceBinding?.datasetId || panelFilterFieldsCompatible(referenceField, field)));
+          const defaultField = fields[0];
+          return (
+            <div className="grid gap-2 border-t border-border pt-2" key={dataset.id}>
+              <label className="flex items-center gap-2 text-sm">
+                <input checked={Boolean(binding)} disabled={!binding && !defaultField} onChange={(event) => {
+                  const nextBindings = event.target.checked && defaultField
+                    ? [...bindings, { datasetId: dataset.id, fieldId: defaultField.id, operator: panelOperatorsForField(defaultField)[0].value as "EQ" | "IN" }]
+                    : bindings.filter((item) => item.datasetId !== dataset.id);
+                  const nextReference = nextBindings[0];
+                  const nextDataset = datasets.find((item) => item.id === nextReference?.datasetId);
+                  const nextField = fieldsForPanelFilterDataset(nextDataset, entityTypes).find((item) => item.id === nextReference?.fieldId);
+                  updateFilter({ ...filter, bindings: nextBindings, valueType: panelValueTypeForField(nextField) });
+                }} type="checkbox" />
+                {dataset.name || dataset.id}
+              </label>
+              {binding ? <FieldSelect
+                fields={fields}
+                label="Campo objetivo"
+                name={`panelFilterField:${filter.id}:${dataset.id}`}
+                onChange={(fieldId) => {
+                  const field = fields.find((item) => item.id === fieldId);
+                  const nextBindings = bindings.map((item) => item.datasetId === dataset.id
+                    ? { ...item, fieldId, operator: panelOperatorsForField(field)[0].value as "EQ" | "IN" }
+                    : item);
+                  const validBindings = nextBindings.filter((item) => item.datasetId === dataset.id || !field ||
+                    binding.datasetId !== referenceBinding?.datasetId ||
+                    panelFilterFieldsCompatible(field, fieldsForPanelFilterDataset(datasets.find((entry) => entry.id === item.datasetId), entityTypes)
+                      .find((entry) => entry.id === item.fieldId)));
+                  updateFilter({ ...filter, bindings: validBindings, valueType: panelValueTypeForField(field) });
+                }}
+                preferredType="SELECT"
+                value={binding.fieldId}
+              /> : null}
+            </div>
+          );
+        })}
       </div>
       <div className="flex justify-end">
         <button className="rounded border border-input px-3 py-1 text-sm" onClick={() => setFilters(filters.filter((_, itemIndex) => itemIndex !== index))} type="button">
@@ -2470,10 +2585,7 @@ function PanelMetricEditor({
   const fields = fieldsForPanelDataset(dataset, entityTypes);
   const compatibleFields = fields.filter((field) => panelMetricAggregationTargetsField(metric.aggregation, field.type));
   const conditionFields = fields.filter((field) => panelMetricConditionTargetsField(field.type));
-  const availableFilterIds = new Set(dataset?.filters
-    ?.filter((filter) => filter.type === "PANEL_FILTER")
-    .map((filter) => filter.filterId) ?? []);
-  const applicableFilters = filters.filter((filter) => availableFilterIds.has(filter.id));
+  const applicableFilters = applicablePanelMetricFilters(metric.datasetId, filters);
   const updateMetric = (next: PanelEditorMetric) => setMetrics(replaceAt(metrics, index, next));
   const conditions = metric.conditions ?? [];
   const addCondition = () => {
@@ -2648,6 +2760,10 @@ function PanelMetricEditor({
   );
 }
 
+export function applicablePanelMetricFilters(datasetId: string, filters: PanelEditorFilter[]) {
+  return filters.filter((filter) => filter.bindings?.some((binding) => binding.datasetId === datasetId));
+}
+
 function PanelMetricConditionValueControl({
   condition,
   field,
@@ -2742,6 +2858,7 @@ function PanelMetricConditionValueControl({
 function PanelModuleEditor({
   datasets,
   entityTypes,
+  filters,
   index,
   layoutColumns,
   layoutDistribution,
@@ -2755,6 +2872,7 @@ function PanelModuleEditor({
 }: {
   datasets: PanelEditorDataset[];
   entityTypes: AppViewEntityTypeOption[];
+  filters: PanelEditorFilter[];
   index: number;
   layoutColumns: number;
   layoutDistribution: PanelLayoutDistribution;
@@ -2789,6 +2907,25 @@ function PanelModuleEditor({
   });
   const kpiVisualization = module.visualization.type === "KPI" ? module.visualization : null;
   const moduleDatasetMetrics = metrics.filter((metric) => metric.datasetId === module.datasetId);
+  const numericMetrics = metrics.filter((metric) => {
+    const metricDataset = datasets.find((item) => item.id === metric.datasetId);
+    const metricEntity = entityTypes.find((item) => item.id === metricDataset?.source.entityTypeId);
+    const field = metricEntity?.fields.find((item) => item.id === metric.fieldId);
+    return ["COUNT", "COUNT_VALUES", "COUNT_DISTINCT", "SUM", "AVG"].includes(metric.aggregation) ||
+      ((metric.aggregation === "MIN" || metric.aggregation === "MAX") &&
+        Boolean(field && ["INTEGER", "DECIMAL", "MONEY"].includes(field.type)));
+  });
+  const composition = kpiVisualization?.config.composition;
+  const metricScope = (metricId: string) => {
+    const metric = metrics.find((item) => item.id === metricId);
+    if (!metric) return "Selecciona una métrica.";
+    const metricDataset = datasets.find((item) => item.id === metric.datasetId);
+    const entity = entityTypes.find((item) => item.id === metricDataset?.source.entityTypeId);
+    const filterLabels = metric.filterIds.map((id) => filters.find((filter) => filter.id === id)?.label || id);
+    const conditions = (metric.conditions ?? []).map((condition) =>
+      panelMetricConditionSummary(condition, entity?.fields.find((field) => field.id === condition.fieldId)));
+    return `${metricDataset?.name || metricDataset?.id || "Dataset sin seleccionar"} · ${filterLabels.length ? `Filtros: ${filterLabels.join(", ")}` : "Sin filtros opcionales"} · ${conditions.length ? `Condiciones: ${conditions.join(" y ")}` : "Sin condiciones"}`;
+  };
 
   return (
     <div className="grid gap-3 rounded-md border border-border p-3">
@@ -2839,7 +2976,48 @@ function PanelModuleEditor({
       {kpiVisualization ? (
         <fieldset className="grid min-w-0 gap-2 rounded-md border border-border p-3">
           <legend className="px-1 text-sm font-medium">Indicador</legend>
-          <div className="grid min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          <SelectControl
+            label="Cálculo"
+            name={`panelKpiCalculation:${module.id}`}
+            onChange={(value) => updateModule({ ...module, visualization: {
+              type: "KPI",
+              config: value === "COMBINE"
+                ? { label: kpiVisualization.config.label, format: "NUMBER", composition: {
+                    metricAId: numericMetrics.find((metric) => metric.datasetId === module.datasetId)?.id ?? "",
+                    metricBId: numericMetrics[1]?.id ?? "",
+                    operation: "ADD",
+                  } }
+                : { label: kpiVisualization.config.label, format: "NUMBER", metricId: moduleDatasetMetrics[0]?.id ?? "" },
+            } })}
+            options={[{ label: "Una métrica", value: "SINGLE" }, { label: "Combinar métricas", value: "COMBINE" }]}
+            value={composition ? "COMBINE" : "SINGLE"}
+          />
+          {composition ? (
+            <div className="grid gap-3">
+              <SelectControl label="Métrica A" name={`panelKpiMetricA:${module.id}`}
+                onChange={(metricAId) => updateModule({ ...module, visualization: { type: "KPI", config: {
+                  ...kpiVisualization.config, composition: { ...composition, metricAId },
+                } } })}
+                options={[{ label: "Selecciona métrica A", value: "" }, ...numericMetrics.filter((metric) => metric.datasetId === module.datasetId).map((metric) => ({ label: metric.name, value: metric.id }))]}
+                value={composition.metricAId} />
+              <p className="text-xs text-muted-foreground">A: {metricScope(composition.metricAId)}</p>
+              <SelectControl label="Métrica B" name={`panelKpiMetricB:${module.id}`}
+                onChange={(metricBId) => updateModule({ ...module, visualization: { type: "KPI", config: {
+                  ...kpiVisualization.config, composition: { ...composition, metricBId },
+                } } })}
+                options={[{ label: "Selecciona métrica B", value: "" }, ...numericMetrics.map((metric) => ({ label: metric.name, value: metric.id }))]}
+                value={composition.metricBId} />
+              <p className="text-xs text-muted-foreground">B: {metricScope(composition.metricBId)}</p>
+              <SelectControl label="Operación" name={`panelKpiOperation:${module.id}`}
+                onChange={(operation) => updateModule({ ...module, visualization: { type: "KPI", config: {
+                  ...kpiVisualization.config, composition: { ...composition, operation: operation as typeof composition.operation },
+                } } })}
+                options={[{ label: "A + B", value: "ADD" }, { label: "A − B", value: "SUBTRACT" },
+                  { label: "A × B", value: "MULTIPLY" }, { label: "A ÷ B", value: "DIVIDE" }]}
+                value={composition.operation} />
+            </div>
+          ) : (
+          <div className="grid min-w-0 gap-3">
             <SelectControl
               label="Métrica"
               name={`panelKpiMetric:${module.id}`}
@@ -2859,8 +3037,11 @@ function PanelModuleEditor({
                 });
               }}
               options={[{ label: "Selecciona una métrica", value: "" }, ...moduleDatasetMetrics.map((metric) => ({ label: metric.name || metric.id, value: metric.id }))]}
-              value={moduleDatasetMetrics.some((metric) => metric.id === kpiVisualization.config.metricId) ? kpiVisualization.config.metricId : ""}
+              value={moduleDatasetMetrics.some((metric) => metric.id === kpiVisualization.config.metricId) ? kpiVisualization.config.metricId ?? "" : ""}
             />
+          </div>
+          )}
+          <div className="grid min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-3">
             <TextControl
               label="Etiqueta"
               onChange={(label) => updateModule({
@@ -2882,7 +3063,7 @@ function PanelModuleEditor({
                   config: cleanPanelKpiConfigForFormat(kpiVisualization.config, format as PanelKpiFormat),
                 },
               })}
-              options={panelKpiFormatOptions()}
+              options={composition ? panelKpiFormatOptions().filter((option) => option.value !== "DATE" && option.value !== "DATETIME") : panelKpiFormatOptions()}
               value={kpiVisualization.config.format}
             />
             <p className="text-xs text-muted-foreground sm:col-span-2 xl:col-span-3">
@@ -2897,7 +3078,7 @@ function PanelModuleEditor({
                   visualization: {
                     type: "KPI",
                     config: {
-                      metricId: kpiVisualization.config.metricId,
+                      ...(composition ? { composition } : { metricId: kpiVisualization.config.metricId }),
                       label: kpiVisualization.config.label,
                       format: "MONEY",
                       currencyCode,
@@ -2917,7 +3098,7 @@ function PanelModuleEditor({
                   visualization: {
                     type: "KPI",
                     config: {
-                      metricId: kpiVisualization.config.metricId,
+                      ...(composition ? { composition } : { metricId: kpiVisualization.config.metricId }),
                       label: kpiVisualization.config.label,
                       format: "PERCENT",
                       percentScale: percentScale as PanelPercentScale,
@@ -4714,7 +4895,7 @@ function reportSelectDisplayFields(
   );
 }
 
-function buildPanelConfig({
+export function buildPanelConfig({
   baseConfig,
   columns,
   distribution,
@@ -4734,16 +4915,6 @@ function buildPanelConfig({
   rowHeight: number;
 }): PanelConfig {
   const panelFilters = filters.map(panelFilterConfig);
-  const filterExpressionsByFieldId = filters
-    .filter((filter): filter is PanelEditorFilter & { fieldId: string; operator: "EQ" | "IN" } =>
-      Boolean(filter.fieldId) && (filter.operator === "EQ" || filter.operator === "IN"),
-    )
-    .map((filter): FilterExpr => ({
-      type: "PANEL_FILTER",
-      filterId: filter.id,
-      fieldId: filter.fieldId,
-      operator: filter.operator,
-    }));
 
   return {
     ...baseConfig,
@@ -4758,7 +4929,14 @@ function buildPanelConfig({
     filters: panelFilters,
     datasets: datasets.map((dataset) => ({
       ...dataset,
-      filters: mergePanelFilterExpressions(dataset.filters, filterExpressionsByFieldId),
+      filters: mergePanelFilterExpressions(dataset.filters, filters.flatMap((filter): FilterExpr[] => {
+        const bindings = filter.bindings ?? (filter.fieldId && filter.operator
+          ? datasets.map((item) => ({ datasetId: item.id, fieldId: filter.fieldId!, operator: filter.operator! }))
+          : []);
+        return bindings.filter((binding) => binding.datasetId === dataset.id).map((binding) => ({
+          type: "PANEL_FILTER", filterId: filter.id, fieldId: binding.fieldId, operator: binding.operator,
+        }));
+      })),
     })),
     modules,
     metrics,
@@ -4780,6 +4958,7 @@ function panelFilterConfig(filter: PanelEditorFilter): PanelFilter {
 
   delete next.fieldId;
   delete next.operator;
+  delete next.bindings;
 
   return next as PanelFilter;
 }
@@ -4813,20 +4992,19 @@ function panelConfigFromState(state: AppViewActionState) {
   }
 }
 
-function panelEditorFilters(config: PanelConfig | undefined): PanelEditorFilter[] {
+export function panelEditorFilters(config: PanelConfig | undefined): PanelEditorFilter[] {
   if (!config) {
     return [];
   }
 
   return config.filters.map((filter) => {
-    const binding = config.datasets
-      .flatMap((dataset) => dataset.filters ?? [])
-      .find((item) => item.type === "PANEL_FILTER" && item.filterId === filter.id);
+    const bindings = config.datasets.flatMap((dataset) => (dataset.filters ?? [])
+      .filter((item): item is Extract<FilterExpr, { type: "PANEL_FILTER" }> => item.type === "PANEL_FILTER" && item.filterId === filter.id)
+      .map((item) => ({ datasetId: dataset.id, fieldId: item.fieldId, operator: item.operator })));
 
     return {
       ...filter,
-      fieldId: binding?.fieldId,
-      operator: binding?.operator === "EQ" || binding?.operator === "IN" ? binding.operator : undefined,
+      bindings,
     };
   });
 }
@@ -4906,6 +5084,7 @@ function cleanPanelModuleVisualizationForDataset(
   metrics: PanelEditorMetric[],
 ): PanelEditorModule["visualization"] {
   if (visualization.type === "KPI") {
+    if (visualization.config.composition) return visualization;
     const metric = metrics.find((item) => item.id === visualization.config.metricId);
 
     return metric && metric.datasetId !== dataset?.id
@@ -5117,12 +5296,13 @@ function panelMetricConditionValueLabel(
 export function cleanPanelFiltersForEntity(
   filters: PanelEditorFilter[],
   entityType: AppViewEntityTypeOption | undefined,
+  datasetId?: string,
 ) {
   const activeFieldIds = new Set(entityType?.fields.filter((field) => field.isActive).map((field) => field.id) ?? []);
 
-  return filters.map((filter) => activeFieldIds.has(filter.fieldId ?? "")
-    ? filter
-    : {
+  return filters.map((filter) => filter.bindings
+    ? { ...filter, bindings: filter.bindings.filter((binding) => binding.datasetId !== datasetId || activeFieldIds.has(binding.fieldId)) }
+    : activeFieldIds.has(filter.fieldId ?? "") ? filter : {
         ...filter,
         fieldId: undefined,
         operator: undefined,
@@ -5181,6 +5361,10 @@ function fieldsForPanelDataset(
   return fieldIds
     .map((fieldId) => entityType?.fields.find((field) => field.id === fieldId && field.isActive))
     .filter((field): field is AppViewEntityTypeOption["fields"][number] => Boolean(field));
+}
+
+function fieldsForPanelFilterDataset(dataset: PanelEditorDataset | undefined, entityTypes: AppViewEntityTypeOption[]) {
+  return entityTypes.find((item) => item.id === dataset?.source.entityTypeId)?.fields.filter((field) => field.isActive) ?? [];
 }
 
 function panelFieldSourcesById(entityTypes: AppViewEntityTypeOption[]) {
@@ -5322,6 +5506,21 @@ function panelValueTypeForField(field: AppViewEntityTypeOption["fields"][number]
   return "TEXT";
 }
 
+function panelFilterFieldsCompatible(
+  source: AppViewEntityTypeOption["fields"][number],
+  target: AppViewEntityTypeOption["fields"][number] | undefined,
+) {
+  if (!target || panelValueTypeForField(source) !== panelValueTypeForField(target)) return false;
+  if (source.type === "SELECT" || source.type === "MULTISELECT") {
+    const values = (field: typeof source) => field.options.filter((option) => option.isActive).map((option) => option.value).sort();
+    return JSON.stringify(values(source)) === JSON.stringify(values(target));
+  }
+  if (source.type === "RELATION") {
+    return getRelationConfig(source.config).targetEntityTypeId === getRelationConfig(target.config).targetEntityTypeId;
+  }
+  return true;
+}
+
 function panelOperatorsForField(field: AppViewEntityTypeOption["fields"][number] | undefined) {
   if (!field) {
     return [{ label: "Igual", value: "EQ" }];
@@ -5396,7 +5595,7 @@ export function cleanPanelKpiConfigForFormat(
   format: PanelKpiFormat,
 ): PanelKpiConfig {
   const base = {
-    metricId: config.metricId,
+    ...(config.composition ? { composition: config.composition } : { metricId: config.metricId }),
     label: config.label,
   };
 
@@ -5789,7 +5988,7 @@ function VirtualFieldSelect({
 }
 
 function ActionErrorSummary({ state }: { state: AppViewActionState }) {
-  if (!state.message) {
+  if (!state.message || state.success) {
     return null;
   }
 
