@@ -2307,7 +2307,7 @@ function panelMetricAggregationLabel(aggregation: PanelMetricAggregation) {
   return panelMetricAggregationOptions().find((option) => option.value === aggregation)?.label ?? aggregation;
 }
 
-function PanelDatasetEditor({
+export function PanelDatasetEditor({
   dataset,
   datasets,
   entityTypes,
@@ -2884,7 +2884,7 @@ function PanelMetricConditionValueControl({
   );
 }
 
-function PanelModuleEditor({
+export function PanelModuleEditor({
   datasets,
   entityTypes,
   filters,
@@ -2914,13 +2914,10 @@ function PanelModuleEditor({
   spatialModules: PanelEditorModule[];
 }) {
   const dataset = datasets.find((item) => item.id === module.datasetId);
-  const datasetFieldIds = dataset?.transformation.fieldIds ?? [];
+  const datasetFieldIds = datasetFieldIdsForDataset(dataset);
   const entityType = entityTypes.find((item) => item.id === dataset?.source.entityTypeId);
-  const fieldsById = new Map((entityType?.fields ?? []).map((field) => [field.id, field]));
   const fieldSourcesById = panelFieldSourcesById(entityTypes);
-  const datasetFields = datasetFieldIds
-    .map((fieldId) => fieldsById.get(fieldId))
-    .filter((field): field is AppViewEntityTypeOption["fields"][number] => Boolean(field));
+  const datasetFields = fieldsForPanelDataset(dataset, entityTypes);
   const columns = module.visualization.type === "TABLE" ? module.visualization.config.columns : [];
   const incompatibleColumns = incompatiblePanelColumns(module, datasets);
   const updateModule = (next: PanelEditorModule) => setModules(replaceAt(modules, index, next));

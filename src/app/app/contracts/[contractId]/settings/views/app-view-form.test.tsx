@@ -1,9 +1,12 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { readFileSync } from "node:fs";
+import { Children, isValidElement, type ReactElement, type ReactNode } from "react";
 import { describe, expect, it } from "vitest";
 
 import {
   AppViewForm,
+  PanelDatasetEditor,
+  PanelModuleEditor,
   applicablePanelMetricFilters,
   affectedPanelModules,
   buildPanelConfig,
@@ -27,7 +30,9 @@ import {
   updatePanelModuleLayoutValue,
 } from "./app-view-form";
 import type { AppViewActionState } from "./actions";
-import type { PanelConfig } from "@/lib/app-views";
+import type { DatasetDefinition, PanelConfig, PanelModule } from "@/lib/app-views";
+import { parseAppViewConfig } from "@/lib/app-views";
+import { panelRelatedFieldId } from "@/lib/panel-related-fields";
 
 const appViewFormSource = readFileSync(new URL("./app-view-form.tsx", import.meta.url), "utf8");
 const panelEditorChromeSource = readFileSync(new URL("./panel-editor-chrome.tsx", import.meta.url), "utf8");
@@ -1760,6 +1765,58 @@ describe("AppViewForm", () => {
     expect(incompatiblePanelColumns(panelModule, datasets)).toEqual([{ fieldId: "number_field" }]);
   });
 
+  it("offers a related field to an existing TABLE immediately and preserves its columns after reopening", () => {
+    const entityTypes = [
+      { id: "catalog", name: "Catalog", icon: "folder", fields: [
+        { id: "category", isActive: true, key: "category", name: "Category", type: "SELECT", options: [] },
+      ] },
+      { id: "entries", name: "Entries", icon: "folder", fields: [
+        { id: "identifier", isActive: true, key: "identifier", name: "Identifier", type: "TEXT", options: [] },
+        { id: "created", isActive: true, key: "created", name: "Created", type: "DATE", options: [] },
+        { id: "catalog_link", isActive: true, key: "catalog", name: "Catalog link", type: "RELATION", options: [],
+          config: { relationKind: "ONE", targetEntityTypeId: "catalog" } },
+      ] },
+    ];
+    const relatedId = panelRelatedFieldId("catalog_link", "category");
+    let datasets: DatasetDefinition[] = [{ id: "entries_dataset", name: "Entries", source: { type: "ENTITY" as const, entityTypeId: "entries" },
+      transformation: { type: "RECORDS" as const, fieldIds: ["identifier", "created"] } }];
+    const originalColumns = [{ fieldId: "created", format: "DD-MM-YYYY" }, { fieldId: "identifier" }];
+    let modules: PanelModule[] = [{ id: "existing_table", datasetId: "entries_dataset", title: "Entries", layout: { x: 0, y: 0, w: 12, h: 6 },
+      visualization: { type: "TABLE" as const, config: { columns: originalColumns, paginated: true } } }];
+    const datasetEditor = PanelDatasetEditor({ dataset: datasets[0], datasets, entityTypes, filters: [], index: 0,
+      metrics: [], modules, setDatasets: (value) => { datasets = value; }, setFilters: () => {}, setMetrics: () => {},
+      setModules: (value) => { modules = value; }, setNotice: () => {} });
+    const checklist = findEditorElement(datasetEditor, (element) => element.props.name ===
+      "panelDatasetRelatedFields:entries_dataset:catalog_link");
+    expect(checklist).toBeDefined();
+    (checklist?.props.setSelected as (ids: string[]) => void)(["category"]);
+    expect(datasets[0].relatedFields).toEqual([{ relationFieldId: "catalog_link", fieldId: "category" }]);
+    expect(modules[0].visualization).toMatchObject({ config: { columns: originalColumns } });
+
+    const moduleProps = { datasets, entityTypes, filters: [], index: 0, layoutColumns: 12,
+      layoutDistribution: "MANUAL" as const, metrics: [], module: modules[0], modules,
+      setModules: (value: PanelModule[]) => { modules = value; }, spatialIndex: 0, spatialModules: modules };
+    const moduleEditor = PanelModuleEditor(moduleProps);
+    const relatedLabel = findEditorElement(moduleEditor, (element) => element.type === "label" &&
+      editorText(element).includes("Catalog link · Category"));
+    expect(relatedLabel).toBeDefined();
+    const checkbox = findEditorElement(relatedLabel, (element) => element.type === "input" && element.props.type === "checkbox");
+    (checkbox?.props.onChange as (event: { target: { checked: boolean } }) => void)({ target: { checked: true } });
+    expect(modules[0].visualization).toMatchObject({ config: { columns: [...originalColumns, { fieldId: relatedId }] } });
+
+    const saved = buildPanelConfig({ columns: 12, distribution: "MANUAL", rowHeight: 8, datasets, filters: [], metrics: [], modules });
+    const persistedConfig = Object.fromEntries(Object.entries(saved).filter(([key]) => key !== "type"));
+    const reopened = parseAppViewConfig({ type: "PANEL", config: { panelConfig: JSON.stringify(persistedConfig) } });
+    expect(reopened.type).toBe("PANEL");
+    if (reopened.type !== "PANEL") return;
+    expect(reopened.datasets[0].relatedFields).toEqual([{ relationFieldId: "catalog_link", fieldId: "category" }]);
+    expect(reopened.modules[0].visualization.type).toBe("TABLE");
+    if (reopened.modules[0].visualization.type !== "TABLE") return;
+    expect(reopened.modules[0].visualization.config.columns).toEqual([...originalColumns, { fieldId: relatedId }]);
+    expect(renderToStaticMarkup(<PanelModuleEditor {...moduleProps} datasets={reopened.datasets} module={reopened.modules[0]}
+      modules={reopened.modules} spatialModules={reopened.modules} />)).toContain("Catalog link · Category");
+  });
+
   it("cleans filter bindings when the target field is not available in the new PANEL entity", () => {
     const versionado = panelEntityTypes().find((entityType) => entityType.id === "versions");
 
@@ -1946,6 +2003,24 @@ describe("AppViewForm", () => {
 
 async function noopAction(state: AppViewActionState) {
   return state;
+}
+
+function findEditorElement(
+  node: ReactNode,
+  predicate: (element: ReactElement<Record<string, unknown>>) => boolean,
+): ReactElement<Record<string, unknown>> | undefined {
+  for (const child of Children.toArray(node)) {
+    if (!isValidElement<Record<string, unknown>>(child)) continue;
+    if (predicate(child)) return child;
+    const nested = findEditorElement(child.props.children as ReactNode, predicate);
+    if (nested) return nested;
+  }
+}
+
+function editorText(node: ReactNode): string {
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  return Children.toArray(node).map((child) => isValidElement<{ children?: ReactNode }>(child)
+    ? editorText(child.props.children) : typeof child === "string" ? child : "").join("");
 }
 
 function panelInitialValues(overrides: Partial<PanelConfig> = {}) {

@@ -1,5 +1,10 @@
 # Current Status
 
+## PANEL Existing TABLE Related Columns 2026-09-22
+
+- A related field enabled in an existing dataset was absent from the TABLE editor's available-column list because that list read only source `transformation.fieldIds`. The dataset draft and saved PANEL contract already retained `relatedFields`; runtime support was unchanged.
+- The TABLE editor now uses the dataset's shared field list, so related fields appear when the dataset draft is applied, without selecting them or changing existing column order/format. A synthetic existing-TABLE regression covers selection, serialization, and reopening; focused tests pass. Manual browser verification remains pending. No production AppViews or data changed.
+
 ## PANEL Related Fields Release 2026-09-22
 
 - Core moved by fast-forward from `8882cd4d9eabcc7d47c9aeb02c2c53583d2f8c1b` to functional SHA `90dd4b909a7a0d83553cf518ec7488d121d00a1b` before Client. Railway reported `success` for that exact SHA on `web.opco.cl`; subsequent `/api/v1/health` and `/api/v1/ready` returned healthy/ready. No new migration or production AppView, entity, or record change was included. The existing `railway.json` pre-deploy command was unchanged and no migration was run manually.
