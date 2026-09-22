@@ -2948,6 +2948,34 @@ describe("PANEL AppView config", () => {
     });
   });
 
+  it("validates and persists fields from two independent direct relations", async () => {
+    const source = panelEntityType({ fields: [...panelFields(),
+      { id: "area_link", name: "Area", type: "RELATION", isActive: true, config: { targetEntityTypeId: "areas", relationKind: "ONE" } },
+      { id: "owner_link", name: "Responsables", type: "RELATION", isActive: true, config: { targetEntityTypeId: "owners", relationKind: "MANY" } },
+    ] });
+    const config = recordsPanelConfig({
+      filters: [{ id: "area_filter", label: "Area", valueType: "TEXT" }],
+      datasets: [{ id: "version-records", source: { type: "ENTITY", entityTypeId: "versions" },
+        transformation: { type: "RECORDS", fieldIds: ["status_field"] },
+        relatedFields: [{ relationFieldId: "area_link", fieldId: "area_name" },
+          { relationFieldId: "owner_link", fieldId: "owner_name" }],
+        filters: [{ type: "PANEL_FILTER", filterId: "area_filter", fieldId: "related:area_link:area_name", operator: "EQ" }] }],
+      metrics: [{ id: "owners", name: "Owners", datasetId: "version-records", aggregation: "COUNT", filterIds: [],
+        conditions: [{ fieldId: "related:owner_link:owner_name", operator: "EQUALS", value: { type: "TEXT", value: "A" } }] }],
+      modules: [{ id: "table", datasetId: "version-records", visualization: { type: "TABLE", config: {
+        columns: [{ fieldId: "related:area_link:area_name" }, { fieldId: "related:owner_link:owner_name" }] } },
+        layout: { x: 0, y: 0, w: 12, h: 6 } }],
+    });
+    entityTypeFindFirst.mockResolvedValueOnce(source as never)
+      .mockResolvedValueOnce(entityType({ id: "areas", fields: [{ id: "area_name", name: "Nombre", type: "TEXT", isActive: true }] }) as never)
+      .mockResolvedValueOnce(entityType({ id: "owners", fields: [{ id: "owner_name", name: "Nombre", type: "TEXT", isActive: true }] }) as never);
+    await createAppView("contract_1", "user_1", panelInput(config));
+    expect(appViewCreate.mock.calls[0]?.[0].data.config).toEqual(config);
+    expect(entityTypeFindFirst).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({
+      contractId: "contract_1", id: "owners",
+    }) }));
+  });
+
   it("rejects PANEL relation fields that do not point to relatedEntityTypeId", async () => {
     entityTypeFindFirst
       .mockResolvedValueOnce(panelEntityType({

@@ -1,5 +1,10 @@
 # Current Status
 
+## PANEL Related Fields (local, unpublished)
+
+- Work in `feature/panel-related-fields-2026-09-22`: direct one-hop fields from multiple source relations for RECORDS and LATEST_BY_RELATION, with TABLE columns, interactive filters, and metric conditions. MANY stays one source row; the response/config revision changes with selected fields. No production data or AppViews changed.
+- Synthetic runtime tests cover two independent relations, MANY, pagination, filters, metrics, and both transformations. Core lint, typecheck, full Vitest (1086 passed, 8 existing skips), and habitual Turbopack build pass. Manual UI/offline validation and publication remain pending; do not publish this branch yet.
+
 ## PANEL Release 2026-09-22
 
 - Core moved by fast-forward from `aae812b97907f5b8e8b9754dcfa16b892404d0ab` to

@@ -16,6 +16,7 @@ import { badRequest, forbidden, notFound } from "@/lib/api-response";
 import { dateOnlyToUtcDate } from "@/lib/date-only";
 import { getRelationConfig } from "@/lib/field-validation";
 import { latestByRelationRecords } from "@/lib/latest-by-relation";
+import { panelRelatedFieldId } from "@/lib/panel-related-fields";
 import { prisma } from "@/lib/prisma";
 
 export type PanelQuery = {
@@ -41,11 +42,13 @@ type PanelField = {
   }>;
   sortOrder: number;
   type: EntityFieldType;
+  related?: { relationFieldId: string; targetEntityTypeId: string; targetFieldId: string; relationKind: "ONE" | "MANY" };
 };
 
 type PanelRecord = {
   displayName: string;
   id: string;
+  relatedValues?: Record<string, unknown[]>;
   outgoingRelations: Array<{
     sourceFieldId: string;
     targetRecord: {
@@ -314,6 +317,34 @@ async function executePanelDataset({
   }
 
   const fieldsById = new Map(entity.fields.map((field) => [field.id, field as PanelField]));
+  const relatedSelections = dataset.relatedFields ?? [];
+  const relationTargetIds = Array.from(new Set(relatedSelections.map((selection) => {
+    const relation = fieldsById.get(selection.relationFieldId);
+    return relation?.type === "RELATION" ? getRelationConfig(relation.config).targetEntityTypeId : undefined;
+  }).filter((id): id is string => Boolean(id))));
+  const targetEntities = relatedSelections.length ? await prisma.entityType.findMany({
+    where: { contractId, id: { in: relationTargetIds }, isActive: true },
+    include: { fields: { where: { isActive: true, id: { in: relatedSelections.map((selection) => selection.fieldId) } },
+      include: { options: { orderBy: [{ sortOrder: "asc" }, { label: "asc" }] } } } },
+  }) : [];
+  for (const selection of relatedSelections) {
+    const relation = fieldsById.get(selection.relationFieldId);
+    const targetId = relation?.type === "RELATION" ? getRelationConfig(relation.config).targetEntityTypeId : undefined;
+    const targetEntity = targetEntities.find((item) => item.id === targetId);
+    const targetField = targetEntity?.fields.find((field) => field.id === selection.fieldId && field.type !== "RELATION");
+    if (!relation || !targetEntity || !targetField) {
+      return { ok: false as const, response: badRequest("El campo relacionado del panel no está disponible.", "INVALID_PANEL_CONFIG") };
+    }
+    const virtualId = panelRelatedFieldId(relation.id, targetField.id);
+    if (fieldsById.has(virtualId)) {
+      return { ok: false as const, response: badRequest("El campo relacionado del panel está duplicado.", "INVALID_PANEL_CONFIG") };
+    }
+    fieldsById.set(virtualId, {
+      ...targetField, id: virtualId, name: `${relation.name} · ${targetField.name}`,
+      related: { relationFieldId: relation.id, targetEntityTypeId: targetEntity.id, targetFieldId: targetField.id,
+        relationKind: getRelationConfig(relation.config).relationKind ?? "ONE" },
+    });
+  }
   const fieldIds = panelDatasetFieldIds(dataset);
   const fields = fieldIds
     .map((fieldId) => fieldsById.get(fieldId))
@@ -325,6 +356,8 @@ async function executePanelDataset({
       response: badRequest("El panel necesita configuración.", "INVALID_PANEL_CONFIG"),
     };
   }
+  const datasetFields = [...fields, ...relatedSelections.map((selection) =>
+    fieldsById.get(panelRelatedFieldId(selection.relationFieldId, selection.fieldId))!)];
 
   const requiredFilterIds = config.filters
     .filter((filter) => filter.required && dataset.filters?.some((item) => item.type === "PANEL_FILTER" && item.filterId === filter.id))
@@ -361,6 +394,16 @@ async function executePanelDataset({
     orderBy: [{ displayName: "asc" }, { id: "asc" }],
     where: baseWhere,
   });
+  const enriched = await enrichPanelRelatedValues(records as PanelRecord[], fieldsById, relatedSelections);
+  if (!enriched.ok) {
+    return { ok: false as const, response: badRequest("La cardinalidad o el destino de una relación del panel no es válido.", "PANEL_RELATION_INVALID") };
+  }
+  const filteredRecords = enriched.records.filter((record) => filterWhere.postFilters.every((filter) => {
+    const field = fieldsById.get(filter.fieldId);
+    return field && filter.type === "PANEL_FILTER"
+      ? panelRecordMatchesFilterValue({ field, filter, record, value: panelFilterValues[filter.filterId] })
+      : false;
+  }));
   const displayRecords = transformPanelDatasetRecords({
     dataset,
     fieldsById,
@@ -369,7 +412,7 @@ async function executePanelDataset({
       filterIds: panelProvidedDatasetFilterIds(dataset, panelFilterValues, requiredPanelFilterIds),
       filters: dataset.filters ?? [],
       panelFilterValues,
-      records: records as PanelRecord[],
+      records: filteredRecords,
     }),
   });
 
@@ -380,7 +423,7 @@ async function executePanelDataset({
     ok: true as const,
     data: panelDatasetResponse({
       dataset,
-      fields,
+      fields: datasetFields,
       page,
       pageSize,
       records: pagedRecords,
@@ -389,9 +432,49 @@ async function executePanelDataset({
     execution: {
       dataset,
       fieldsById,
-      records: records as PanelRecord[],
+      records: filteredRecords,
     },
   };
+}
+
+async function enrichPanelRelatedValues(
+  records: PanelRecord[],
+  fieldsById: Map<string, PanelField>,
+  selections: NonNullable<DatasetDefinition["relatedFields"]>,
+): Promise<{ ok: true; records: PanelRecord[] } | { ok: false }> {
+  if (selections.length === 0 || records.length === 0) return { ok: true, records };
+  const fields = selections.map((selection) => fieldsById.get(panelRelatedFieldId(selection.relationFieldId, selection.fieldId))!);
+  const relationFieldIds = new Set(selections.map((selection) => selection.relationFieldId));
+  const targetIds = Array.from(new Set(records.flatMap((record) => record.outgoingRelations
+    .filter((relation) => relationFieldIds.has(relation.sourceFieldId))
+    .map((relation) => relation.targetRecordId))));
+  const targets = await prisma.entityRecord.findMany({
+    where: { id: { in: targetIds }, entityTypeId: { in: Array.from(new Set(fields.map((field) => field.related!.targetEntityTypeId))) } },
+    include: { values: { where: { entityFieldId: { in: selections.map((item) => item.fieldId) } } } },
+  });
+  const targetsById = new Map(targets.map((target) => [target.id, target]));
+  for (const record of records) {
+    record.relatedValues = {};
+    for (const field of fields) {
+      const relation = field.related!;
+      const links = record.outgoingRelations.filter((item) => item.sourceFieldId === relation.relationFieldId);
+      if (relation.relationKind === "ONE" && links.length > 1) return { ok: false };
+      const values: unknown[] = [];
+      for (const link of links) {
+        const target = targetsById.get(link.targetRecordId);
+        if (!target || target.entityTypeId !== relation.targetEntityTypeId) return { ok: false };
+        const value = serializePanelFieldValue({
+          field: { ...field, id: relation.targetFieldId, related: undefined },
+          record: { id: target.id, displayName: target.displayName, updatedAt: target.updatedAt,
+            outgoingRelations: [], values: target.values },
+        });
+        if (Array.isArray(value)) values.push(...value);
+        else if (value !== null && value !== undefined && value !== "") values.push(value);
+      }
+      record.relatedValues[field.id] = values;
+    }
+  }
+  return { ok: true, records };
 }
 
 function missingRequiredPanelFilter(config: PanelConfig, dataset: DatasetDefinition, values: Record<string, unknown>) {
@@ -401,18 +484,22 @@ function missingRequiredPanelFilter(config: PanelConfig, dataset: DatasetDefinit
 }
 
 function panelDatasetFieldIds(dataset: DatasetDefinition) {
-  const filterFieldIds = (dataset.filters ?? []).map((filter) => filter.fieldId);
+  const virtualIds = new Set((dataset.relatedFields ?? []).map((item) => panelRelatedFieldId(item.relationFieldId, item.fieldId)));
+  const filterFieldIds = (dataset.filters ?? []).map((filter) => filter.fieldId).filter((id) => !virtualIds.has(id));
+  const relationFieldIds = (dataset.relatedFields ?? []).map((field) => field.relationFieldId);
 
   if (dataset.transformation.type === "RECORDS") {
     return Array.from(new Set([
       ...dataset.transformation.fieldIds,
       ...filterFieldIds,
+      ...relationFieldIds,
     ]));
   }
 
   return Array.from(new Set([
     ...dataset.transformation.fieldIds,
     ...filterFieldIds,
+    ...relationFieldIds,
     dataset.transformation.relationFieldId,
     dataset.transformation.orderFieldId,
     dataset.transformation.requiredValueFieldId,
@@ -492,7 +579,8 @@ function panelDatasetResponse({
   records: PanelRecord[];
   total: number;
 }) {
-  const responseFields = dataset.transformation.fieldIds
+  const responseFields = [...dataset.transformation.fieldIds,
+    ...(dataset.relatedFields ?? []).map((item) => panelRelatedFieldId(item.relationFieldId, item.fieldId))]
     .map((fieldId) => fields.find((field) => field.id === fieldId))
     .filter((field): field is PanelField => Boolean(field));
 
@@ -545,6 +633,7 @@ function panelFiltersWhere({
   requiredFilterIds: string[];
 }) {
   const conditions: Prisma.EntityRecordWhereInput[] = [];
+  const postFilters: Array<Extract<FilterExpr, { type: "PANEL_FILTER" }>> = [];
 
   for (const filterId of requiredFilterIds) {
     if (panelFilterValues[filterId] === undefined || panelFilterValues[filterId] === null || panelFilterValues[filterId] === "") {
@@ -574,6 +663,10 @@ function panelFiltersWhere({
       if (value === undefined || value === null || value === "") {
         continue;
       }
+      if (field.related) {
+        postFilters.push(filter);
+        continue;
+      }
       conditions.push(panelFieldValueWhere({ field, operator: filter.operator, value }));
       continue;
     }
@@ -590,7 +683,7 @@ function panelFiltersWhere({
     }));
   }
 
-  return { ok: true as const, conditions };
+  return { ok: true as const, conditions, postFilters };
 }
 
 function panelProvidedDatasetFilterIds(
@@ -668,6 +761,10 @@ function panelRecordMatchesFilterValue({
 }
 
 function panelRecordComparableValues(record: PanelRecord, field: PanelField) {
+  if (field.related) {
+    return (record.relatedValues?.[field.id] ?? [])
+      .map((value) => panelComparableFilterValue(field, value));
+  }
   if (field.type === "RELATION") {
     return record.outgoingRelations
       .filter((relation) => relation.sourceFieldId === field.id)
@@ -876,6 +973,10 @@ function serializePanelFieldValue({
   field: PanelField;
   record: PanelRecord;
 }) {
+  if (field.related) {
+    const values = record.relatedValues?.[field.id] ?? [];
+    return field.related.relationKind === "MANY" || field.type === "MULTISELECT" ? values : values[0] ?? null;
+  }
   if (field.type === "RELATION") {
     const relations = record.outgoingRelations
       .filter((relation) => relation.sourceFieldId === field.id)
@@ -896,7 +997,9 @@ function serializePanelFieldValue({
   if (value.integerValue !== null && value.integerValue !== undefined) return value.integerValue;
   if (value.decimalValue !== null && value.decimalValue !== undefined) return value.decimalValue.toString();
   if (value.booleanValue !== null && value.booleanValue !== undefined) return value.booleanValue ? "true" : "false";
-  if (value.dateValue !== null && value.dateValue !== undefined) return formatDateOnly(value.dateValue);
+  if (value.dateValue !== null && value.dateValue !== undefined) {
+    return field.type === "DATETIME" ? value.dateValue.toISOString() : formatDateOnly(value.dateValue);
+  }
   if (value.jsonValue !== null && value.jsonValue !== undefined) return value.jsonValue;
 
   return null;
@@ -1033,6 +1136,18 @@ function panelRecordMatchesMetricCondition({
 }
 
 function panelMetricConditionRecordValues(record: PanelRecord, field: PanelField): Array<string | number | boolean> {
+  if (field.related) {
+    return (record.relatedValues?.[field.id] ?? []).flatMap((value): Array<string | number | boolean> => {
+      if (typeof value === "number" || typeof value === "boolean") return [value];
+      if (typeof value !== "string") return [];
+      if (["INTEGER", "DECIMAL", "MONEY"].includes(field.type)) {
+        const number = Number(value);
+        return Number.isFinite(number) ? [number] : [];
+      }
+      if (field.type === "BOOLEAN") return [value === "true"];
+      return value ? [value] : [];
+    });
+  }
   if (field.type === "RELATION") {
     return record.outgoingRelations
       .filter((relation) => relation.sourceFieldId === field.id)

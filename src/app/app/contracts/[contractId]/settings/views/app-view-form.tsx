@@ -40,6 +40,7 @@ import {
   appViewWorkflowOptions,
   suggestedAppViewSlug,
 } from "@/lib/app-view-editor-options";
+import { panelRelatedFieldId } from "@/lib/panel-related-fields";
 import type {
   AppViewConfig,
   DatasetDefinition,
@@ -2339,6 +2340,19 @@ function PanelDatasetEditor({
   const activeFields = entityType?.fields.filter((field) => field.isActive) ?? [];
   const updateDataset = (next: PanelEditorDataset) => setDatasets(replaceAt(datasets, index, next));
   const transformation = dataset.transformation;
+  const updateRelatedFields = (relationFieldId: string, fieldIds: string[]) => {
+    const relatedFields = [...(dataset.relatedFields ?? []).filter((item) => item.relationFieldId !== relationFieldId),
+      ...fieldIds.map((fieldId) => ({ relationFieldId, fieldId }))];
+    const allowedIds = new Set([...activeFields.map((field) => field.id),
+      ...relatedFields.map((item) => panelRelatedFieldId(item.relationFieldId, item.fieldId))]);
+    const nextDataset = { ...dataset, relatedFields, filters: dataset.filters?.filter((item) => allowedIds.has(item.fieldId)) };
+    const nextDatasets = replaceAt(datasets, index, nextDataset);
+    setDatasets(nextDatasets);
+    setFilters(filters.map((filter) => ({ ...filter, bindings: filter.bindings?.filter((binding) =>
+      binding.datasetId !== dataset.id || allowedIds.has(binding.fieldId)) })));
+    setMetrics(cleanPanelMetricsForDatasets(metrics, nextDatasets));
+    setModules(cleanPanelModulesForDatasets(modules, nextDatasets));
+  };
 
   return (
     <div className="grid gap-3 rounded-md border border-border p-3">
@@ -2472,6 +2486,19 @@ function PanelDatasetEditor({
         selected={transformation.fieldIds}
         setSelected={(fieldIds) => updateDataset({ ...dataset, transformation: { ...transformation, fieldIds } })}
       />
+      {activeFields.filter((field) => field.type === "RELATION").map((relation) => {
+        const target = entityTypes.find((item) => item.id === relationTargetEntityTypeId(relation.config));
+        if (!target) return null;
+        const targetFields = target.fields.filter((field) => field.isActive && field.type !== "RELATION");
+        return <OrderedFieldChecklist
+          fields={targetFields}
+          key={relation.id}
+          label={`${relation.name} · ${target.name}`}
+          name={`panelDatasetRelatedFields:${dataset.id}:${relation.id}`}
+          selected={(dataset.relatedFields ?? []).filter((item) => item.relationFieldId === relation.id).map((item) => item.fieldId)}
+          setSelected={(fieldIds) => updateRelatedFields(relation.id, fieldIds)}
+        />;
+      })}
       <FieldError errors={fieldErrors?.panelDatasetFields} />
       <div className="flex justify-end">
         <button className="rounded border border-input px-3 py-1 text-sm" onClick={() => setDatasets(datasets.filter((_, itemIndex) => itemIndex !== index))} type="button">
@@ -2583,7 +2610,9 @@ function PanelMetricEditor({
 }) {
   const dataset = datasets.find((item) => item.id === metric.datasetId);
   const fields = fieldsForPanelDataset(dataset, entityTypes);
-  const compatibleFields = fields.filter((field) => panelMetricAggregationTargetsField(metric.aggregation, field.type));
+  const relatedIds = new Set((dataset?.relatedFields ?? []).map((item) => panelRelatedFieldId(item.relationFieldId, item.fieldId)));
+  const compatibleFields = fields.filter((field) => !relatedIds.has(field.id) &&
+    panelMetricAggregationTargetsField(metric.aggregation, field.type));
   const conditionFields = fields.filter((field) => panelMetricConditionTargetsField(field.type));
   const applicableFilters = applicablePanelMetricFilters(metric.datasetId, filters);
   const updateMetric = (next: PanelEditorMetric) => setMetrics(replaceAt(metrics, index, next));
@@ -5016,10 +5045,16 @@ export function cleanPanelDatasetForEntity(
 ): PanelEditorDataset {
   const activeFieldIds = new Set(entityType?.fields.filter((field) => field.isActive).map((field) => field.id) ?? []);
   const fieldIds = dataset.transformation.fieldIds.filter((fieldId) => activeFieldIds.has(fieldId));
+  const relatedFields = (dataset.relatedFields ?? []).filter((item) => {
+    const relation = entityType?.fields.find((field) => field.id === item.relationFieldId && field.isActive && field.type === "RELATION");
+    const target = entityTypes.find((entry) => entry.id === relationTargetEntityTypeId(relation?.config));
+    return target?.fields.some((field) => field.id === item.fieldId && field.isActive && field.type !== "RELATION");
+  });
 
   if (dataset.transformation.type === "RECORDS") {
     return {
       ...dataset,
+      relatedFields,
       transformation: {
         type: "RECORDS",
         fieldIds,
@@ -5050,6 +5085,7 @@ export function cleanPanelDatasetForEntity(
 
   return {
     ...dataset,
+    relatedFields,
     transformation: {
       type: "LATEST_BY_RELATION",
       relatedEntityTypeId: nextRelatedEntityTypeId,
@@ -5348,7 +5384,18 @@ function cleanPanelSortForEntity(
 }
 
 function datasetFieldIdsForDataset(dataset: PanelEditorDataset | undefined) {
-  return dataset?.transformation.fieldIds ?? [];
+  return [...(dataset?.transformation.fieldIds ?? []), ...(dataset?.relatedFields ?? [])
+    .map((item) => panelRelatedFieldId(item.relationFieldId, item.fieldId))];
+}
+
+function relatedPanelEditorFields(dataset: PanelEditorDataset | undefined, entityTypes: AppViewEntityTypeOption[]) {
+  const source = entityTypes.find((item) => item.id === dataset?.source.entityTypeId);
+  return (dataset?.relatedFields ?? []).flatMap((selection) => {
+    const relation = source?.fields.find((field) => field.id === selection.relationFieldId && field.isActive && field.type === "RELATION");
+    const target = entityTypes.find((item) => item.id === relationTargetEntityTypeId(relation?.config));
+    const field = target?.fields.find((item) => item.id === selection.fieldId && item.isActive && item.type !== "RELATION");
+    return relation && field ? [{ ...field, id: panelRelatedFieldId(relation.id, field.id), name: `${relation.name} · ${field.name}` }] : [];
+  });
 }
 
 function fieldsForPanelDataset(
@@ -5358,13 +5405,15 @@ function fieldsForPanelDataset(
   const entityType = entityTypes.find((item) => item.id === dataset?.source.entityTypeId);
   const fieldIds = datasetFieldIdsForDataset(dataset);
 
-  return fieldIds
+  return [...fieldIds
     .map((fieldId) => entityType?.fields.find((field) => field.id === fieldId && field.isActive))
-    .filter((field): field is AppViewEntityTypeOption["fields"][number] => Boolean(field));
+    .filter((field): field is AppViewEntityTypeOption["fields"][number] => Boolean(field)),
+  ...relatedPanelEditorFields(dataset, entityTypes)];
 }
 
 function fieldsForPanelFilterDataset(dataset: PanelEditorDataset | undefined, entityTypes: AppViewEntityTypeOption[]) {
-  return entityTypes.find((item) => item.id === dataset?.source.entityTypeId)?.fields.filter((field) => field.isActive) ?? [];
+  return [...(entityTypes.find((item) => item.id === dataset?.source.entityTypeId)?.fields.filter((field) => field.isActive) ?? []),
+    ...relatedPanelEditorFields(dataset, entityTypes)];
 }
 
 function panelFieldSourcesById(entityTypes: AppViewEntityTypeOption[]) {

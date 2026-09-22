@@ -22,6 +22,7 @@ vi.mock("@/lib/prisma", () => ({
     },
     entityType: {
       findFirst: vi.fn(),
+      findMany: vi.fn(),
     },
   },
 }));
@@ -29,6 +30,7 @@ vi.mock("@/lib/prisma", () => ({
 const userCanAccessAppViewMock = vi.mocked(userCanAccessAppView);
 const appViewFindFirst = vi.mocked(prisma.appView.findFirst);
 const entityTypeFindFirst = vi.mocked(prisma.entityType.findFirst);
+const entityTypeFindMany = vi.mocked(prisma.entityType.findMany);
 const entityRecordCount = vi.mocked(prisma.entityRecord.count);
 const entityRecordFindMany = vi.mocked(prisma.entityRecord.findMany);
 
@@ -47,11 +49,81 @@ beforeEach(() => {
     type: "PANEL",
   } as never);
   entityTypeFindFirst.mockResolvedValue(panelEntityType() as never);
+  entityTypeFindMany.mockResolvedValue([] as never);
   entityRecordCount.mockResolvedValue(1 as never);
   entityRecordFindMany.mockResolvedValue([panelRecord("record_1")] as never);
 });
 
 describe("getApiPanel", () => {
+  it.each([["RECORDS", false], ["RECORDS", true], ["LATEST_BY_RELATION", false],
+    ["LATEST_BY_RELATION", true]] as const)(
+    "projects multiple direct relations without multiplying %s rows (filtered: %s)",
+    async (type, filtered) => {
+      const areaId = "related:area_link:area_name";
+      const tagId = "related:tag_link:tag_status";
+      const source = {
+        ...panelEntityType(),
+        fields: [...panelEntityType().fields,
+          { id: "area_link", name: "Area", type: "RELATION", isActive: true, key: "area", sortOrder: 8,
+            options: [], config: { targetEntityTypeId: "areas", relationKind: "ONE" } },
+          { id: "tag_link", name: "Etiquetas", type: "RELATION", isActive: true, key: "tags_rel", sortOrder: 9,
+            options: [], config: { targetEntityTypeId: "tags", relationKind: "MANY" } }],
+      };
+      entityTypeFindFirst.mockResolvedValueOnce(source as never);
+      entityTypeFindMany.mockResolvedValueOnce([
+        { id: "areas", fields: [{ id: "area_name", name: "Nombre", type: "TEXT", isActive: true, options: [] }] },
+        { id: "tags", fields: [{ id: "tag_status", name: "Estado", type: "SELECT", isActive: true,
+          options: [{ id: "active_id", label: "Activo", value: "active", isActive: true, sortOrder: 1 }] }] },
+      ] as never);
+      const link = (sourceFieldId: string, targetRecordId: string, entityTypeId: string) => ({ sourceFieldId,
+        targetRecordId, targetRecord: { id: targetRecordId, entityTypeId, displayName: targetRecordId } });
+      const rows = ["row_1", "row_2"].map((id, index) => ({ ...panelRecord(id, `2026-09-0${index + 1}`),
+        outgoingRelations: [link("area_link", "area_1", "areas"),
+          link("tag_link", index ? "tag_2" : "tag_1", "tags"),
+          ...(!index ? [link("tag_link", "tag_2", "tags")] : []),
+          ...(type === "LATEST_BY_RELATION" ? [link("procedure_field", "group_1", "procedures")] : [])],
+      }));
+      entityRecordFindMany.mockResolvedValueOnce(rows as never).mockResolvedValueOnce([
+        { id: "area_1", entityTypeId: "areas", displayName: "Operaciones", updatedAt: new Date(),
+          values: [{ entityFieldId: "area_name", textValue: "Operaciones" }] },
+        { id: "tag_1", entityTypeId: "tags", displayName: "Uno", updatedAt: new Date(),
+          values: [{ entityFieldId: "tag_status", textValue: "active" }] },
+        { id: "tag_2", entityTypeId: "tags", displayName: "Dos", updatedAt: new Date(),
+          values: [{ entityFieldId: "tag_status", textValue: "inactive" }] },
+      ] as never);
+      const transformation = type === "RECORDS"
+        ? { type, fieldIds: ["status_field"], pagination: { pageSize: 1 } }
+        : { type, fieldIds: ["status_field", "date_field", "procedure_field"],
+          relatedEntityTypeId: "procedures", relationFieldId: "procedure_field", orderFieldId: "date_field",
+          pagination: { pageSize: 1 } };
+      appViewFindFirst.mockResolvedValueOnce({ active: true, contractId: "contract_1", id: "panel_1",
+        name: "Panel", slug: "panel", type: "PANEL", config: panelConfig({
+          filters: [{ id: "tag_filter", label: "Estado", valueType: "OPTION" }],
+          datasets: [{ id: "records", source: { type: "ENTITY", entityTypeId: "versions" }, transformation,
+            relatedFields: [{ relationFieldId: "area_link", fieldId: "area_name" },
+              { relationFieldId: "tag_link", fieldId: "tag_status" }],
+            filters: [{ type: "PANEL_FILTER", filterId: "tag_filter", fieldId: tagId, operator: "EQ" }] }],
+          metrics: [{ id: "by_area", name: "Area", datasetId: "records", aggregation: "COUNT", filterIds: [],
+            conditions: [{ fieldId: areaId, operator: "EQUALS", value: { type: "TEXT", value: "Operaciones" } }] },
+          { id: "filtered", name: "Filtrados", datasetId: "records", aggregation: "COUNT", filterIds: ["tag_filter"] }],
+          modules: [{ id: "table", datasetId: "records", visualization: { type: "TABLE", config: {
+            columns: [{ fieldId: areaId }, { fieldId: tagId }] } }, layout: { x: 0, y: 0, w: 12, h: 6 } }],
+        }) } as never);
+      const result = await getApiPanel({ appViewId: "panel_1", contractId: "contract_1",
+        query: filtered ? { filters: JSON.stringify({ tag_filter: "active_id" }) } : {}, userId: "user_1" });
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.data.datasets[0]?.pagination.total).toBe(type === "RECORDS" && !filtered ? 2 : 1);
+      expect(result.data.datasets[0]?.schema.fields.map((field) => field.id)).toContain(tagId);
+      expect(result.data.datasets[0]?.rows[0]?.values).toMatchObject({ [areaId]: "Operaciones" });
+      expect(result.data.datasets[0]?.rows[0]?.values[tagId]).toEqual(type === "LATEST_BY_RELATION" && !filtered
+        ? ["inactive"] : ["active", "inactive"]);
+      expect(result.data.metrics[0]?.value).toBe(type === "RECORDS" ? 2 : 1);
+      expect(result.data.metrics[1]?.value).toBe(type === "RECORDS" && !filtered ? 2 : 1);
+      expect(entityRecordFindMany).toHaveBeenCalledTimes(2);
+      expect(entityRecordFindMany.mock.calls[1]?.[0]).toMatchObject({ where: { id: { in: expect.arrayContaining(["area_1", "tag_1", "tag_2"]) } } });
+    },
+  );
   it.each([
     ["ADD", 2.5, 1.25, 3.75],
     ["SUBTRACT", 2.5, 4, -1.5],
@@ -1054,6 +1126,9 @@ describe("panelConfigRevision", () => {
     expect(panelConfigRevision({ type: "PANEL", ...panelConfig() } as never)).toBe(panelConfigRevision({ type: "PANEL", ...panelConfig() } as never));
     expect(panelConfigRevision({ type: "PANEL", ...panelConfig() } as never)).not.toBe(panelConfigRevision({ type: "PANEL", ...panelConfig({
       layout: { columns: 6 },
+    }) } as never));
+    expect(panelConfigRevision({ type: "PANEL", ...panelConfig() } as never)).not.toBe(panelConfigRevision({ type: "PANEL", ...panelConfig({
+      datasets: [{ ...panelConfig().datasets[0], relatedFields: [{ relationFieldId: "link", fieldId: "target_field" }] }],
     }) } as never));
   });
 });

@@ -8,6 +8,7 @@ import { getAuthorizedContractAdmin } from "./contracts";
 import { dateOnlyToUtcDate } from "./date-only";
 import { isEntityIconKey } from "./entity-icons";
 import { getRelationConfig } from "./field-validation";
+import { panelRelatedFieldId } from "./panel-related-fields";
 import { prisma } from "./prisma";
 import {
   getWorkflowLabel,
@@ -183,6 +184,7 @@ export type SortSpec = {
 export type DatasetDefinition = {
   id: string;
   name?: string;
+  relatedFields?: Array<{ relationFieldId: string; fieldId: string }>;
   source: {
     type: "ENTITY";
     entityTypeId: string;
@@ -1403,6 +1405,10 @@ const panelPercentScaleSchema = z.enum(["RATIO", "WHOLE"]);
 const panelDatasetSchema = z.object({
   id: panelIdSchema,
   name: z.string().trim().min(1).optional(),
+  relatedFields: z.array(z.object({
+    relationFieldId: z.string().trim().min(1),
+    fieldId: z.string().trim().min(1),
+  }).strict()).optional(),
   source: z.object({
     type: z.literal("ENTITY"),
     entityTypeId: z.string().trim().min(1),
@@ -1426,6 +1432,10 @@ const panelDatasetSchema = z.object({
     }),
   ]),
 }).strict().superRefine((dataset, ctx) => {
+  const relatedIds = (dataset.relatedFields ?? []).map((item) => panelRelatedFieldId(item.relationFieldId, item.fieldId));
+  if (new Set(relatedIds).size !== relatedIds.length) {
+    ctx.addIssue({ code: "custom", message: "No repitas campos relacionados en el dataset.", path: ["relatedFields"] });
+  }
   if (new Set(dataset.transformation.fieldIds).size !== dataset.transformation.fieldIds.length) {
     ctx.addIssue({
       code: "custom",
@@ -1934,6 +1944,7 @@ async function validatePanelAppViewConfig({
 }) {
   const filtersById = new Map(config.filters.map((filter) => [filter.id, filter]));
   const datasetFieldIdsById = new Map<string, Set<string>>();
+  const datasetRelatedFieldIdsById = new Map<string, Set<string>>();
   const datasetFieldsById = new Map<string, Map<string, { id: string; isActive: boolean; name: string; type: string }>>();
   const datasetFiltersById = new Map<string, Set<string>>();
   const datasetNamesById = new Map<string, string>();
@@ -1952,6 +1963,7 @@ async function validatePanelAppViewConfig({
     const entityType = await requireEntityType(client, contractId, dataset.source.entityTypeId);
     const fields = entityType.fields;
     const fieldIds = dataset.transformation.fieldIds;
+    const relatedFieldsById = new Map<string, (typeof fields)[number]>();
 
     datasetNamesById.set(dataset.id, dataset.name ?? entityType.name);
     datasetFiltersById.set(dataset.id, new Set((dataset.filters ?? [])
@@ -1967,8 +1979,33 @@ async function validatePanelAppViewConfig({
       requireActiveTargetField(fields, fieldId, "campos del dataset");
     }
 
+    for (const related of dataset.relatedFields ?? []) {
+      const relation = requireActiveTargetField(fields, related.relationFieldId, "relación del campo relacionado");
+      if (relation.type !== "RELATION") {
+        throw new AppViewConfigError("Selecciona una relación directa activa para el campo relacionado.", "datasets");
+      }
+      const targetEntityTypeId = getRelationConfig(relation.config).targetEntityTypeId;
+      if (!targetEntityTypeId) {
+        throw new AppViewConfigError("La relación no tiene entidad destino.", "datasets");
+      }
+      const targetEntity = await requireEntityType(client, contractId, targetEntityTypeId);
+      const targetField = requireActiveTargetField(targetEntity.fields, related.fieldId, "campo relacionado");
+      if (targetField.type === "RELATION") {
+        throw new AppViewConfigError("PANEL admite solo un salto de relación.", "datasets");
+      }
+      const virtualId = panelRelatedFieldId(relation.id, targetField.id);
+      if (fields.some((field) => field.id === virtualId)) {
+        throw new AppViewConfigError("El identificador del campo relacionado colisiona con un campo fuente.", "datasets");
+      }
+      relatedFieldsById.set(virtualId, { ...targetField, id: virtualId, name: `${relation.name} · ${targetField.name}` });
+      fieldNamesById.set(virtualId, `${relation.name} · ${targetField.name}`);
+    }
+
     for (const filter of dataset.filters ?? []) {
-      const field = requireActiveTargetField(fields, filter.fieldId, "filtros del dataset");
+      const field = relatedFieldsById.get(filter.fieldId) ?? requireActiveTargetField(fields, filter.fieldId, "filtros del dataset");
+      if (relatedFieldsById.has(filter.fieldId) && filter.type === "FIELD_VALUE") {
+        throw new AppViewConfigError("Los campos relacionados usan filtros interactivos o condiciones de métricas.", "filters");
+      }
 
       if (filter.type === "PANEL_FILTER") {
         const panelFilter = filtersById.get(filter.filterId);
@@ -2020,8 +2057,9 @@ async function validatePanelAppViewConfig({
       }
     }
 
-    datasetFieldIdsById.set(dataset.id, new Set(fieldIds));
-    datasetFieldsById.set(dataset.id, new Map(fields.map((field) => [field.id, field])));
+    datasetFieldIdsById.set(dataset.id, new Set([...fieldIds, ...relatedFieldsById.keys()]));
+    datasetRelatedFieldIdsById.set(dataset.id, new Set(relatedFieldsById.keys()));
+    datasetFieldsById.set(dataset.id, new Map([...fields.map((field) => [field.id, field] as const), ...relatedFieldsById]));
   }
 
   for (const metric of config.metrics) {
@@ -2062,6 +2100,10 @@ async function validatePanelAppViewConfig({
 
     if (!metric.fieldId) {
       throw new AppViewConfigError(`Selecciona un campo para la métrica ${metricName}.`, "metrics");
+    }
+
+    if (datasetRelatedFieldIdsById.get(metric.datasetId)?.has(metric.fieldId)) {
+      throw new AppViewConfigError(`La métrica ${metricName} solo admite agregación de campos fuente.`, "metrics");
     }
 
     if (!datasetFieldIds.has(metric.fieldId)) {
