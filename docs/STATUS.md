@@ -1,22 +1,23 @@
 # Current Status
 
-## PANEL Release Gate 2026-09-22
+## PANEL Release 2026-09-22
 
-- Publication of PANEL filters, composed KPI, and AppView save feedback is **not started**. No
-  release SHA exists for this scope; Core and Client remain on their development worktrees.
-- Core candidate: lint, typecheck, and full Vitest suite pass (1081 passed, 8 skipped). The habitual
-  `npm run build` remains blocked before application compilation: Turbopack's PostCSS worker cannot
-  bind an internal port (`Operation not permitted`), including an escalated retry with a synthetic
-  process-only `AUTH_SECRET` and verified local database URL. Do not publish until this check passes.
-- An escalated `npm run build -- --webpack` completed successfully with the same process-only
-  synthetic credentials and local database target. This validates the candidate under Webpack,
-  but does not establish Railway's effective builder: versioned `package.json` has
-  `build = next build` and `railway.json` has no `buildCommand` (only a pre-deploy command).
-  Turbopack validation or an authoritative Railway build-command check remains pending.
-- Client candidate checks are recorded in its STATUS. Manual save-feedback confirmation from the
-  bottom of the editor is still pending; no manual validation is claimed.
-- Once validated, publish Core before Client. If rollback is required after both are active, revert
-  Client first, then Core; do not expose composed KPI configurations to older Client builds.
+- Core moved by fast-forward from `aae812b97907f5b8e8b9754dcfa16b892404d0ab` to
+  `a8e08724d62792e29397ca2d0356070167290abe`, then Client was published. Railway reported
+  `success` for the Core service on that exact commit; public `/api/v1/health` returned 200 and
+  `/api/v1/ready` returned `ready` after activation. The candidate adds no Prisma migration;
+  the existing `railway.json` pre-deploy command was not changed or run manually.
+- The same Core tree passed lint, typecheck, full Vitest (1081 passed, 8 skipped), and an escalated
+  `npm run build -- --webpack`. The user additionally reported a successful final route summary
+  from the habitual `npm run build` in WSL; no exit code was supplied or inferred. Local sandbox
+  Turbopack builds remained blocked by an internal port bind. Railway's dashboard build-command
+  override, if any, has not been inspected.
+- Rollback order for this compatible pair: revert Client code to
+  `d6142589656d5282be0c6f62f36019d0da5aafe0` first, then Core to the SHA above. Use normal
+  forward commits/redeploys, not force push or database restore. Existing KPI/TABLE modules remain
+  compatible; older Client displays composed KPI as unavailable. No production AppViews were edited.
+- Manual verification of the new save notice from the bottom of the editor, filter controls,
+  offline selection, and KPI presentation remains pending; no manual validation is claimed.
 
 ## AppView Editor Save Feedback 2026-09-21
 
@@ -25,8 +26,8 @@
   protection, and a viewport-visible success/error notice. PANEL validation still opens the affected
   section; edits made while saving remain unsaved. No AppView data was changed.
 - Focused form/action/page tests, typecheck and lint pass. Manual verification from the bottom of
-  an open editor remains pending. Core build is blocked by Turbopack's internal port bind
-  (`Operation not permitted`) in this execution environment, including an escalated attempt.
+  an open editor remains pending. The local sandbox's Turbopack port restriction did not affect
+  the user-reported WSL build or the successful Railway deployment status.
 
 ## PANEL Metric Composition 2026-09-21
 
@@ -48,8 +49,8 @@
 - Metric editor optional filters now read the current draft filter bindings, so a newly linked
   filter is selectable before the PANEL is saved. Existing metric `filterIds` are not auto-filled.
   A focused editor/serialization regression and the full suite pass; manual validation in the
-  open browser draft remains pending. The habitual build is blocked in this execution environment
-  by Turbopack's internal port bind (`Operation not permitted`), including an escalated retry.
+  open browser draft remains pending. The local sandbox's Turbopack port restriction is recorded
+  above separately from the user-reported WSL build.
 - PANEL filters execute when bound to a dataset; table rows use provided optional filters, while
   metrics use required filters plus their selected optional `filterIds`. Filters run before
   `LATEST_BY_RELATION`; metric conditions run after it. Metrics use the full transformed set.
