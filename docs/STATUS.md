@@ -1,9 +1,11 @@
 # Current Status
 
-## PANEL Related Fields (local, unpublished)
+## PANEL Related Fields Release 2026-09-22
 
-- Work in `feature/panel-related-fields-2026-09-22`: direct one-hop fields from multiple source relations for RECORDS and LATEST_BY_RELATION, with TABLE columns, interactive filters, and metric conditions. MANY stays one source row; the response/config revision changes with selected fields. No production data or AppViews changed.
-- Synthetic runtime tests cover two independent relations, MANY, pagination, filters, metrics, and both transformations. Core lint, typecheck, full Vitest (1086 passed, 8 existing skips), and habitual Turbopack build pass. Manual UI/offline validation and publication remain pending; do not publish this branch yet.
+- Core moved by fast-forward from `8882cd4d9eabcc7d47c9aeb02c2c53583d2f8c1b` to functional SHA `90dd4b909a7a0d83553cf518ec7488d121d00a1b` before Client. Railway reported `success` for that exact SHA on `web.opco.cl`; subsequent `/api/v1/health` and `/api/v1/ready` returned healthy/ready. No new migration or production AppView, entity, or record change was included. The existing `railway.json` pre-deploy command was unchanged and no migration was run manually.
+- Direct one-hop fields from multiple source relations work in RECORDS and LATEST_BY_RELATION for TABLE columns, interactive filters, and metric conditions. A related column does not require the RELATION column to be visible. MANY remains one source row. Existing PANEL configs omit `relatedFields` and retain their behavior. Core lint, typecheck, full Vitest (1086 passed, 8 existing skips), and habitual Turbopack build passed for the functional tree; focused tests also passed after the client-safe helper import adjustment.
+- Compatible rollback: revert Client to `8805de170aff78ae191e71e6f94a970c67fc3f89` first, then Core to the SHA above using forward commits/redeploys, never force push or database restore. If related fields have since been configured in production AppViews, remove those selections while new Core is active before rolling Core back; old Core does not understand the new config property.
+- Manual production verification of related columns, interactive filters, and offline selection remains pending. A local screenshot confirms only selection of a related Categoria field, not those end-to-end behaviors.
 
 ## PANEL Release 2026-09-22
 
