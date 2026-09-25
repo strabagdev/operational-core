@@ -909,6 +909,81 @@ describe("getApiPanel", () => {
     });
   });
 
+  it("intersects selected optional filters with fixed COUNT metric conditions", async () => {
+    appViewFindFirst.mockResolvedValue({
+      active: true,
+      config: panelConfig({
+        filters: [{ id: "sex", valueType: "OPTION" }],
+        datasets: [
+          {
+            id: "records",
+            source: { type: "ENTITY", entityTypeId: "versions" },
+            filters: [{ type: "PANEL_FILTER", filterId: "sex", fieldId: "sex_field", operator: "EQ" }],
+            transformation: {
+              type: "RECORDS",
+              fieldIds: ["sex_field", "status_field", "date_field"],
+              pagination: { pageSize: 25 },
+            },
+          },
+        ],
+        metrics: [
+          { id: "total", name: "Total", datasetId: "records", aggregation: "COUNT", fieldId: null, filterIds: ["sex"], conditions: [] },
+          { id: "current", name: "Vigentes", datasetId: "records", aggregation: "COUNT", fieldId: null, filterIds: ["sex"], conditions: [{ fieldId: "status_field", operator: "EQUALS", value: { type: "OPTION", optionId: "status_current" } }] },
+          { id: "unlinked-current", name: "Vigentes sin sexo", datasetId: "records", aggregation: "COUNT", fieldId: null, filterIds: [], conditions: [{ fieldId: "status_field", operator: "EQUALS", value: { type: "OPTION", optionId: "status_current" } }] },
+        ],
+      }),
+      contractId: "contract_1",
+      icon: null,
+      id: "panel_1",
+      name: "Panel Operativo",
+      slug: "panel-operativo",
+      sortOrder: 1,
+      type: "PANEL",
+    } as never);
+    entityTypeFindFirst.mockResolvedValue({
+      ...panelEntityType(),
+      fields: [...panelEntityType().fields, {
+        config: null,
+        id: "sex_field",
+        isActive: true,
+        key: "sexo",
+        name: "Sexo",
+        options: [
+          { id: "sex_m", isActive: true, label: "M", sortOrder: 1, value: "M" },
+          { id: "sex_f", isActive: true, label: "F", sortOrder: 2, value: "F" },
+        ],
+        sortOrder: 8,
+        type: "SELECT",
+      }],
+    } as never);
+    const records = [
+      { ...panelRecord("m_current_1", "2026-09-01", 1, "vigente"), values: [...panelRecord("m_current_1", "2026-09-01", 1, "vigente").values, { entityFieldId: "sex_field", textValue: "M" }] },
+      { ...panelRecord("m_current_2", "2026-09-02", 1, "vigente"), values: [...panelRecord("m_current_2", "2026-09-02", 1, "vigente").values, { entityFieldId: "sex_field", textValue: "M" }] },
+      { ...panelRecord("m_other", "2026-09-03", 1, "e1"), values: [...panelRecord("m_other", "2026-09-03", 1, "e1").values, { entityFieldId: "sex_field", textValue: "M" }] },
+      { ...panelRecord("f_current", "2026-09-04", 1, "vigente"), values: [...panelRecord("f_current", "2026-09-04", 1, "vigente").values, { entityFieldId: "sex_field", textValue: "F" }] },
+      { ...panelRecord("f_other_1", "2026-09-05", 1, "e1"), values: [...panelRecord("f_other_1", "2026-09-05", 1, "e1").values, { entityFieldId: "sex_field", textValue: "F" }] },
+      { ...panelRecord("f_other_2", "2026-09-06", 1, "e2"), values: [...panelRecord("f_other_2", "2026-09-06", 1, "e2").values, { entityFieldId: "sex_field", textValue: "F" }] },
+    ];
+    entityRecordFindMany.mockResolvedValue(records as never);
+
+    const valuesFor = async (filters?: Record<string, unknown>) => {
+      const result = await getApiPanel({
+        appViewId: "panel_1",
+        contractId: "contract_1",
+        query: filters ? { filters: JSON.stringify(filters) } : {},
+        userId: "user_1",
+      });
+      expect(result.ok).toBe(true);
+      if (!result.ok) return {};
+      return Object.fromEntries(result.data.metrics.map((metric) => [metric.id, metric.value]));
+    };
+
+    await expect(valuesFor()).resolves.toEqual({ total: 6, current: 3, "unlinked-current": 3 });
+    await expect(valuesFor({ sex: "sex_m" })).resolves.toEqual({ total: 3, current: 2, "unlinked-current": 3 });
+    await expect(valuesFor({ sex: "sex_f" })).resolves.toEqual({ total: 3, current: 1, "unlinked-current": 3 });
+    await expect(valuesFor({})).resolves.toEqual({ total: 6, current: 3, "unlinked-current": 3 });
+  });
+
   it("applies PANEL_FILTER bindings before pagination", async () => {
     appViewFindFirst.mockResolvedValueOnce({
       active: true,
