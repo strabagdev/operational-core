@@ -10,6 +10,7 @@ import {
   getAppViewInput,
   isExpectedAppViewConfigParseError,
   parseAppViewConfig,
+  parseAppViewConfigForEditor,
   setAppViewActive,
   updateAppView,
   type PanelConfig,
@@ -1713,6 +1714,44 @@ describe("PANEL AppView config", () => {
     expect(appViewFieldErrors(error)).toMatchObject({
       panelModuleColumns: ["Selecciona al menos una columna para la tabla."],
     });
+  });
+
+  it("loads only empty TABLE columns as a repairable editor draft and preserves the PANEL config", () => {
+    const stored = panelConfig({
+      modules: [
+        {
+          ...panelConfig().modules[0],
+          title: "Tabla histórica",
+          visualization: {
+            type: "TABLE",
+            config: { columns: [], searchable: true, paginated: true },
+          },
+        },
+      ],
+    });
+
+    expect(() => parseAppViewConfig({ config: stored, type: "PANEL" } as never)).toThrow();
+
+    const editor = parseAppViewConfigForEditor({ config: stored, type: "PANEL" } as never);
+
+    expect(editor.repairablePanelTables).toEqual([
+      { id: "procedure-table", title: "Tabla histórica" },
+    ]);
+    expect(editor.config).toEqual({ type: "PANEL", ...stored });
+  });
+
+  it("does not broaden editor recovery to other invalid PANEL configs", () => {
+    const stored = panelConfig({
+      datasets: [],
+      modules: [
+        {
+          ...panelConfig().modules[0],
+          visualization: { type: "TABLE", config: { columns: [] } },
+        },
+      ],
+    });
+
+    expect(() => parseAppViewConfigForEditor({ config: stored, type: "PANEL" } as never)).toThrow();
   });
 
   it("maps incomplete LATEST_BY_RELATION config to relation and order field errors", () => {

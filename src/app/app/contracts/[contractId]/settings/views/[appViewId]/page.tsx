@@ -11,6 +11,7 @@ import {
   isExpectedAppViewConfigParseError,
   logAppViewConfigDiagnostic,
   parseAppViewConfig,
+  parseAppViewConfigForEditor,
 } from "@/lib/app-views";
 
 import { DiagnosticReferenceCopyButton } from "../diagnostic-reference-copy-button";
@@ -69,10 +70,13 @@ export default async function AppViewDetailPage({
   });
 
   let currentConfig: ReturnType<typeof parseAppViewConfig> | null = null;
+  let repairablePanelTables: Array<{ id: string; title?: string }> = [];
   let invalidDiagnostic: ReturnType<typeof appViewConfigDiagnostic> = null;
 
   try {
-    currentConfig = parseAppViewConfig(data.appView);
+    const editorConfig = parseAppViewConfigForEditor(data.appView);
+    currentConfig = editorConfig.config;
+    repairablePanelTables = editorConfig.repairablePanelTables;
   } catch (error) {
     if (!isExpectedAppViewConfigParseError(error)) {
       throw error;
@@ -133,6 +137,22 @@ export default async function AppViewDetailPage({
             <div className="flex flex-wrap gap-2">
               <DiagnosticReferenceCopyButton reference={invalidDiagnostic.reference} />
             </div>
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {repairablePanelTables.length > 0 ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Tabla pendiente de reparar</CardTitle>
+          </CardHeader>
+          <CardContent className="grid gap-2 text-sm text-muted-foreground">
+            <p>Selecciona al menos una columna en cada tabla indicada y guarda la experiencia.</p>
+            <ul className="list-disc pl-5 text-foreground">
+              {repairablePanelTables.map((table) => (
+                <li key={table.id}>{table.title || table.id}</li>
+              ))}
+            </ul>
           </CardContent>
         </Card>
       ) : null}

@@ -2140,7 +2140,7 @@ function defaultPanelMetric(datasets: PanelEditorDataset[], metrics: PanelEditor
   };
 }
 
-function defaultPanelModule(
+export function defaultPanelModule(
   datasets: PanelEditorDataset[],
   metrics: PanelEditorMetric[],
   modules: PanelEditorModule[],
@@ -2174,7 +2174,7 @@ function defaultPanelModule(
     visualization: {
       type: "TABLE",
       config: {
-        columns: [],
+        columns: datasetFieldIdsForDataset(dataset).map((fieldId) => ({ fieldId })),
         searchable: true,
         paginated: true,
       },

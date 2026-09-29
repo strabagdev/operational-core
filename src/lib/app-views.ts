@@ -653,6 +653,84 @@ export function parseAppViewConfig(view: Pick<AppView, "config" | "type">): AppV
   return { type: "PANEL", ...parsePanelConfigInput(raw) };
 }
 
+export type AppViewEditorConfig = {
+  config: AppViewConfig;
+  repairablePanelTables: Array<{ id: string; title?: string }>;
+};
+
+export function parseAppViewConfigForEditor(
+  view: Pick<AppView, "config" | "type">,
+): AppViewEditorConfig {
+  try {
+    return { config: parseAppViewConfig(view), repairablePanelTables: [] };
+  } catch (originalError) {
+    if (!isExpectedAppViewConfigParseError(originalError) || view.type !== "PANEL" ||
+        !isRecord(view.config) || !Array.isArray(view.config.modules)) {
+      throw originalError;
+    }
+
+    const repairableIndexes: number[] = [];
+    const modules = view.config.modules.map((module, index) => {
+      if (!isRecord(module) || !isRecord(module.visualization) ||
+          module.visualization.type !== "TABLE" || !isRecord(module.visualization.config) ||
+          !Array.isArray(module.visualization.config.columns) || module.visualization.config.columns.length !== 0) {
+        return module;
+      }
+
+      repairableIndexes.push(index);
+      return {
+        ...module,
+        visualization: {
+          ...module.visualization,
+          config: {
+            ...module.visualization.config,
+            columns: [{ fieldId: "__editor_repair_column__" }],
+          },
+        },
+      };
+    });
+
+    if (repairableIndexes.length === 0) {
+      throw originalError;
+    }
+
+    const parsed = parseAppViewConfig({
+      ...view,
+      config: { ...view.config, modules },
+    });
+
+    if (parsed.type !== "PANEL") {
+      throw originalError;
+    }
+
+    const repairableIndexSet = new Set(repairableIndexes);
+    const config: PanelConfig = {
+      ...parsed,
+      modules: parsed.modules.map((module, index) => {
+        if (!repairableIndexSet.has(index) || module.visualization.type !== "TABLE") {
+          return module;
+        }
+
+        return {
+          ...module,
+          visualization: {
+            ...module.visualization,
+            config: { ...module.visualization.config, columns: [] },
+          },
+        };
+      }),
+    };
+
+    return {
+      config,
+      repairablePanelTables: repairableIndexes.map((index) => {
+        const panelModule = config.modules[index]!;
+        return { id: panelModule.id, ...(panelModule.title ? { title: panelModule.title } : {}) };
+      }),
+    };
+  }
+}
+
 export function summarizeAppViewConfig({
   config,
   entityTypes,

@@ -17,6 +17,7 @@ import {
   cleanPanelMetricConditionForField,
   cleanPanelMetricsForDatasets,
   cleanPanelModulesForDatasets,
+  defaultPanelModule,
   distributePanelModules,
   incompatiblePanelColumns,
   packPanelModules,
@@ -31,7 +32,7 @@ import {
 } from "./app-view-form";
 import type { AppViewActionState } from "./actions";
 import type { DatasetDefinition, PanelConfig, PanelModule } from "@/lib/app-views";
-import { parseAppViewConfig } from "@/lib/app-views";
+import { parseAppViewConfig, parseAppViewConfigForEditor } from "@/lib/app-views";
 import { panelRelatedFieldId } from "@/lib/panel-related-fields";
 
 const appViewFormSource = readFileSync(new URL("./app-view-form.tsx", import.meta.url), "utf8");
@@ -1588,6 +1589,90 @@ describe("AppViewForm", () => {
 
     expect(html).toContain("La columna Número no pertenece al dataset Versionado.");
     expect(html).not.toContain("number_field no pertenece");
+  });
+
+  it("creates a TABLE-only module with explicit dataset columns when no metrics exist", () => {
+    const datasets = [{
+      id: "version-records",
+      source: { type: "ENTITY" as const, entityTypeId: "versions" },
+      transformation: { type: "RECORDS" as const, fieldIds: ["status_field", "date_field"] },
+    }];
+
+    const tableModule = defaultPanelModule(datasets, [], [], 12);
+
+    expect(tableModule.visualization.type).toBe("TABLE");
+    if (tableModule.visualization.type !== "TABLE") return;
+    expect(tableModule.datasetId).toBe("version-records");
+    expect(tableModule.visualization.config.columns).toEqual([
+      { fieldId: "status_field" },
+      { fieldId: "date_field" },
+    ]);
+  });
+
+  it("selects columns in a repairable TABLE, saves it strictly, and reopens the preserved PANEL", () => {
+    const initial = panelConfigFixture({
+      layout: { columns: 12, distribution: "MANUAL", rowHeight: 8 },
+      filters: [{ id: "status", label: "Estado", valueType: "OPTION" }],
+      datasets: panelConfigFixture().datasets.map((dataset) => ({ ...dataset, filters: [] })),
+      modules: [{
+        ...panelConfigFixture().modules[0],
+        visualization: { type: "TABLE", config: { columns: [], searchable: true, paginated: true } },
+      }],
+    });
+    const stored = Object.fromEntries(Object.entries(initial).filter(([key]) => key !== "type"));
+    const editor = parseAppViewConfigForEditor({ type: "PANEL", config: stored } as never);
+    expect(editor.config.type).toBe("PANEL");
+    if (editor.config.type !== "PANEL") return;
+
+    let modules = editor.config.modules;
+    const moduleEditor = PanelModuleEditor({
+      datasets: editor.config.datasets,
+      entityTypes: panelEntityTypes(),
+      filters: panelEditorFilters(editor.config),
+      index: 0,
+      layoutColumns: editor.config.layout.columns,
+      layoutDistribution: "MANUAL",
+      metrics: editor.config.metrics,
+      module: modules[0],
+      modules,
+      setModules: (value) => { modules = value; },
+      spatialIndex: 0,
+      spatialModules: modules,
+    });
+    const statusLabel = findEditorElement(moduleEditor, (element) =>
+      element.type === "label" && editorText(element).includes("Estatus"));
+    const statusCheckbox = findEditorElement(statusLabel, (element) =>
+      element.type === "input" && element.props.type === "checkbox");
+    expect(statusCheckbox?.props.checked).toBe(false);
+    (statusCheckbox?.props.onChange as (event: { target: { checked: boolean } }) => void)({
+      target: { checked: true },
+    });
+
+    const saved = buildPanelConfig({
+      baseConfig: editor.config,
+      columns: editor.config.layout.columns,
+      distribution: editor.config.layout.distribution ?? "MANUAL",
+      rowHeight: editor.config.layout.rowHeight ?? 8,
+      datasets: editor.config.datasets,
+      filters: panelEditorFilters(editor.config),
+      metrics: editor.config.metrics,
+      modules,
+    });
+    const persisted = Object.fromEntries(Object.entries(saved).filter(([key]) => key !== "type"));
+    const reopened = parseAppViewConfig({ type: "PANEL", config: persisted } as never);
+
+    expect(reopened.type).toBe("PANEL");
+    if (reopened.type !== "PANEL") return;
+    expect(reopened.filters).toEqual(initial.filters);
+    expect(reopened.datasets).toEqual(initial.datasets);
+    expect(reopened.metrics).toEqual(initial.metrics);
+    expect(reopened.layout).toEqual(initial.layout);
+    expect(reopened.modules[0]).toMatchObject({
+      id: initial.modules[0].id,
+      datasetId: initial.modules[0].datasetId,
+      layout: initial.modules[0].layout,
+      visualization: { type: "TABLE", config: { columns: [{ fieldId: "status_field" }] } },
+    });
   });
 
   it("cleans Procedimientos fields and table columns when the dataset entity changes to Versionado", () => {

@@ -9,6 +9,7 @@ import {
   isExpectedAppViewConfigParseError,
   logAppViewConfigDiagnostic,
   parseAppViewConfig,
+  parseAppViewConfigForEditor,
 } from "@/lib/app-views";
 
 import AppViewDetailPage from "./page";
@@ -43,6 +44,10 @@ vi.mock("@/lib/app-views", () => ({
   isExpectedAppViewConfigParseError: vi.fn((error) => error instanceof Error && error.message === "Invalid config"),
   logAppViewConfigDiagnostic: vi.fn(),
   parseAppViewConfig: vi.fn((view) => (view.config ?? { type: view.type }) as AppViewConfig),
+  parseAppViewConfigForEditor: vi.fn((view) => ({
+    config: (view.config ?? { type: view.type }) as AppViewConfig,
+    repairablePanelTables: [],
+  })),
 }));
 
 vi.mock("../actions", () => ({
@@ -64,6 +69,7 @@ const getAuthorizedAppViewMock = vi.mocked(getAuthorizedAppView);
 const isExpectedAppViewConfigParseErrorMock = vi.mocked(isExpectedAppViewConfigParseError);
 const logAppViewConfigDiagnosticMock = vi.mocked(logAppViewConfigDiagnostic);
 const parseAppViewConfigMock = vi.mocked(parseAppViewConfig);
+const parseAppViewConfigForEditorMock = vi.mocked(parseAppViewConfigForEditor);
 
 describe("AppViewDetailPage config loading", () => {
   beforeEach(() => {
@@ -77,9 +83,16 @@ describe("AppViewDetailPage config loading", () => {
     });
     isExpectedAppViewConfigParseErrorMock.mockImplementation((error) => error instanceof Error && error.message === "Invalid config");
     parseAppViewConfigMock.mockImplementation((view) => (view.config ?? { type: view.type }) as AppViewConfig);
+    parseAppViewConfigForEditorMock.mockImplementation((view) => ({
+      config: (view.config ?? { type: view.type }) as AppViewConfig,
+      repairablePanelTables: [],
+    }));
   });
 
   it("opens invalid config in a controlled read-only state without save defaults", async () => {
+    parseAppViewConfigForEditorMock.mockImplementation(() => {
+      throw new Error("Invalid config");
+    });
     parseAppViewConfigMock.mockImplementation((view) => {
       const appView = view as { config?: unknown; id: string; type: string };
 
@@ -127,6 +140,59 @@ describe("AppViewDetailPage config loading", () => {
     expect(html).not.toContain('data-app-view-form="true"');
     expect(html).not.toContain("Guardar experiencia");
     expect(logAppViewConfigDiagnosticMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens a PANEL with an empty TABLE as an identified repairable draft", async () => {
+    const repairableConfig = {
+      type: "PANEL",
+      schemaVersion: 1,
+      layout: { columns: 12, rowHeight: 8 },
+      filters: [{ id: "status", label: "Estado", valueType: "OPTION" }],
+      datasets: [{
+        id: "people",
+        source: { type: "ENTITY", entityTypeId: "people" },
+        transformation: { type: "RECORDS", fieldIds: ["name"] },
+      }],
+      metrics: [],
+      calculatedFields: [],
+      modules: [{
+        id: "people-table",
+        title: "Personas sin columnas",
+        datasetId: "people",
+        visualization: { type: "TABLE", config: { columns: [] } },
+        layout: { x: 0, y: 0, w: 12, h: 6 },
+      }],
+    } as AppViewConfig;
+    parseAppViewConfigForEditorMock.mockReturnValue({
+      config: repairableConfig,
+      repairablePanelTables: [{ id: "people-table", title: "Personas sin columnas" }],
+    });
+    getAuthorizedAppViewMock.mockResolvedValue({
+      appView: {
+        active: true,
+        config: repairableConfig,
+        icon: "folder",
+        id: "view_repairable",
+        name: "Panel reparable",
+        slug: "panel-reparable",
+        sortOrder: 2,
+        type: "PANEL",
+      },
+      appViews: [],
+      entityTypes: [],
+    } as never);
+
+    const html = renderToStaticMarkup(await AppViewDetailPage({
+      params: Promise.resolve({ appViewId: "view_repairable", contractId: "contract_1" }),
+      searchParams: Promise.resolve({}),
+    }));
+
+    expect(html).toContain("Tabla pendiente de reparar");
+    expect(html).toContain("Personas sin columnas");
+    expect(html).toContain('data-app-view-form="true"');
+    expect(html).toContain("Guardar experiencia");
+    expect(html).not.toContain("Configuración incompatible o inválida");
+    expect(logAppViewConfigDiagnosticMock).not.toHaveBeenCalled();
   });
 
   it("keeps editing a valid AppView when another AppView option has invalid config", async () => {

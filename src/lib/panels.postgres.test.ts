@@ -101,6 +101,53 @@ describePostgres("PANEL PostgreSQL integration", () => {
     expect(dataset?.schema.fields.find((field) => field.id === ids.dateField)?.type).toBe("DATE");
   });
 
+  it("executes the same TABLE dataset with and without KPI modules", async () => {
+    const baseConfig = panelConfig();
+    const tableModule = baseConfig.modules[0];
+    const kpiMetric = baseConfig.metrics.find((metric) => metric.id === "latest-current")!;
+    const tableOnlyConfig = { ...baseConfig, metrics: [], modules: [tableModule] };
+    const tableAndKpiConfig = {
+      ...baseConfig,
+      metrics: [kpiMetric],
+      modules: [tableModule, {
+        id: "latest-current-kpi",
+        datasetId: "latest-procedures",
+        visualization: { type: "KPI", config: { metricId: "latest-current", label: "Vigentes", format: "NUMBER" } },
+        layout: { x: 0, y: 6, w: 2, h: 2 },
+      }],
+    };
+
+    try {
+      await prisma.appView.update({ where: { id: ids.panelView }, data: { config: tableOnlyConfig } });
+      const tableOnly = await getApiPanel({
+        appViewId: ids.panelView,
+        contractId: ids.contract,
+        query: { datasetId: "latest-procedures", page: "1", pageSize: "2" },
+        userId: ids.user,
+      });
+
+      await prisma.appView.update({ where: { id: ids.panelView }, data: { config: tableAndKpiConfig } });
+      const tableAndKpi = await getApiPanel({
+        appViewId: ids.panelView,
+        contractId: ids.contract,
+        query: { datasetId: "latest-procedures", page: "1", pageSize: "2" },
+        userId: ids.user,
+      });
+
+      expect(tableOnly.ok).toBe(true);
+      expect(tableAndKpi.ok).toBe(true);
+      if (!tableOnly.ok || !tableAndKpi.ok) return;
+      expect(tableOnly.data.metrics).toEqual([]);
+      expect(tableAndKpi.data.metrics).toMatchObject([{ id: "latest-current", value: 3 }]);
+      expect(tableOnly.data.datasets[0]?.rows.map((row) => row.id)).toEqual([ids.version5Current, ids.versionTieA]);
+      expect(tableAndKpi.data.datasets[0]?.rows.map((row) => row.id)).toEqual(tableOnly.data.datasets[0]?.rows.map((row) => row.id));
+      expect(tableOnly.data.modules.map((module) => module.visualization.type)).toEqual(["TABLE"]);
+      expect(tableAndKpi.data.modules.map((module) => module.visualization.type)).toEqual(["TABLE", "KPI"]);
+    } finally {
+      await prisma.appView.update({ where: { id: ids.panelView }, data: { config: panelConfig() } });
+    }
+  });
+
   it("paginates after reducing one latest row per relation", async () => {
     const first = await getApiPanel({
       appViewId: ids.panelView,

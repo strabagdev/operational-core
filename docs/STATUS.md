@@ -1,5 +1,86 @@
 # Current Status
 
+## PANEL/TABLE Validation Closure 2026-09-29
+
+- Accumulated Core scope was reviewed on `main`. The functional diff contains only: explicit dataset
+  columns when creating a TABLE, editor-only repair hydration for stored TABLE modules with `columns: []`,
+  and regressions for TABLE-only versus TABLE+KPI execution and repair. The remaining changes are tests and
+  PANEL documentation. There are no API, schema, migration, dependency, production, or deployment changes.
+- Historical TABLE repair procedure: open the PANEL, open `Módulos`, choose `Editar módulo` for the affected
+  TABLE, select at least one item under `Columnas y diseño`, press the module's `Guardar`, and then press
+  `Guardar experiencia`. Reopen the PANEL to confirm the columns remain selected and the repair notice is gone.
+- Final Core checks are reused because no Core implementation changed after their successful run: focused
+  regressions 165/165, full Vitest suite 1102 passed with 16 skipped, `npx tsc --noEmit`, lint, production
+  build, and `git diff --check` passed. The completed Windows Chrome/CDP verification is also reused: opening
+  did not write, selecting and saving a column persisted it, and reopening showed the repaired TABLE.
+- Cross-repository audit confirms the Client counterpart is limited to TABLE-specific minimum height and a
+  bounded accessible vertical viewport around the existing horizontal table scroll, plus tests and docs.
+  No secret, `.env`, local configuration, database, log, generated bundle, or other artifact is included in
+  the tracked diff. Nothing was committed, pushed, deployed, migrated, or published.
+
+## PANEL Empty TABLE Repair 2026-09-29
+
+- Cause: the detail page parsed the stored PANEL with the same strict parser used by valid configurations.
+  `TABLE.visualization.config.columns` requires at least one item, so a historical `columns: []` failed
+  before `AppViewForm` mounted and displayed `Configuración incompatible o inválida`; the existing module
+  editor could repair the value, but was unreachable.
+- Change: edit-page hydration now retries only a PANEL containing one or more TABLE modules with an empty
+  columns array. It substitutes a temporary column solely while applying the complete canonical structural
+  validation, restores `columns: []` in the in-memory draft, and names each affected table above the form.
+  Opening does not write. The canonical parser, update action, PANEL semantic validation, and runtime remain
+  unchanged and continue rejecting empty columns and every unrelated invalid shape.
+- Repair procedure for an earlier TABLE: open the PANEL in Core, confirm the `Tabla pendiente de reparar`
+  notice names the affected table, open `Módulos`, choose `Editar módulo`, select at least one item under
+  `Columnas y diseño`, press the module sheet's `Guardar`, then press `Guardar experiencia`. Reopen the PANEL
+  and confirm the selected columns remain checked and the repair notice is gone.
+- Regression coverage verifies strict rejection before repair, repairable opening with all datasets, filters,
+  metrics, modules, and layout preserved, rejection when another invalid condition is present, visible column
+  selection, strict save, and valid reopen. Focused Vitest run passed 165 tests across `app-views`, the detail
+  page, and `app-view-form`; `npx tsc --noEmit`, lint, and `git diff --check` also passed.
+- Browser evidence used Windows Chrome 153 through CDP port 9334 with the exclusive
+  `C:\\Temp\\opco-cdp-panel-repair-20260929` profile. Core used the explicit `.env.local` destination
+  `opco_dev@127.0.0.1:5432/opco_development`. The single synthetic PANEL opened with its named TABLE,
+  `columns: []`, and the four selectable Personas fields while PostgreSQL still contained zero columns.
+  Selecting `Nombre`, saving the module and experience, and reloading showed `Nombre` checked, one persisted
+  column, one unchanged dataset/module, zero filters/metrics, and the unchanged 12-column manual layout;
+  neither the repair notice nor the incompatible-config state remained.
+- Cleanup: the synthetic PANEL and its cascading access row were deleted after verification; Core and the
+  exclusive Chrome profile were stopped and temporary CDP artifacts were removed. No existing AppView,
+  production destination, API, schema, migration, dependency, Client file, commit, push, or deploy was touched.
+
+## PANEL TABLE-only Default Columns 2026-09-29
+
+- Visual follow-up used Windows Chrome 153 from WSL through CDP on port 9333 with the exclusive
+  `C:\\Temp\\opco-cdp-panel-table-20260929` profile. Core ran only against the explicit `.env.local`
+  `opco_dev@127.0.0.1:5432/opco_development` destination, Client ran at `localhost:3003`, and Core's
+  CORS list was extended only in the process environment for that local origin.
+- The editor created `CDP TABLE sin KPI 20260929` with the Personas dataset, zero metrics, and one TABLE.
+  Before the first save, the module sheet visibly listed `Nombre`, `RUT`, `Cargo`, and `Estado`; after
+  saving and reopening, the hidden serialized config still contained those four columns, one dataset,
+  one TABLE, and `metrics: []`.
+- The intended visual acceptance is not complete. Client received and mounted the six local rows; search
+  reduced the DOM to `María González`, and a temporary `pageSize: 2` on this disposable PANEL moved from
+  page 1 to page 2 and back with different records. However, Chrome screenshots showed only the TABLE
+  headers and pagination: the rows were vertically clipped inside the default 180 px module. The saved
+  defaults are `layout.rowHeight: 8` and TABLE `h: 6`; Client's global row-height resolution raises module
+  height when a KPI is present because KPI has a larger minimum height. Thus the browser run reproduced
+  the reported KPI-dependent visibility through layout even after columns were populated. No additional
+  functional correction was made in this visual-only stage.
+- Existing `columns: []` recovery is also not available through the current editor. No pre-existing local
+  PANEL had that shape, so only the disposable PANEL was changed to `columns: []` for the check. Reopening
+  then showed `Configuración incompatible o inválida` and did not mount the module editor. Consequently,
+  there is no exact editor procedure today: the expected path (open experience, Módulos, edit TABLE,
+  select columns, save module, save experience) is blocked before the first step. Existing PANEL rows were
+  not modified and the correction was not broadened to tolerant legacy hydration or automatic repair.
+- Initial nonvisual cause: the Core PANEL editor defaulted a new TABLE module created without existing metrics to an explicit but empty `visualization.config.columns: []`. Core/API execution did not require KPI metrics, and the assigned AppView serializer preserved PANEL config and `configRevision`. The browser follow-up above establishes that this was one defect, but not the only KPI-dependent behavior: Client layout still clips TABLE rows at the new PANEL defaults.
+- Correction: the default TABLE module now serializes explicit columns from the selected dataset field list, including related-field virtual IDs when present. No hidden KPI, artificial metric, migration, dependency, offline snapshot contract, or Client runtime fallback was added. Existing saved TABLE columns remain explicit and unchanged.
+- Regression/evidence: the new editor regression fails on the old empty-column default and now verifies TABLE-only modules are created with dataset columns. The PostgreSQL PANEL integration now compares the same dataset through TABLE-only and TABLE+KPI configs; TABLE-only returns rows with `metrics: []`, and TABLE+KPI keeps its metric/module behavior. Focused runs passed: `app-view-form.test.tsx` (56 tests), `panels.postgres.test.ts` (9 tests), and earlier unchanged Client PANEL logic (42 tests).
+- Local verification used `.env.local` with explicit `DATABASE_URL` confirmed as `opco_dev@127.0.0.1:5432/opco_development`. A temporary local AppView `codex_panel_table_only_20260929` cloned the existing local Personas dataset with one TABLE, four columns, and zero metrics; HTTP validation through Core local returned 6 rows/total 6. The existing TABLE+KPI panel returned the same total with KPI value 6, and page/pageSize pagination returned 2 rows on pages 1 and 2. Empty search returned total 0/hasMore false, which Client renders as the existing empty state. The temporary AppView and access rows were deleted afterward and verified remaining 0.
+- Cleanup: the visual run deleted exactly the disposable AppView and its cascading temporary access row,
+  verified both counts at zero, stopped Core and Client, closed the exclusive Chrome process, and removed
+  its profile and temporary screenshots/harness. No existing PANEL, entity record, production destination,
+  migration, dependency, commit, push, or deploy was touched.
+
 ## Idempotent PATCH Technical Closure 2026-09-28
 
 - The reviewed base is `5e463cb64f9be4e89ff499f4c2a1bcad2ffde79e` on `main`; all PATCH work remains
