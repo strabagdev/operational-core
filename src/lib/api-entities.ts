@@ -307,13 +307,15 @@ export async function getApiEntityRecords({
 }
 
 export async function getApiEntityRecord({
+  client = prisma,
   entityType,
   recordId,
 }: {
+  client?: Pick<Prisma.TransactionClient, "entityRecord">;
   entityType: NonNullable<Awaited<ReturnType<typeof getApiEntityDefinition>>>;
   recordId: string;
 }) {
-  return prisma.entityRecord.findFirst({
+  return client.entityRecord.findFirst({
     include: apiEntityRecordInclude(entityType.fields.map((field) => field.id)),
     where: {
       entityTypeId: entityType.id,

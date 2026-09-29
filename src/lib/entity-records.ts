@@ -25,6 +25,7 @@ import {
 } from "@/lib/field-validation";
 import { formatMoneyValue, getMoneyConfig } from "@/lib/money";
 import { prisma } from "@/lib/prisma";
+import { lockEntityRecordForUpdate } from "@/lib/entity-record-write-lock";
 
 type FieldWithOptions = EntityField & {
   options: Array<{
@@ -855,6 +856,7 @@ export async function getAuthorizedEntityRecord(
   entityTypeId: string,
   recordId: string,
   userId: string,
+  client: Pick<Prisma.TransactionClient, "entityRecord"> = prisma,
 ) {
   const authorized = await getAuthorizedRecordEntityType(
     contractId,
@@ -866,7 +868,7 @@ export async function getAuthorizedEntityRecord(
     return null;
   }
 
-  const record = await prisma.entityRecord.findFirst({
+  const record = await client.entityRecord.findFirst({
     where: {
       id: recordId,
       entityTypeId: authorized.entityType.id,
@@ -999,57 +1001,63 @@ export async function updateEntityRecord(
   userId: string,
   formData: FormData,
 ) {
-  const authorized = await getAuthorizedEntityRecord(
-    contractId,
-    entityTypeId,
-    recordId,
-    userId,
-  );
+  const access = await getAuthorizedRecordEntityType(contractId, entityTypeId, userId);
 
-  if (!authorized) {
+  if (!access) {
     return null;
   }
 
-  const values = await validateEntityValues({
-    fields: authorized.entityType.fields,
-    formData,
-    mode: "edit",
-    recordId: authorized.record.id,
-  });
-  const relations = await validateRelationValues({
-    contractId: authorized.contract.id,
-    entityTypeId: authorized.entityType.id,
-    fields: authorized.entityType.fields,
-    formData,
-    sourceRecordId: authorized.record.id,
-  });
-  const displayName = await buildEntityRecordDisplayName({
-    contractId: authorized.contract.id,
-    fields: authorized.entityType.fields,
-    relations,
-    values,
-  });
-  const valueChanges = buildValueChanges({
-    fields: authorized.entityType.fields,
-    oldValues: authorized.record.values,
-    newValues: values,
-  });
-  const relationChanges = await buildRelationChanges({
-    contractId: authorized.contract.id,
-    fields: authorized.entityType.fields.filter((field) => field.type === "RELATION"),
-    oldRelations: authorized.record.outgoingRelations,
-    newRelations: relations,
-  });
-  const hasChanges =
-    valueChanges.length > 0 ||
-    relationChanges.added.length > 0 ||
-    relationChanges.removed.length > 0;
-
-  if (!hasChanges) {
-    return authorized.record;
-  }
-
   return prisma.$transaction(async (tx) => {
+    await lockEntityRecordForUpdate(tx, recordId, entityTypeId);
+    const authorized = await getAuthorizedEntityRecord(
+      contractId,
+      entityTypeId,
+      recordId,
+      userId,
+      tx,
+    );
+
+    if (!authorized) return null;
+
+    const values = await validateEntityValues({
+      fields: authorized.entityType.fields,
+      formData,
+      mode: "edit",
+      recordId: authorized.record.id,
+    });
+    const relations = await validateRelationValues({
+      contractId: authorized.contract.id,
+      entityTypeId: authorized.entityType.id,
+      fields: authorized.entityType.fields,
+      formData,
+      sourceRecordId: authorized.record.id,
+    });
+    const displayName = await buildEntityRecordDisplayName({
+      contractId: authorized.contract.id,
+      fields: authorized.entityType.fields,
+      relations,
+      values,
+    });
+    const valueChanges = buildValueChanges({
+      fields: authorized.entityType.fields,
+      oldValues: authorized.record.values,
+      newValues: values,
+    });
+    const relationChanges = await buildRelationChanges({
+      contractId: authorized.contract.id,
+      fields: authorized.entityType.fields.filter((field) => field.type === "RELATION"),
+      oldRelations: authorized.record.outgoingRelations,
+      newRelations: relations,
+    });
+    const hasChanges =
+      valueChanges.length > 0 ||
+      relationChanges.added.length > 0 ||
+      relationChanges.removed.length > 0;
+
+    if (!hasChanges) {
+      return authorized.record;
+    }
+
     await tx.entityValue.deleteMany({
       where: {
         entityRecordId: authorized.record.id,

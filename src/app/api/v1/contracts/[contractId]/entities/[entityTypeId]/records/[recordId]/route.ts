@@ -90,6 +90,10 @@ export async function PATCH(
     userId: access.context.user.id,
   });
 
+  if ("directResponse" in result && result.directResponse) {
+    return result.directResponse;
+  }
+
   if (!result.ok) {
     return result.response;
   }

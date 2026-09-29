@@ -728,8 +728,10 @@ describe("incoming record relation summaries", () => {
 
 function tx() {
   return {
+    $queryRaw: vi.fn(async () => [{ id: "source_record_1" }]),
     entityRecord: {
       create: vi.fn(),
+      findFirst: entityRecordFindFirst,
       update: vi.fn(),
     },
     entityValue: {

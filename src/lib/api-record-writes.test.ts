@@ -9,6 +9,7 @@ import {
 import { prisma } from "@/lib/prisma";
 
 const prismaMock = vi.hoisted(() => ({
+  $queryRaw: vi.fn(),
   $transaction: vi.fn(),
   apiIdempotencyKey: {
     create: vi.fn(),
@@ -123,6 +124,7 @@ function p2002() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(prisma.$queryRaw).mockResolvedValue([{ id: "record_1" }] as never);
   vi.mocked(prisma.$transaction).mockImplementation((async (
     callback: (tx: typeof prisma) => Promise<unknown>,
   ) => callback(prisma)) as never);
@@ -686,7 +688,319 @@ describe("api record writes", () => {
       where: { id: "record_1" },
     });
   });
+
+  it("keeps legacy PATCH behavior and rejects an incomplete idempotency pair", async () => {
+    for (const body of [
+      { clientRequestId: "patch-1", values: { nota: "Nueva" } },
+      { expectedUpdatedAt: "2026-01-01T00:00:00.000Z", values: { nota: "Nueva" } },
+    ]) {
+      const result = await patchApiEntityRecord({
+        appId: "app_1",
+        body,
+        contractId: "contract_1",
+        entity,
+        recordId: "record_1",
+        userId: "user_1",
+      });
+
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("Expected invalid idempotency pair.");
+      await expect(result.response.json()).resolves.toMatchObject({
+        error: { code: "INVALID_RECORD_BODY" },
+        ok: false,
+      });
+    }
+
+    expect(prisma.apiIdempotencyKey.create).not.toHaveBeenCalled();
+  });
+
+  it("replays the original PATCH result after a lost response without a second mutation", async () => {
+    const before = patchRecord("Anterior", "2026-01-01T00:00:00.000Z");
+    const after = patchRecord("Nueva", "2026-01-01T00:01:00.000Z");
+    vi.mocked(prisma.entityRecord.findFirst)
+      .mockResolvedValueOnce(before as never)
+      .mockResolvedValueOnce(after as never);
+
+    const first = await patchApiEntityRecord({
+      appId: "app_1",
+      body: idempotentPatchBody("patch-lost-response", "Nueva"),
+      contractId: "contract_1",
+      entity,
+      recordId: "record_1",
+      userId: "user_1",
+    });
+
+    expect(first.ok).toBe(true);
+    if (!first.ok || !("directResponse" in first) || !first.directResponse) throw new Error("Expected direct response.");
+    const originalBody = await first.directResponse.json();
+    const createData = vi.mocked(prisma.apiIdempotencyKey.create).mock.calls[0]?.[0].data;
+    const stored = vi.mocked(prisma.apiIdempotencyKey.update).mock.calls[0]?.[0].data.responseBody;
+
+    vi.mocked(prisma.apiIdempotencyKey.create).mockRejectedValueOnce(p2002());
+    vi.mocked(prisma.apiIdempotencyKey.findUnique).mockResolvedValueOnce({
+      requestHash: createData?.requestHash,
+      responseBody: stored,
+    } as never);
+    vi.mocked(prisma.entityRecord.findFirst).mockResolvedValue(
+      patchRecord("Cambio posterior", "2026-01-01T00:02:00.000Z") as never,
+    );
+
+    const replay = await patchApiEntityRecord({
+      appId: "app_1",
+      body: idempotentPatchBody("patch-lost-response", "Nueva"),
+      contractId: "contract_1",
+      entity,
+      recordId: "record_1",
+      userId: "user_1",
+    });
+
+    expect(replay.ok).toBe(true);
+    if (!replay.ok || !("directResponse" in replay) || !replay.directResponse) throw new Error("Expected replay response.");
+    await expect(replay.directResponse.json()).resolves.toEqual(originalBody);
+    expect(prisma.entityRecord.update).toHaveBeenCalledTimes(1);
+    expect(prisma.auditEvent.create).toHaveBeenCalledTimes(1);
+    expect(prisma.entityRecord.findFirst).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects reuse of a PATCH key with different content or user", async () => {
+    const originalHash = stableRecordRequestHash({
+      clientRequestId: "patch-reused",
+      contractId: "contract_1",
+      displayName: { present: false },
+      entityTypeId: "entity_1",
+      expectedUpdatedAt: "2026-01-01T00:00:00.000Z",
+      recordId: "record_1",
+      userId: "user_1",
+      values: { nota: "Nueva" },
+    });
+    vi.mocked(prisma.apiIdempotencyKey.create).mockRejectedValue(p2002());
+    vi.mocked(prisma.apiIdempotencyKey.findUnique).mockResolvedValue({
+      requestHash: originalHash,
+      responseBody: { body: { ok: true }, status: 200 },
+    } as never);
+
+    for (const input of [
+      { note: "Distinta", userId: "user_1" },
+      { note: "Nueva", userId: "user_2" },
+    ]) {
+      const result = await patchApiEntityRecord({
+        appId: "app_1",
+        body: idempotentPatchBody("patch-reused", input.note),
+        contractId: "contract_1",
+        entity,
+        recordId: "record_1",
+        userId: input.userId,
+      });
+
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("Expected key reuse conflict.");
+      await expect(result.response.json()).resolves.toMatchObject({
+        error: { code: "IDEMPOTENCY_KEY_REUSED" },
+        ok: false,
+      });
+    }
+
+    expect(prisma.entityRecord.update).not.toHaveBeenCalled();
+  });
+
+  it("stores and replays a stale-version conflict without modifying the record", async () => {
+    vi.mocked(prisma.entityRecord.findFirst).mockResolvedValueOnce(
+      patchRecord("Remota", "2026-01-01T00:02:00.000Z") as never,
+    );
+
+    const result = await patchApiEntityRecord({
+      appId: "app_1",
+      body: idempotentPatchBody("patch-stale", "Local"),
+      contractId: "contract_1",
+      entity,
+      recordId: "record_1",
+      userId: "user_1",
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok || !("directResponse" in result) || !result.directResponse) throw new Error("Expected conflict response.");
+    expect(result.directResponse.status).toBe(409);
+    await expect(result.directResponse.json()).resolves.toMatchObject({
+      error: {
+        code: "REMOTE_VERSION_CHANGED",
+        details: { record: { updatedAt: "2026-01-01T00:02:00.000Z" } },
+      },
+      ok: false,
+    });
+    expect(prisma.entityRecord.update).not.toHaveBeenCalled();
+    expect(prisma.auditEvent.create).not.toHaveBeenCalled();
+    expect(prisma.apiIdempotencyKey.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ responseBody: expect.objectContaining({ status: 409 }) }),
+    }));
+  });
+
+  it("stores and replays a functional PATCH error without rerunning validation", async () => {
+    vi.mocked(prisma.entityRecord.findFirst).mockResolvedValueOnce(
+      patchRecord("Anterior", "2026-01-01T00:00:00.000Z") as never,
+    );
+    const command = {
+      appId: "app_1",
+      body: {
+        clientRequestId: "patch-invalid",
+        expectedUpdatedAt: "2026-01-01T00:00:00.000Z",
+        values: { inexistente: "valor" },
+      },
+      contractId: "contract_1",
+      entity,
+      recordId: "record_1",
+      userId: "user_1",
+    };
+
+    const first = await patchApiEntityRecord(command);
+
+    expect(first.ok).toBe(true);
+    if (!first.ok || !("directResponse" in first) || !first.directResponse) {
+      throw new Error("Expected direct error response.");
+    }
+    expect(first.directResponse.status).toBe(400);
+    const firstBody = await first.directResponse.json();
+    const createData = vi.mocked(prisma.apiIdempotencyKey.create).mock.calls[0]?.[0].data;
+    const stored = vi.mocked(prisma.apiIdempotencyKey.update).mock.calls[0]?.[0].data.responseBody;
+
+    vi.mocked(prisma.apiIdempotencyKey.create).mockRejectedValueOnce(p2002());
+    vi.mocked(prisma.apiIdempotencyKey.findUnique).mockResolvedValueOnce({
+      requestHash: createData?.requestHash,
+      responseBody: stored,
+    } as never);
+
+    const replay = await patchApiEntityRecord(command);
+
+    expect(replay.ok).toBe(true);
+    if (!replay.ok || !("directResponse" in replay) || !replay.directResponse) {
+      throw new Error("Expected direct replay response.");
+    }
+    expect(replay.directResponse.status).toBe(400);
+    await expect(replay.directResponse.json()).resolves.toEqual(firstBody);
+    expect(prisma.entityField.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.entityRecord.update).not.toHaveBeenCalled();
+    expect(prisma.auditEvent.create).not.toHaveBeenCalled();
+  });
+
+  it("does not duplicate effects when the same PATCH key is submitted concurrently", async () => {
+    let requestHash: string | undefined;
+    let storedResponse: unknown;
+    let reserved = false;
+    vi.mocked(prisma.apiIdempotencyKey.create).mockImplementation((async (args: {
+      data: { requestHash: string };
+    }) => {
+      if (reserved) throw p2002();
+      reserved = true;
+      requestHash = args.data.requestHash;
+      return { id: "idem_concurrent" };
+    }) as never);
+    vi.mocked(prisma.apiIdempotencyKey.update).mockImplementation((async (args: {
+      data: { responseBody: unknown };
+    }) => {
+      storedResponse = args.data.responseBody;
+      return { id: "idem_concurrent" };
+    }) as never);
+    vi.mocked(prisma.apiIdempotencyKey.findUnique).mockImplementation((async () => ({
+      requestHash,
+      responseBody: storedResponse,
+    })) as never);
+    vi.mocked(prisma.entityRecord.findFirst)
+      .mockResolvedValueOnce(patchRecord("Anterior", "2026-01-01T00:00:00.000Z") as never)
+      .mockResolvedValueOnce(patchRecord("Nueva", "2026-01-01T00:01:00.000Z") as never);
+
+    const command = {
+      appId: "app_1",
+      body: idempotentPatchBody("patch-concurrent", "Nueva"),
+      contractId: "contract_1",
+      entity,
+      recordId: "record_1",
+      userId: "user_1",
+    };
+    const [first, second] = await Promise.all([
+      patchApiEntityRecord(command),
+      patchApiEntityRecord(command),
+    ]);
+
+    expect(first.ok).toBe(true);
+    expect(second.ok).toBe(true);
+    expect(prisma.entityRecord.update).toHaveBeenCalledTimes(1);
+    expect(prisma.auditEvent.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("serializes two distinct commands based on the same version", async () => {
+    vi.mocked(prisma.entityRecord.findFirst)
+      .mockResolvedValueOnce(patchRecord("Anterior", "2026-01-01T00:00:00.000Z") as never)
+      .mockResolvedValueOnce(patchRecord("Primera", "2026-01-01T00:01:00.000Z") as never)
+      .mockResolvedValueOnce(patchRecord("Primera", "2026-01-01T00:01:00.000Z") as never);
+
+    const first = await patchApiEntityRecord({
+      appId: "app_1",
+      body: idempotentPatchBody("patch-first", "Primera"),
+      contractId: "contract_1",
+      entity,
+      recordId: "record_1",
+      userId: "user_1",
+    });
+    const second = await patchApiEntityRecord({
+      appId: "app_1",
+      body: idempotentPatchBody("patch-second", "Segunda"),
+      contractId: "contract_1",
+      entity,
+      recordId: "record_1",
+      userId: "user_1",
+    });
+
+    expect(first.ok).toBe(true);
+    expect(second.ok).toBe(true);
+    if (!second.ok || !("directResponse" in second) || !second.directResponse) throw new Error("Expected conflict response.");
+    expect(second.directResponse.status).toBe(409);
+    expect(prisma.entityRecord.update).toHaveBeenCalledTimes(1);
+    expect(prisma.auditEvent.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("scopes identical PATCH keys by external app", async () => {
+    vi.mocked(prisma.entityRecord.findFirst)
+      .mockResolvedValueOnce(patchRecord("Anterior", "2026-01-01T00:00:00.000Z") as never)
+      .mockResolvedValueOnce(patchRecord("Nueva", "2026-01-01T00:01:00.000Z") as never);
+
+    await patchApiEntityRecord({
+      appId: "app_2",
+      body: idempotentPatchBody("shared-key", "Nueva"),
+      contractId: "contract_1",
+      entity,
+      recordId: "record_1",
+      userId: "user_1",
+    });
+
+    expect(prisma.apiIdempotencyKey.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        clientRequestId: "shared-key",
+        externalAppId: "app_2",
+        operation: "record:patch:contract_1:entity_1:record_1",
+      }),
+    }));
+  });
 });
+
+function idempotentPatchBody(clientRequestId: string, note: string) {
+  return {
+    clientRequestId,
+    expectedUpdatedAt: "2026-01-01T00:00:00.000Z",
+    values: { nota: note },
+  };
+}
+
+function patchRecord(note: string, updatedAt: string) {
+  return {
+    displayName: "EQ-001",
+    id: "record_1",
+    outgoingRelations: [],
+    updatedAt: new Date(updatedAt),
+    values: [
+      { entityFieldId: "field_codigo", textValue: "EQ-001" },
+      { entityFieldId: "field_nota", textValue: note },
+    ],
+  };
+}
 
 function relationTarget(id: string, overrides: Record<string, unknown> = {}) {
   return {

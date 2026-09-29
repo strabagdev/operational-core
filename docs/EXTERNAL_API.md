@@ -1193,6 +1193,8 @@ Request:
 
 ```json
 {
+  "clientRequestId": "stable-command-id",
+  "expectedUpdatedAt": "2026-08-19T18:30:00.000Z",
   "displayName": "Nombre visible opcional",
   "values": {
     "monto": null,
@@ -1227,7 +1229,59 @@ Success response:
 }
 ```
 
-PATCH does not currently use `clientRequestId`; it is not idempotent in this stage.
+#### PATCH idempotency and version contract
+
+`clientRequestId` and `expectedUpdatedAt` are optional as a pair. Omitting both preserves the legacy
+PATCH behavior. Sending only one, an empty `clientRequestId`, or an invalid timestamp returns
+`400 INVALID_RECORD_BODY`. A new client assigns one key per immutable update command, keeps that key
+for retries, and uses a different key for a later edit.
+
+Idempotent PATCH reuses `ApiIdempotencyKey` with
+`operation = record:patch:<contractId>:<entityTypeId>:<recordId>` and the existing uniqueness on
+`externalAppId + operation + clientRequestId`. Its canonical fingerprint includes the key, authenticated
+user, contract/entity/record scope, `expectedUpdatedAt`, semantic partial values, and whether
+`displayName` was omitted or supplied. Reusing a key with another fingerprint returns
+`409 IDEMPOTENCY_KEY_REUSED`; the authenticated route performs current user, app, contract, and
+membership checks before replay lookup.
+
+A new key is inserted as the first write in the same transaction that locks and checks the record,
+applies the mutation, audits it, and stores the response. All idempotent PATCH commands acquire locks in
+that order: idempotency key, then entity record. An equal concurrent INSERT waits on PostgreSQL's unique
+index. If the first transaction commits, the waiter receives the uniqueness error outside its aborted
+transaction and reads the immutable result with a fresh query; if the first transaction rolls back, the
+waiter's INSERT succeeds and it becomes the executor. The code never continues issuing queries in a
+transaction aborted by a uniqueness violation.
+
+Expected success and functional 4xx results are finalized with the key in that transaction. Any
+unexpected failure rolls back the key, record values, relations, audit, and result together, so an exact
+retry can execute. A completed duplicate is resolved before any version check and replays the original
+HTTP status/body, including after a later command changed the record. Historical incomplete or malformed
+rows created by an earlier implementation remain conservative: replay reads once and polls up to 11
+times at 50 ms intervals, then returns `409 IDEMPOTENCY_RESULT_UNAVAILABLE`. They are not deleted or
+automatically taken over because the existing row has no reliable liveness marker; operational review is
+still required.
+
+For a new command, PostgreSQL `SELECT ... FOR UPDATE` locks the row scoped by record and entity. Core
+then rereads it and compares `expectedUpdatedAt` inside the transaction. A mismatch stores and returns
+`409 REMOTE_VERSION_CHANGED` with the current serialized record in `error.details.record`. A match
+writes values, relations, audit, `responseBody`, `entityRecordId`, and `completedAt` in that same
+transaction. The external PATCH legacy path and Core web editor now acquire the same row lock and reread
+before calculating their mutation, so they cannot interleave between the version check and write.
+Legacy writes still have no precondition and remain last-writer-wins after serialization.
+
+No database migration is required: `ApiIdempotencyKey` already contains `requestHash`, `responseBody`,
+`completedAt`, `entityRecordId`, and the required unique boundary. The STATE_UPDATE
+reserve/fingerprint/wait/replay/finalize mechanism is the implementation reference. CREATE contributes
+the operation scoping pattern, but its replay by record id is insufficient for PATCH because it does not
+preserve an immutable historical response.
+
+Clients that omit both fields continue to work, but their prior or future operations do not acquire
+idempotency retroactively. Core must be deployed before Client starts sending the pair. Focused unit tests exercise orchestration
+with mocked Prisma calls. The opt-in
+`api-record-writes.postgres.test.ts` separately verifies real local PostgreSQL row-lock chains, replay,
+version conflicts, legacy/web serialization, rollback before commit, and waiter recovery after executor
+rollback using independent connections.
+
 
 ### POST /api/v1/contracts/:contractId/entities/:entityTypeId/records/validate-unique
 
@@ -1467,7 +1521,8 @@ Readiness never runs migrations or modifies data.
 - Organization and contract context is available only through `GET /api/v1/context`.
 - No batch endpoints for external dynamic records yet.
 - No delete endpoints for external dynamic records yet.
-- PATCH is not idempotent yet.
+- Legacy PATCH requests without `clientRequestId` and `expectedUpdatedAt` are not idempotent; clients
+  using the paired contract receive the durable replay guarantees documented above.
 - `FILE` and `IMAGE` fields are not writable through JSON API.
 - No granular permission model for external API endpoints yet.
 - No API-specific CORS policy yet.

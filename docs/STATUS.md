@@ -1,5 +1,76 @@
 # Current Status
 
+## Idempotent PATCH Technical Closure 2026-09-28
+
+- The reviewed base is `5e463cb64f9be4e89ff499f4c2a1bcad2ffde79e` on `main`; all PATCH work remains
+  uncommitted in this worktree. The final inventory is nine modified files plus the new
+  `api-record-writes.postgres.test.ts` and `entity-record-write-lock.ts`.
+- The diff is limited to the optional idempotent PATCH contract, shared record-row locking for legacy
+  API/Core Web writers, focused tests, and `EXTERNAL_API`/`STATUS` documentation. CREATE and
+  STATE_UPDATE behavior remain unchanged. There are no schema, migration, dependency, configuration,
+  credential, local-environment, or generated-artifact changes in the publishable diff.
+- Final checks passed with `DATABASE_URL` loaded only from `.env.local`, validated as
+  `opco_dev@127.0.0.1:5432/opco_development`, and passed explicitly to every Core command:
+  `npx tsc --noEmit`, ESLint, 109 test files/1097 tests (2 files/15 tests skipped by opt-in guards),
+  production build, and `git diff --check`.
+- The previously approved PostgreSQL integration remains applicable because no functional content
+  changed afterward: 7/7 tests used independent real local PostgreSQL connections and controlled lock
+  barriers. It was not repeated during this closure. Its synthetic data cleanup remained verified.
+- Legacy PATCH remains accepted when both optional fields are omitted and remains non-idempotent
+  last-writer-wins after row serialization. Core must be published before the pending Client work.
+  The local `.next` output is ignored and is not a production or commit artifact.
+
+## Idempotent RECORDS PATCH 2026-09-28
+
+- Operational Core now accepts `clientRequestId` and `expectedUpdatedAt` together on entity-record
+  PATCH. The existing `ApiIdempotencyKey` schema stores the immutable success, conflict, or
+  functional validation response; retries resolve that response before checking the current record
+  version. The reservation is now the first write in the same transaction as record locking, version
+  comparison, values, relations, audit, and response finalization. Unexpected failures roll everything
+  back, including the reservation.
+- Idempotent PATCH consistently acquires the key before the entity-record row. A uniqueness violation
+  leaves its transaction and replay is resolved with a fresh query; no query continues in an aborted
+  transaction. Legacy API PATCH and the Core web editor retain their shared row lock/re-read path and
+  last-writer-wins behavior. CREATE and STATE_UPDATE were not changed.
+- Mock-based focused coverage remains for contract branching, malformed replay data, authorization, and
+  validation errors. It is distinct from the PostgreSQL integration evidence below.
+- Focused mocked tests passed 58/58; `npx tsc --noEmit`, full ESLint, and `git diff --check` also
+  passed. This stage intentionally did not run the full suite or build.
+- `api-record-writes.postgres.test.ts` passed 7/7 against explicitly supplied local
+  `127.0.0.1:5432/opco_development` as `opco_dev`. Row-lock barriers and recursive
+  `pg_blocking_pids` observation confirmed independent transactions were blocked before release; timing
+  alone was not used to establish ordering.
+- Same key/content: both callers received the identical stored response, with one record mutation, one
+  `RECORD_UPDATED` audit and one idempotency row. Commit of the first executor made the waiter replay its
+  result. Cancelling the first executor while both requests were blocked rolled its reservation back; the
+  equal waiter then inserted the key, completed once, and produced one mutation/audit. Reusing the same
+  key concurrently with different content returned `IDEMPOTENCY_KEY_REUSED` and did not apply the second
+  payload.
+- Distinct keys on the same initial version produced one HTTP 200 and one
+  `REMOTE_VERSION_CHANGED` 409, with one mutation/audit and two durable results. The accepted response
+  carried a changed `updatedAt`, and that version allowed the next update while the earlier version was
+  rejected.
+- Discarding the first response and retrying returned the original result with one audit. A later command
+  changed the value and version; replaying the first command still returned its historical response,
+  preserved the later value, and left the audit count at two. The old version then produced 409 without
+  another mutation.
+- Concurrent legacy PATCH and Core web update both waited on the shared row lock, completed serially,
+  produced two audits and no idempotency rows; the final value matched the writer that completed last,
+  confirming the documented legacy last-writer-wins behavior.
+- Cancelling the real backend while its audit INSERT was blocked, after the transaction had performed its record writes but
+  before commit, left zero reservations, mutations, audits, or version changes. An exact later retry completed successfully with one key, one mutation, and one audit. Thus
+  new unexpected failures no longer create abandoned PATCH reservations or persist a partial success.
+- Preexisting incomplete PATCH rows are intentionally untouched. Their bounded replay remains 11 waits
+  of 50 ms before `409 IDEMPOTENCY_RESULT_UNAVAILABLE`; they still require explicit operational review
+  because timestamps alone cannot prove that an executor is gone. Clients without the optional pair gain
+  no idempotency retroactively.
+- Synthetic ids used the exclusive `records_patch_pg_20260928_*` prefix. Teardown was verified with zero
+  remaining organizations, records, audits, and idempotency keys. No existing records, production,
+  migrations, seeds, reset, browser, full suite, build, deployment, commit, or push were used. The test
+  invokes the real domain functions and Prisma/PostgreSQL transactions, not the HTTP transport; response
+  loss is modeled by discarding the returned response. No schema, migration, dependency, Client
+  implementation, or configuration changed.
+
 ## PANEL Existing TABLE Related Columns 2026-09-22
 
 - A related field enabled in an existing dataset was absent from the TABLE editor's available-column list because that list read only source `transformation.fieldIds`. The dataset draft and saved PANEL contract already retained `relatedFields`; runtime support was unchanged.

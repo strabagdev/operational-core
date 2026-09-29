@@ -8,6 +8,8 @@ import {
   type ApiRecordEntity,
 } from "@/lib/api-entities";
 import { badRequest, conflict, internalError } from "@/lib/api-response";
+import { serializeApiEntityRecord } from "@/lib/api-entity-serializer";
+import { lockEntityRecordForUpdate } from "@/lib/entity-record-write-lock";
 import {
   buildRelationChanges,
   buildValueChanges,
@@ -31,7 +33,13 @@ import {
 export type ApiRecordWriteBody = {
   clientRequestId?: string;
   displayName?: string | null;
+  expectedUpdatedAt?: string;
   values?: Record<string, unknown>;
+};
+
+type StoredPatchResponse = {
+  body: Record<string, unknown>;
+  status: number;
 };
 
 export type ApiRecordWriteError = {
@@ -90,7 +98,7 @@ export async function createApiEntityRecord({
     const result = await prisma.$transaction(async (tx) => {
       await tx.apiIdempotencyKey.create({
         data: {
-          clientRequestId: parsed.body.clientRequestId,
+          clientRequestId: parsed.body.clientRequestId!,
           contractId,
           entityTypeId: entity.id,
           externalAppId: appId,
@@ -117,7 +125,7 @@ export async function createApiEntityRecord({
         data: { entityRecordId: record.id },
         where: {
           externalAppId_operation_clientRequestId: {
-            clientRequestId: parsed.body.clientRequestId,
+            clientRequestId: parsed.body.clientRequestId!,
             externalAppId: appId,
             operation,
           },
@@ -132,7 +140,7 @@ export async function createApiEntityRecord({
     if (isUniqueIdempotencyConflict(error)) {
       const replay = await resolveIdempotentReplay({
         appId,
-        clientRequestId: parsed.body.clientRequestId,
+        clientRequestId: parsed.body.clientRequestId!,
         operation,
         requestHash,
       });
@@ -165,34 +173,158 @@ export async function patchApiEntityRecord({
     return parsed;
   }
 
-  const existing = await getApiEntityRecord({ entityType: entity, recordId });
-
-  if (!existing) {
-    return {
-      ok: false as const,
-      response: apiRecordNotFoundResponse(),
-    };
-  }
-
   try {
-    const mutation = await buildPatchMutation({
+    if (!parsed.body.clientRequestId || !parsed.body.expectedUpdatedAt) {
+      const record = await runPatchTransaction({
+        appId,
+        body: parsed.body,
+        contractId,
+        entity,
+        recordId,
+        userId,
+      });
+
+      if (!record) return { ok: false as const, response: apiRecordNotFoundResponse() };
+
+      return { ok: true as const, recordId: record.id };
+    }
+
+    const operation = patchIdempotencyOperation({ contractId, entityTypeId: entity.id, recordId });
+    const requestHash = stableRecordRequestHash({
+      clientRequestId: parsed.body.clientRequestId!,
       contractId,
-      entity,
-      existingRecord: existing,
-      rawValues: parsed.body.values,
+      displayName: parsed.body.displayName === undefined
+        ? { present: false }
+        : { present: true, value: parsed.body.displayName },
+      entityTypeId: entity.id,
+      expectedUpdatedAt: parsed.body.expectedUpdatedAt,
       recordId,
-    });
-    const record = await updateRecordInTransaction({
-      appId,
-      displayNameOverride: parsed.body.displayName,
-      entity,
-      existingRecord: existing,
-      mutation,
-      txClient: prisma,
       userId,
+      values: parsed.body.values,
     });
 
-    return { ok: true as const, recordId: record.id };
+    let stored: StoredPatchResponse;
+
+    try {
+      stored = await prisma.$transaction(async (tx) => {
+        await tx.apiIdempotencyKey.create({
+          data: {
+            clientRequestId: parsed.body.clientRequestId!,
+            contractId,
+            entityTypeId: entity.id,
+            externalAppId: appId,
+            operation,
+            requestHash,
+          },
+        });
+
+        let entityRecordId: string | null = null;
+        let response: StoredPatchResponse;
+
+        try {
+          const locked = await lockEntityRecordForUpdate(tx, recordId, entity.id);
+          const existing = locked
+            ? await getApiEntityRecord({ client: tx, entityType: entity, recordId })
+            : null;
+          entityRecordId = existing?.id ?? null;
+
+          if (!existing) {
+            response = {
+              body: { ok: false, error: { code: "RECORD_NOT_FOUND", message: "Registro no encontrado" } },
+              status: 404,
+            };
+          } else if (existing.updatedAt.toISOString() !== parsed.body.expectedUpdatedAt) {
+            response = {
+              body: {
+                ok: false,
+                error: {
+                  code: "REMOTE_VERSION_CHANGED",
+                  details: { record: serializeApiEntityRecord({ fields: entity.fields, record: existing }) },
+                  message: "El registro cambió desde la última lectura.",
+                },
+              },
+              status: 409,
+            };
+          } else {
+            const mutation = await buildPatchMutation({
+              contractId,
+              entity,
+              existingRecord: existing,
+              rawValues: parsed.body.values,
+              recordId,
+            });
+            await updateRecordInTransaction({
+              appId,
+              displayNameOverride: parsed.body.displayName,
+              entity,
+              existingRecord: existing,
+              mutation,
+              tx,
+              userId,
+            });
+            const updated = await getApiEntityRecord({ client: tx, entityType: entity, recordId });
+
+            if (!updated) throw new Error("Updated API record could not be reloaded.");
+
+            response = {
+              body: {
+                ok: true,
+                data: { record: serializeApiEntityRecord({ fields: entity.fields, record: updated }) },
+              },
+              status: 200,
+            };
+          }
+        } catch (error) {
+          const mapped = mapApiWriteException(error);
+          response = {
+            body: await mapped.response.json() as Record<string, unknown>,
+            status: mapped.response.status,
+          };
+        }
+
+        await tx.apiIdempotencyKey.update({
+          data: {
+            completedAt: new Date(),
+            entityRecordId,
+            responseBody: response as Prisma.InputJsonValue,
+          },
+          where: {
+            externalAppId_operation_clientRequestId: {
+              clientRequestId: parsed.body.clientRequestId!,
+              externalAppId: appId,
+              operation,
+            },
+          },
+        });
+
+        return response;
+      });
+    } catch (error) {
+      if (!isUniqueIdempotencyConflict(error)) throw error;
+
+      const replay = await resolvePatchIdempotencyReplay({
+        appId,
+        clientRequestId: parsed.body.clientRequestId!,
+        operation,
+        requestHash,
+      });
+
+      if (!replay.ok) return replay;
+
+      return {
+        directResponse: storedPatchResponse(replay.data),
+        ok: true as const,
+        recordId,
+        replay: true as const,
+      };
+    }
+
+    return {
+      directResponse: storedPatchResponse(stored),
+      ok: true as const,
+      recordId,
+      replay: false as const,
+    };
   } catch (error) {
     return mapApiWriteException(error);
   }
@@ -236,6 +368,31 @@ function parsePatchBody(body: unknown) {
     return writeError("INVALID_RECORD_BODY", "El body debe ser un objeto JSON.");
   }
 
+  const clientRequestId = body.clientRequestId === undefined
+    ? undefined
+    : stringValue(body.clientRequestId)?.trim();
+  const expectedUpdatedAt = body.expectedUpdatedAt === undefined
+    ? undefined
+    : stringValue(body.expectedUpdatedAt)?.trim();
+
+  if (body.clientRequestId !== undefined && !clientRequestId) {
+    return writeError("INVALID_RECORD_BODY", "clientRequestId debe ser un string no vacío.");
+  }
+
+  if (
+    body.expectedUpdatedAt !== undefined &&
+    (!expectedUpdatedAt || Number.isNaN(Date.parse(expectedUpdatedAt)))
+  ) {
+    return writeError("INVALID_RECORD_BODY", "expectedUpdatedAt debe ser una fecha ISO válida.");
+  }
+
+  if ((clientRequestId === undefined) !== (expectedUpdatedAt === undefined)) {
+    return writeError(
+      "INVALID_RECORD_BODY",
+      "clientRequestId y expectedUpdatedAt deben enviarse juntos.",
+    );
+  }
+
   const values = body.values === undefined ? { ok: true as const, values: {} } : parseValuesObject(body.values);
 
   if (!values.ok) {
@@ -255,7 +412,9 @@ function parsePatchBody(body: unknown) {
   return {
     ok: true as const,
     body: {
+      clientRequestId,
       displayName: displayName.value,
+      expectedUpdatedAt,
       values: values.values,
     },
   };
@@ -596,13 +755,61 @@ async function createRecordInTransaction({
   return record;
 }
 
+async function runPatchTransaction({
+  appId,
+  body,
+  contractId,
+  entity,
+  recordId,
+  userId,
+}: {
+  appId: string;
+  body: {
+    clientRequestId?: string;
+    displayName?: string | null;
+    expectedUpdatedAt?: string;
+    values: Record<string, unknown>;
+  };
+  contractId: string;
+  entity: ApiRecordEntity;
+  recordId: string;
+  userId: string;
+}) {
+  return prisma.$transaction(async (tx) => {
+    const locked = await lockEntityRecordForUpdate(tx, recordId, entity.id);
+    const existing = locked
+      ? await getApiEntityRecord({ client: tx, entityType: entity, recordId })
+      : null;
+
+    if (!existing) return null;
+
+    const mutation = await buildPatchMutation({
+      contractId,
+      entity,
+      existingRecord: existing,
+      rawValues: body.values,
+      recordId,
+    });
+
+    return updateRecordInTransaction({
+      appId,
+      displayNameOverride: body.displayName,
+      entity,
+      existingRecord: existing,
+      mutation,
+      tx,
+      userId,
+    });
+  });
+}
+
 async function updateRecordInTransaction({
   appId,
   displayNameOverride,
   entity,
   existingRecord,
   mutation,
-  txClient,
+  tx,
   userId,
 }: {
   appId?: string;
@@ -610,11 +817,11 @@ async function updateRecordInTransaction({
   entity: ApiRecordEntity;
   existingRecord: NonNullable<Awaited<ReturnType<typeof getApiEntityRecord>>>;
   mutation: { values: SerializedFieldValue[]; relations: RelationInput[] };
-  txClient: typeof prisma;
+  tx: Prisma.TransactionClient;
   userId: string;
 }) {
   const nextDisplayName = displayNameOverride || await buildEntityRecordDisplayName({
-    client: txClient,
+    client: tx,
     contractId: entity.contractId,
     fields: entity.fields,
     relations: mutation.relations,
@@ -642,72 +849,70 @@ async function updateRecordInTransaction({
     return existingRecord;
   }
 
-  return txClient.$transaction(async (tx) => {
-    await tx.entityValue.deleteMany({
-      where: {
-        entityFieldId: { in: entity.fields.map((field) => field.id) },
-        entityRecordId: existingRecord.id,
-      },
-    });
-    await writeEntityValues(tx, existingRecord.id, mutation.values);
-    await syncEntityRelations(tx, existingRecord.id, mutation.relations);
-    const updatedRecord = await tx.entityRecord.update({
-      data: { displayName: nextDisplayName },
-      where: { id: existingRecord.id },
-    });
+  await tx.entityValue.deleteMany({
+    where: {
+      entityFieldId: { in: entity.fields.map((field) => field.id) },
+      entityRecordId: existingRecord.id,
+    },
+  });
+  await writeEntityValues(tx, existingRecord.id, mutation.values);
+  await syncEntityRelations(tx, existingRecord.id, mutation.relations);
+  const updatedRecord = await tx.entityRecord.update({
+    data: { displayName: nextDisplayName },
+    where: { id: existingRecord.id },
+  });
 
+  await createAuditEvent(tx, {
+    actorUserId: userId,
+    action: "RECORD_UPDATED",
+    changes: valueChanges,
+    contractId: entity.contractId,
+    entityRecordId: existingRecord.id,
+    entityTypeId: entity.id,
+    metadata: {
+      apiExternalAppId: appId,
+      displayName: updatedRecord.displayName,
+      displayNameChanged,
+      entityTypeName: entity.name,
+    },
+    summary: `Actualizó ${entity.name} ${updatedRecord.displayName}`,
+  });
+
+  if (relationChanges.added.length > 0) {
     await createAuditEvent(tx, {
       actorUserId: userId,
-      action: "RECORD_UPDATED",
-      changes: valueChanges,
+      action: "RELATION_ADDED",
+      changes: relationChanges.added,
       contractId: entity.contractId,
       entityRecordId: existingRecord.id,
       entityTypeId: entity.id,
       metadata: {
         apiExternalAppId: appId,
         displayName: updatedRecord.displayName,
-        displayNameChanged,
         entityTypeName: entity.name,
       },
-      summary: `Actualizó ${entity.name} ${updatedRecord.displayName}`,
+      summary: `Agregó relaciones en ${entity.name} ${updatedRecord.displayName}`,
     });
+  }
 
-    if (relationChanges.added.length > 0) {
-      await createAuditEvent(tx, {
-        actorUserId: userId,
-        action: "RELATION_ADDED",
-        changes: relationChanges.added,
-        contractId: entity.contractId,
-        entityRecordId: existingRecord.id,
-        entityTypeId: entity.id,
-        metadata: {
-          apiExternalAppId: appId,
-          displayName: updatedRecord.displayName,
-          entityTypeName: entity.name,
-        },
-        summary: `Agregó relaciones en ${entity.name} ${updatedRecord.displayName}`,
-      });
-    }
+  if (relationChanges.removed.length > 0) {
+    await createAuditEvent(tx, {
+      actorUserId: userId,
+      action: "RELATION_REMOVED",
+      changes: relationChanges.removed,
+      contractId: entity.contractId,
+      entityRecordId: existingRecord.id,
+      entityTypeId: entity.id,
+      metadata: {
+        apiExternalAppId: appId,
+        displayName: updatedRecord.displayName,
+        entityTypeName: entity.name,
+      },
+      summary: `Quitó relaciones en ${entity.name} ${updatedRecord.displayName}`,
+    });
+  }
 
-    if (relationChanges.removed.length > 0) {
-      await createAuditEvent(tx, {
-        actorUserId: userId,
-        action: "RELATION_REMOVED",
-        changes: relationChanges.removed,
-        contractId: entity.contractId,
-        entityRecordId: existingRecord.id,
-        entityTypeId: entity.id,
-        metadata: {
-          apiExternalAppId: appId,
-          displayName: updatedRecord.displayName,
-          entityTypeName: entity.name,
-        },
-        summary: `Quitó relaciones en ${entity.name} ${updatedRecord.displayName}`,
-      });
-    }
-
-    return updatedRecord;
-  });
+  return updatedRecord;
 }
 
 async function writeEntityValues(
@@ -792,6 +997,101 @@ async function resolveIdempotentReplay({
     replay: true as const,
     recordId: existing.entityRecordId,
   };
+}
+
+function patchIdempotencyOperation({
+  contractId,
+  entityTypeId,
+  recordId,
+}: {
+  contractId: string;
+  entityTypeId: string;
+  recordId: string;
+}) {
+  return `record:patch:${contractId}:${entityTypeId}:${recordId}`;
+}
+
+async function resolvePatchIdempotencyReplay({
+  appId,
+  clientRequestId,
+  operation,
+  requestHash,
+}: {
+  appId: string;
+  clientRequestId: string;
+  operation: string;
+  requestHash: string;
+}) {
+  const read = () => prisma.apiIdempotencyKey.findUnique({
+    select: { requestHash: true, responseBody: true },
+    where: {
+      externalAppId_operation_clientRequestId: {
+        clientRequestId,
+        externalAppId: appId,
+        operation,
+      },
+    },
+  });
+  const first = await read();
+
+  if (!first) {
+    return {
+      ok: false as const,
+      response: internalError("No se pudo resolver la idempotencia.", "IDEMPOTENCY_RESOLUTION_FAILED"),
+    };
+  }
+
+  if (first.requestHash !== requestHash) {
+    return {
+      ok: false as const,
+      response: conflict("clientRequestId ya fue usado con otro payload.", "IDEMPOTENCY_KEY_REUSED"),
+    };
+  }
+
+  let existing = first;
+  for (let attempt = 0; !existing.responseBody && attempt < 11; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const next = await read();
+    if (!next) break;
+    existing = next;
+  }
+
+  if (!isStoredPatchResponse(existing.responseBody)) {
+    return {
+      ok: false as const,
+      response: conflict(
+        "La llave idempotente existe pero no tiene resultado replayable.",
+        "IDEMPOTENCY_RESULT_UNAVAILABLE",
+      ),
+    };
+  }
+
+  return { data: existing.responseBody, ok: true as const };
+}
+
+function isStoredPatchResponse(value: unknown): value is StoredPatchResponse {
+  if (!isPlainObject(value) || !isPlainObject(value.body)) return false;
+
+  if (value.status === 200) {
+    return value.body.ok === true &&
+      isPlainObject(value.body.data) &&
+      isPlainObject(value.body.data.record) &&
+      typeof value.body.data.record.id === "string" &&
+      typeof value.body.data.record.updatedAt === "string";
+  }
+
+  if (value.status === 400 || value.status === 404 || value.status === 409) {
+    return value.body.ok === false &&
+      isPlainObject(value.body.error) &&
+      typeof value.body.error.code === "string" &&
+      typeof value.body.error.message === "string";
+  }
+
+  return false;
+}
+
+function storedPatchResponse(response: StoredPatchResponse) {
+  return Response.json(response.body, { status: response.status });
 }
 
 function isUniqueIdempotencyConflict(error: unknown) {

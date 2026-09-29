@@ -825,6 +825,7 @@ describe("GET /api/v1/contracts/[contractId]/entities/[entityTypeId]/records/[re
 
 describe("PATCH /api/v1/contracts/[contractId]/entities/[entityTypeId]/records/[recordId]", () => {
   it("partially updates a record and leaves omitted values intact", async () => {
+    queryRaw.mockResolvedValueOnce([{ id: "record_1" }] as never);
     entityTypeFindFirst.mockResolvedValue(entity({
       fields: [
         field({ id: "field_codigo", key: "codigo", required: true }),
@@ -894,5 +895,38 @@ describe("PATCH /api/v1/contracts/[contractId]/entities/[entityTypeId]/records/[
         expect.objectContaining({ entityFieldId: "field_nota", textValue: "Nueva" }),
       ]),
     });
+  });
+
+  it("checks current authorization before resolving an idempotent replay", async () => {
+    membershipFindUnique
+      .mockResolvedValueOnce({ organization: { active: true }, role: "ADMIN" } as never)
+      .mockResolvedValueOnce(null);
+
+    const response = await recordDetailPATCH(
+      new Request("http://localhost/api/v1/contracts/contract_1/entities/entity_1/records/record_1", {
+        body: JSON.stringify({
+          clientRequestId: "patch-replay",
+          expectedUpdatedAt: recordUpdatedAtIso,
+          values: { codigo: "EQ-002" },
+        }),
+        headers: (await apiRequest("/api/v1/contracts/contract_1/entities/entity_1/records/record_1")).headers,
+        method: "PATCH",
+      }),
+      {
+        params: Promise.resolve({
+          contractId: "contract_1",
+          entityTypeId: "entity_1",
+          recordId: "record_1",
+        }),
+      },
+    );
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({
+      error: { code: "CONTRACT_FORBIDDEN" },
+      ok: false,
+    });
+    expect(apiIdempotencyKeyCreate).not.toHaveBeenCalled();
+    expect(entityRecordUpdate).not.toHaveBeenCalled();
   });
 });
