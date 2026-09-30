@@ -137,6 +137,11 @@ Central limits:
 - maximum rows: 5,000;
 - accepted extension: `.xlsx`.
 
+The Server Action request limit is 6 MiB so that a 5 MiB file still fits after multipart boundaries
+and field metadata are added. The browser rejects larger files before submitting, and the server keeps
+the same 5 MB file validation. A rejected or failed validation request ends the loading state, shows a
+retriable error, and does not import records.
+
 CSV, `.xls`, and other formats are rejected.
 
 ## Persistence And Audit

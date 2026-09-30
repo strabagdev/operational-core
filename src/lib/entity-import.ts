@@ -24,12 +24,10 @@ import {
   type SerializedFieldValue,
 } from "./field-validation";
 import { orderEntityFields } from "./entity-field-order";
+import { ENTITY_IMPORT_LIMITS } from "./entity-import-limits";
 import { prisma } from "./prisma";
 
-export const ENTITY_IMPORT_LIMITS = {
-  maxFileSizeBytes: 5 * 1024 * 1024,
-  maxRows: 5000,
-} as const;
+export { ENTITY_IMPORT_LIMITS } from "./entity-import-limits";
 export const RECORD_ID_HEADER = "__record_id";
 export const RELATION_IMPORT_EXPORT_SEPARATOR = " | ";
 

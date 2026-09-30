@@ -1,5 +1,33 @@
 # Current Status
 
+## Excel Validation Loading Closure 2026-09-30
+
+- Demonstrated defect: the importer accepts `.xlsx` files up to 5 MB, while Next Server Actions used
+  the framework default 1 MB request limit. A generated 900-row workbook was 1,592,768 bytes, parsed
+  successfully under the importer contract, but exceeded the transport limit before the server action
+  could validate it. The client awaited that action without a rejection path, so `pending` stayed true
+  and the sheet remained on `Validando archivo...`.
+- Correction: the Server Action body limit is 6 MiB, leaving documented multipart overhead above the
+  unchanged 5 MB file limit. The browser rejects files above 5 MB before submission. Both resolved and
+  rejected action requests now finish the pending state; transport failures show a comprehensible error
+  and leave the validation button available for retry. Parsing, relation lookup, uniqueness validation,
+  persistence, and the all-or-nothing import transaction are unchanged.
+- The reported workbook was not available locally, so its exact size and exact production failure are
+  not confirmed. The existing export format remains compatible: `__record_id` is accepted as the first
+  column and visible field-name headers are parsed normally. No production access or final import was
+  performed.
+- Local browser evidence used Windows Chrome through CDP and Core at `localhost:3000`, with the explicit
+  verified `.env.local` destination `opco_dev@127.0.0.1:5432/opco_development`. A synthetic 1,601,225-byte
+  workbook reached a terminal 900-row validation-error summary, removed `Validando archivo...`, and made
+  `Validar archivo` available again. `Importar` was not available, so no records were inserted or updated.
+  The fixture contained no personal data. No screenshot was retained.
+- Technical closure covers the unchanged 5 MiB rejection in both the browser and server parser, the
+  separate 6 MiB multipart transport ceiling, rejected-action pending cleanup followed by a successful
+  retry, the five-item success summary, and exported `__record_id` compatibility. Final checks passed:
+  91/91 affected tests, full Vitest 1107 passed with 16 opt-in skips, `npx tsc --noEmit`, lint, production
+  build, and `git diff --check`. The final inventory remains nine files; no dependency, schema, migration,
+  Client, production data, commit, push, or deployment change is included.
+
 ## PANEL/TABLE Validation Closure 2026-09-29
 
 - Accumulated Core scope was reviewed on `main`. The functional diff contains only: explicit dataset

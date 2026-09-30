@@ -1,5 +1,6 @@
 import ExcelJS from "exceljs";
 import { Prisma, type EntityFieldType } from "@prisma/client";
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -248,6 +249,30 @@ describe("entity import template", () => {
       { fieldId: "name", textValue: "Ana" },
       { fieldId: "email", textValue: "ana@example.com" },
     ]);
+  });
+
+  it("parses a generated xlsx above Next's default action limit but below the importer limit", async () => {
+    const fields = [field({ id: "name", name: "Nombre" })];
+    const buffer = await generateEntityTemplate({ entityName: "Datos", fields });
+    const workbook = new ExcelJS.Workbook();
+
+    await workbook.xlsx.load(buffer);
+
+    for (let row = 0; row < 900; row += 1) {
+      let value = "";
+
+      for (let chunk = 0; chunk < 48; chunk += 1) {
+        value += createHash("sha256").update(`${row}:${chunk}`).digest("hex");
+      }
+
+      workbook.worksheets[0].addRow([value]);
+    }
+
+    const file = await excelFileFromWorkbook(workbook, "datos.xlsx");
+
+    expect(file.size).toBeGreaterThan(1024 * 1024);
+    expect(file.size).toBeLessThanOrEqual(ENTITY_IMPORT_LIMITS.maxFileSizeBytes);
+    await expect(parseExcelRows({ fields, file })).resolves.toHaveLength(900);
   });
 });
 

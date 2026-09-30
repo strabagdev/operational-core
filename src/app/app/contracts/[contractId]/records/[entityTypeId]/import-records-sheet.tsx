@@ -18,8 +18,11 @@ import {
   importEntityRecordsAction,
   type ImportEntityRecordsActionState,
 } from "../actions";
+import { ENTITY_IMPORT_LIMITS } from "@/lib/entity-import-limits";
 
 const initialState: ImportEntityRecordsActionState = { status: "idle" };
+const importFileTooLargeMessage = "El archivo no puede superar 5 MB.";
+type ImportSummaryItem = { label: string; value: number };
 
 export function ImportRecordsSheet({
   contractId,
@@ -36,6 +39,7 @@ export function ImportRecordsSheet({
   const [state, setState] = useState(initialState);
   const [pending, setPending] = useState(false);
   const hasErrors = state.status === "error" && Boolean(state.errors?.length);
+  const summary = importValidationSummary(state);
   const isValid = state.status === "valid";
 
   useEffect(() => {
@@ -59,12 +63,24 @@ export function ImportRecordsSheet({
       formData.set(submitter.name, submitter.value);
     }
 
-    setPending(true);
+    const file = formData.get("file");
+    const fileError = selectedImportFileError(file);
+
+    if (fileError) {
+      setState({ status: "error", message: fileError });
+      return;
+    }
+
+    const intent = formData.get("intent") === "import" ? "import" : "validate";
+
     startTransition(async () => {
-      const nextState = await importEntityRecordsAction(contractId, entityTypeId, state, formData);
+      const nextState = await settleImportRequest({
+        intent,
+        request: () => importEntityRecordsAction(contractId, entityTypeId, state, formData),
+        setPending,
+      });
 
       setState(nextState);
-      setPending(false);
 
       if (nextState.status === "success") {
         setOpen(false);
@@ -158,13 +174,13 @@ export function ImportRecordsSheet({
                   </p>
                 ) : null}
 
-                {state.rowsRead !== undefined ? (
+                {summary ? (
                   <div className="grid gap-2 rounded-md border border-border p-3 text-sm sm:grid-cols-5">
-                    <SummaryItem label="Filas leídas" value={state.rowsRead} />
-                    <SummaryItem label="Nuevos" value={state.createdCount ?? state.validRows ?? 0} />
-                    <SummaryItem label="Actualizaciones" value={state.updatedCount ?? 0} />
-                    <SummaryItem label="Cambios" value={state.changeCount ?? 0} />
-                    <SummaryItem label="Con errores" value={state.errorRows ?? 0} />
+                    <SummaryItem label="Filas leídas" value={summary[0].value} />
+                    <SummaryItem label="Nuevos" value={summary[1].value} />
+                    <SummaryItem label="Actualizaciones" value={summary[2].value} />
+                    <SummaryItem label="Cambios" value={summary[3].value} />
+                    <SummaryItem label="Con errores" value={summary[4].value} />
                   </div>
                 ) : null}
 
@@ -208,6 +224,51 @@ export function ImportRecordsSheet({
       </Sheet>
     </>
   );
+}
+
+export function selectedImportFileError(file: FormDataEntryValue | null) {
+  return file instanceof File && file.size > ENTITY_IMPORT_LIMITS.maxFileSizeBytes
+    ? importFileTooLargeMessage
+    : null;
+}
+
+export function importValidationSummary(
+  state: ImportEntityRecordsActionState,
+): ImportSummaryItem[] | null {
+  return state.rowsRead === undefined
+    ? null
+    : [
+        { label: "Filas leídas", value: state.rowsRead },
+        { label: "Nuevos", value: state.createdCount ?? state.validRows ?? 0 },
+        { label: "Actualizaciones", value: state.updatedCount ?? 0 },
+        { label: "Cambios", value: state.changeCount ?? 0 },
+        { label: "Con errores", value: state.errorRows ?? 0 },
+      ];
+}
+
+export async function settleImportRequest({
+  intent,
+  request,
+  setPending,
+}: {
+  intent: "import" | "validate";
+  request: () => Promise<ImportEntityRecordsActionState>;
+  setPending: (pending: boolean) => void;
+}): Promise<ImportEntityRecordsActionState> {
+  setPending(true);
+
+  try {
+    return await request();
+  } catch {
+    return {
+      status: "error",
+      message: intent === "validate"
+        ? "No fue posible validar el archivo. Inténtalo nuevamente."
+        : "No fue posible completar la importación. Verifica los registros antes de reintentar.",
+    };
+  } finally {
+    setPending(false);
+  }
 }
 
 export function compactImportNotice(state: ImportEntityRecordsActionState) {
