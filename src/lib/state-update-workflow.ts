@@ -200,6 +200,7 @@ export async function getStateUpdateWorkflow({
         context: context.context,
         date: parsedDate.date,
         subjectRecordIds: subjects.map((subject) => subject.id),
+        selection: "workflow-current",
       });
   const currentBySubjectId = new Map(current.map((item) => [item.subjectRecordId, item]));
 
@@ -1013,10 +1014,12 @@ export async function findExistingStateUpdates({
   context,
   date,
   subjectRecordIds,
+  selection,
 }: {
   context: StateUpdateContext;
   date?: Date;
   subjectRecordIds: string[];
+  selection?: "workflow-current";
 }): Promise<ExistingStateUpdate[]> {
   if (subjectRecordIds.length === 0 || context.config.uniqueness.mode === "none") {
     return [];
@@ -1074,9 +1077,24 @@ export async function findExistingStateUpdates({
     orderBy: [{ updatedAt: "desc" }, { id: "asc" }],
     where,
   });
+  // Visible subject current follows latest's field-backed order. Mutation/conflict
+  // lookups and subject-date scopes retain their existing selection semantics.
+  const dateFieldId = selection === "workflow-current" && context.config.uniqueness.mode === "subject"
+    ? context.config.dateFieldId
+    : undefined;
+  const selectedRecords = dateFieldId
+    ? records
+        .map((record) => ({ record, date: record.values.find((value) => value.entityFieldId === dateFieldId)?.dateValue }))
+        .filter((item) => item.date != null)
+        .sort((left, right) => {
+          const dateOrder = right.date!.getTime() - left.date!.getTime();
+          return dateOrder || (left.record.id < right.record.id ? -1 : left.record.id > right.record.id ? 1 : 0);
+        })
+        .map((item) => item.record)
+    : records;
   const firstBySubject = new Map<string, ExistingStateUpdate>();
 
-  for (const record of records) {
+  for (const record of selectedRecords) {
     const subjectRecordId = record.outgoingRelations[0]?.targetRecordId;
 
     if (!subjectRecordId || firstBySubject.has(subjectRecordId)) {

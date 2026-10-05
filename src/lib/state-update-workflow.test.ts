@@ -116,6 +116,84 @@ beforeEach(() => {
   vi.mocked(prisma.apiIdempotencyKey.update).mockResolvedValue({ id: "idem_1" } as never);
 });
 
+describe("state-update dated subject current selection", () => {
+  function version(id: string, date: string | null, revision: string, updatedAt: string) {
+    return existingState({ id, updatedAt: new Date(updatedAt), values: [
+      { entityFieldId: "date_field", dateValue: date ? new Date(date) : null },
+      { entityFieldId: "revision_field", textValue: revision },
+    ] });
+  }
+
+  function configure(dateFieldId: string | undefined = "date_field") {
+    appViewFindFirst.mockResolvedValue(appView({ config: {
+      ...stateConfig(), dateFieldId, uniqueness: { mode: "subject" }, historyMode: "append",
+      stateFields: [{ fieldId: "revision_field", required: false }],
+    } }) as never);
+  }
+
+  it("selects R1 dated October 4 over later-modified R99 dated October 3 and agrees with latest", async () => {
+    configure();
+    const old = version("state_old", "2026-10-03", "R99", "2026-10-04T09:00:00Z");
+    const newest = version("state_new", "2026-10-04", "R1", "2026-10-04T08:00:00Z");
+    mockExistingState([old, newest]);
+    queryRaw.mockResolvedValueOnce([{ total: BigInt(2) }] as never)
+      .mockResolvedValueOnce([{ id: "state_new" }, { id: "state_old" }] as never);
+    const result = await getStateUpdateWorkflow(query({ search: "tolva" }));
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("Unexpected workflow failure");
+    expect(result.data.subjects[0].current?.recordId).toBe("state_new");
+    expect(result.data.subjects[0].current?.recordId).toBe(result.data.latest.items[0].recordId);
+    expect(result.data.subjects[0].current?.states.revision_field).toBe("R1");
+  });
+
+  it("uses latest id-ascending tie break and excludes records without the configured date", async () => {
+    configure();
+    mockExistingState([
+      version("state_missing", null, "R99", "2026-10-04T10:00:00Z"),
+      version("state_b", "2026-10-04", "R2", "2026-10-04T09:00:00Z"),
+      version("state_a", "2026-10-04", "R1", "2026-10-04T08:00:00Z"),
+    ]);
+    const result = await getStateUpdateWorkflow(query({ search: "tolva" }));
+    expect(result.ok && result.data.subjects[0].current?.recordId).toBe("state_a");
+  });
+
+  it("returns no dated current when every record lacks its configured date", async () => {
+    configure();
+    mockExistingState([version("state_missing", null, "R99", "2026-10-04T10:00:00Z")]);
+    const result = await getStateUpdateWorkflow(query({ search: "tolva" }));
+    expect(result.ok && result.data.subjects[0].current).toBeNull();
+  });
+
+  it("does not change the record used by update-current conflict lookup", async () => {
+    appViewFindFirst.mockResolvedValue(appView({ config: {
+      ...stateConfig(), uniqueness: { mode: "subject" }, historyMode: "update-current",
+      stateFields: [{ fieldId: "revision_field", required: false }],
+    } }) as never);
+    mockExistingState([
+      version("state_old", "2026-10-03", "R99", "2026-10-04T09:00:00Z"),
+      version("state_new", "2026-10-04", "R1", "2026-10-04T08:00:00Z"),
+    ]);
+    const result = await saveStateUpdateWorkflow(saveBody({ states: { revision_field: "R3" } }));
+    expect(result).toMatchObject({ ok: true, data: { result: {
+      result: "CONFLICT", existing: { recordId: "state_old" },
+    } } });
+    expect(tx.entityRecord.update).not.toHaveBeenCalled();
+  });
+
+  it("preserves the existing selection without a configured date", async () => {
+    appViewFindFirst.mockResolvedValue(appView({ config: {
+      ...stateConfig(), dateFieldId: undefined, uniqueness: { mode: "subject" }, historyMode: "append",
+      stateFields: [{ fieldId: "revision_field", required: false }],
+    } }) as never);
+    mockExistingState([
+      version("state_old", "2026-10-03", "R99", "2026-10-04T09:00:00Z"),
+      version("state_new", "2026-10-04", "R1", "2026-10-04T08:00:00Z"),
+    ]);
+    const result = await getStateUpdateWorkflow(query({ search: "tolva" }));
+    expect(result.ok && result.data.subjects[0].current?.recordId).toBe("state_old");
+  });
+});
+
 describe("state-update workflow runtime", () => {
   it("does not return all subjects by default and exposes state metadata", async () => {
     const result = await getStateUpdateWorkflow(query());

@@ -770,6 +770,13 @@ Query:
 
 The response includes workflow metadata, source/target entity metadata, configured state fields, active options, extra field definitions, current state per returned subject when uniqueness applies, latest events, and summary counts.
 
+For `subjects[].current` with `uniqueness.mode = subject` and configured `dateFieldId`, visible current
+uses that field's non-null date descending and record id ascending, matching the latest-event order.
+Undated records are excluded; current is null if no dated record exists. System timestamps and revision
+numbers are not selectors. Subject-date/Attendance and no-date lookup behavior is unchanged. This GET
+selection does not change POST mutation/conflict lookup or the separate REPORT projection contract.
+
+
 For `SELECT` state fields, option ids are `FieldOption.id` values. Clients should cache definitions/options for offline use, but POST must still send option ids for `SELECT` states, not labels or persisted option values.
 
 ### POST /api/v1/contracts/:contractId/views/:appViewId/workflow/state-update

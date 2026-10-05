@@ -67,6 +67,38 @@ Omitted extra fields are preserved and are not compared as requested nulls. Expl
 
 `update-current` finds the current target by configured uniqueness. For `subject-date`, the current record is the record matching both subject and date. It never silently overwrites a differing current record.
 
+## Visible Workflow Current Selection
+
+For generic workflow GET `subjects[].current`, `uniqueness.mode = subject` with a configured
+`dateFieldId` selects the record with the greatest non-null value of that configured DATE field.
+It follows the existing latest-event criterion: date descending, record id ascending on equal dates;
+records missing that date are excluded. If none has a date, current is null. Revision numbers,
+createdAt and updatedAt do not select this visible current. updatedAt remains the remote version.
+
+This selection is explicitly requested by the workflow GET. The default lookup used for mutations,
+uniqueness/conflict checks and the STATE_UPDATE CURRENT report projection is unchanged. Subject-date
+scopes (including Attendance) and workflows without a configured date retain their existing lookup.
+The distinction is deliberate in this narrow correction; it does not redefine mutation targets or REPORT.
+
+2026-10-04 validation: three new selection regressions failed before the correction. Five regressions
+now cover newer date versus later modification/revision, date ties, missing dates, no-date compatibility
+and unchanged update-current conflict target. The focused workflow/Attendance/api-reports run passed
+71 tests; typecheck and lint passed. Local Core/PostgreSQL returned R1 dated October 4 as current and
+first latest ahead of R99 dated October 3 with later updatedAt. Client Chrome 154, an exclusive profile,
+real Expo SQLite OPFS and a prepared shell verified R1 on first offline opening/search and after full
+browser close/reopen with both local services stopped. This exercises the active October 4 date, not
+all historical offline scopes or mutations. Production Error finalizing statement remains unexplained.
+Fixture/profiles/processes cleaned; client STATUS and OFFLINE_FIRST_AUDIT hold full provenance/limits.
+
+Technical closeout 2026-10-04: the unchanged implementation and regression blobs are
+`864f4cd0f41bd9171b6c525733a207159a7e6095` and `2ff9572ccc3e219f5ff75c8e77ec5474e7dc5b14`.
+Full `npm run test`: 111 files passed, 2 skipped; 1112 tests passed, 16 skipped. The skipped files
+are opt-in PostgreSQL integration suites for record PATCH and PANEL; their flags were not enabled
+and no new fixtures were created. `npm run build` passed compilation, TypeScript and 20 static pages.
+Prior standalone typecheck/lint and browser evidence are reused against identical source/test content.
+No additional runtime change or browser run. Build outputs remain ignored and excluded from the lot;
+no deploy occurred. Exact publication scopes and unrelated Client pending work are in Client STATUS.
+
 ## Conflicts
 
 Without overwrite, an existing current record produces:
