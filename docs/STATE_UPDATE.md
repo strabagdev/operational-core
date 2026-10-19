@@ -183,3 +183,147 @@ Recommended order:
 3. Deploy the application code.
 4. Verify `/api/v1/ready`.
 5. Smoke test idempotency: same key/same payload replays, same key/different payload returns `IDEMPOTENCY_KEY_REUSED`, append retry does not duplicate records.
+
+
+## Composite report identity — stage 1, LOCAL ONLY — 2026-10-18
+
+Implemented `uniqueness.mode="subject-date-fields"` only with `historyMode="update-current"`.
+The editor chooses one or more active simple SELECT fields, distinct from subject/date/state/extra
+roles. Identity is required independently of generic field.required. No append conversion, schedule
+calculation, deletion workflow or adoption of populated target entities is implemented. Existing modes
+and Attendance remain unchanged.
+
+`registerCompositeDefinition` locks the target EntityType and registers immutable field roles only
+on an empty target without previous workflows. AppViews sharing that target must reuse exactly the
+same definition. Definition version1 and stable FieldOption IDs form identity; EntityValue content
+still uses FieldOption.value through existing validation. Labels do not identify reports. Inactive
+identity options remain readable for existing reports; new combinations cannot use them.
+
+Additive migration `20261018000100_state_update_composite_identity`: two tables,
+StateUpdateIdentityDefinition (one governing definition per target), StateUpdateIdentitySlot
+(canonical subject/date/context tuple, hash, unique reservation, nullable reference to existing
+EntityRecord). No duplicate content, audit, idempotency or event tables. The full tuple is checked
+alongside SHA256; a collision is rejected. Row locking plus existing transactional audit/idempotency
+protect concurrent creation/replacement across AppViews. Slot/record/content/audit/idempotent outcome
+commit together. SQL DATE uses a literal date cast, avoiding session-timezone truncation.
+
+Database guards block generic EntityRecord/Value/Relation writes and deletion only for governed
+targets unless the composite workflow transaction has claimed its identity. This includes generic API,
+RECORDS, web edits/deletion, imports and bulk paths. Identity-field semantic changes and option value
+changes/deletion are blocked; labels may change. Shared EntityType locks fence opt-in activation
+against in-flight legacy writes without serializing unrelated legacy writers exclusively. A governed
+report cannot currently be moved or deleted; deletion support is deferred, not simulated with an
+annulled state. Contract/entity deletion is also constrained while the governing definition exists.
+
+GET requires explicit logical DATE and complete identity to read reports. Without identity it returns
+configuration metadata/contextRequired and no guessed current. With identity it returns one
+subjects[].reports[] entry per requested subject (current can be explicit null), plus latest/summary
+for that context. POST validates the full identity before creating an idempotency key or content;
+old callers cannot create incomplete reports. POST echoes identity. New-mode conflicts include full
+configured remote stateValues/extraValues and exact updatedAt in addition to differences, enabling
+Client's existing Use Opco restoration without inventing missing values. Legacy conflict DTOs remain
+unchanged. Reusing a request key with another context/content is rejected.
+
+Local evidence: .env.local DATABASE_URL explicitly validated as 127.0.0.1:5432/opco_development,
+role opco_dev and passed to child processes. The one new local migration was applied and its own
+guard functions refined during development. After cleaning its fixtures, only that own empty experimental
+migration was reapplied from the final SQL:23 applied/zero failed, final checksum verified and digest
+of all22 previous migration entries unchanged. No production or old migration content changes.
+Nine integration cases use real PostgreSQL and actual editor/configuration/workflow/generic writer
+functions: invalid combinations, missing identity, concurrent creation, separate contexts/shared
+AppViews, discarded-response replay, exact stale-version conflict, protected generic writes/deletion,
+rollback/option immutability, concurrent idempotent replay and controlled generic API rejection.
+Existing focused workflow/Attendance/editor/API-write tests also run. No full suite or production test.
+
+Chrome/OPFS evidence is documented in Client docs/STATE_UPDATE.md (same stage): explicit preparation,
+creation/edit offline, durable confirmation after full browser reopen, real HTTP ACK on one remote
+row, later remote change retained as conflict and exact-context restoration. The published Client
+serializer at 1b4bdaab92d120dc42198256a3b65a8aa53e04a3 was exercised against local HTTP Core:
+it omits identity and gets 400 COMPOSITE_IDENTITY_REQUIRED without a write. This is a server write
+fence, not proof of full old/new Client coexistence or preservation of delivery status by old code.
+SQLite v10/epoch2 stays unchanged. V11 paused; historical production incidents remain uncorrelated.
+
+
+Stage validation:200 focused tests across workflow/Attendance/editor/generic API writers, including
+nine real PostgreSQL integration cases, maxWorkers2. Those nine rerun after clean final migration
+application and fixture cleanup. Core typecheck, full lint (zero warnings) and diff-check pass.
+Client264 focused tests, typecheck/lint/diff-check pass (two lint warnings already in Client HEAD).
+Full workflow browser bundle entry-4fa1cfed7a91b8872d4bf9f7dba0fd41.js retains epoch2. Context switching
+isolates conflicts, unverified null cannot create offline, explicit preparation enables a verified-null
+creation, and syncing another context preserves the original conflict. No full suite, deploy or
+production evidence. Own fixtures/profile/processes removed; unrelated local record identity/version
+digest preserved. See Client's stage inventory for exact source/documentation hunks and limits.
+
+
+Final role validation: a real-editor regression first failed because the new mode allowed its DATE
+identity field as an editable state. Stage1 now rejects subject/date as state roles in both editor
+and runtime, so content cannot override the reserved tuple. Legacy workflows (including date among
+Versionado state fields) are unchanged. The same nine PostgreSQL cases, legacy affected tests,
+typecheck/lint/diff-check were repeated; valid browser fixture configuration did not change.
+
+
+Client final scoped-lookup follow-up: date and identity are checked on direct snapshot/pending
+lookups as well. A failing-before SQLite regression now passes; focused Client total264. That boundary
+was also exercised with real runtime functions and OPFS across browser reopen in bundle
+entry-aa67ade897355755cfe604791b321382.js, using a synthetic store fixture, without claiming another
+HTTP sync. Valid Core workflow paths previously exercised remain unchanged by that read rejection.
+
+
+Final Client test limitation: 264 focused cases complete with CLI testTimeout20000 and maxWorkers2,
+without editing tests/configuration. The default5000 run had21 timeouts/EPIPE and an isolated repeat
+had14 timeouts; no cause is established and no default-budget PASS is claimed. Core200 focused cases,
+typecheck/lint remain PASS. Client's final real-Core date-transition check hides prior-date results
+immediately and its central indicator settles; selecting an unchanged context/date is noop. These
+visual changes do not change Core/report identity or writing rules. Publication/technical close and
+the general audit remain open.
+
+### Publication preparation — 2026-10-19 (NOT AUTHORIZED TO DEPLOY)
+
+The consolidated candidate adds only the two complementary real-PostgreSQL evidence tests and
+this operational documentation to the previously validated runtime. No runtime/Prisma/migration
+change. The previous full suite (1112 PASS/25 gated skips), build and lint remain evidence for the
+identical runtime. Nine composite PostgreSQL cases are reused; two extra PG cases passed separately:
+persisted concurrent winner, and failure after actual audit insertion with rollback of reservation,
+record, values, relations, audit and idempotency. Missing/incomplete requests mutate none of those
+counts; exact retry/replay has one effect. The new test additions pass focused lint and typecheck.
+There are now 11 composite gated cases (27 total across the three integration files); no claim that
+a new full suite was run. Prior 25 skips belong to the earlier full-suite candidate.
+
+Read-only Railway verification: Operational Core project de6601db-ed83-40cd-9901-9d9053604c81,
+production environment 99a3a8db-cfcf-4446-9c37-920acf2bf56b, OPCO Web v1 service
+80248983-cb83-4270-bb02-e31bfd79f59e serves web.opco.cl from strabagdev/operational-core.
+Its DATABASE_URL matches the private reference of Postgres service
+c64c2271-f68d-44e6-b6c1-93a64b19404f; public endpoint credentials/database were compared in memory.
+Session and transaction READ ONLY queried only connection metadata and _prisma_migrations:
+22 applied, zero failed/rolled-back, all checksums match. The sole pending migration is
+prisma/migrations/20261018000100_state_update_composite_identity/migration.sql.
+No migrate command, backup creation or schema/application mutation was executed.
+
+Backup gate OPEN: Railway PITR is disabled and bucketWired=false; volume backup schedule list is
+empty. The only listed manual backup was created 2026-08-22 and has expiresAt=2026-09-21, so it is
+not accepted as a current pre-migration recovery point. CLI/API expose volume backup creation and
+restoration; neither mutation nor restore success was tested. PostgreSQL pg_dump/pg_restore 18.6 are
+installed, matching server major18. Existing scripts/db-backup.sh makes custom dump + checksum +
+pg_restore --list; scripts/db-restore.sh allows only isolated staging/development and rejects
+production. No fresh backup, approved production restoration execution or restore drill is accredited.
+Before authorization to migrate, require a fresh verified backup, its ID/time/retention, and a confirmed
+recovery procedure/operator; restoration to production is a separate explicit decision, never automatic.
+
+Future sequence, not executed: (1) satisfy backup gate and re-read refs/migration checksums; publish Core
+only. Preserve railway.json's existing preDeployCommand=["npm run db:migrate:deploy"] unchanged; it
+must apply only the above additive migration. (2) Verify Railway SUCCESS for the exact Core commit,
+23 migrations/zero failed and checksum match, /api/v1/health and /api/v1/ready HTTP200. (3) Publish Client
+only, then verify exact deployment SHA, public bundle/service-worker reference, API=https://web.opco.cl,
+no local API destinations and unchanged opco-client-v10-epoch2.db. Stop before Client if Core checks fail.
+
+Deployment does NOT opt in any entity: SQL is additive DDL with empty Definition/Slot tables; no
+AppView config update or seed. registerCompositeDefinition is called only from explicit editor
+create/update validation when subject-date-fields is selected. SQL guards act only on governed
+entities. Client reads assigned definitions and cannot activate server configuration. Creating an
+empty target/configuring the new mode is outside this publication. Existing AppViews are not converted.
+
+Rollback before activation may retain additive schema while assessing a previous runtime; no down
+migration is planned. Once a governed definition/report/intention exists, rollback is limited to Core
+AND Client builds supporting this identity and durable authorization/idempotency. Never drop guards,
+slots, definitions or reinterpret pending work as a rollback. Incomplete older writes are rejected;
+that fence does not certify old Client manipulation of new local intentions. V11/general audit open.

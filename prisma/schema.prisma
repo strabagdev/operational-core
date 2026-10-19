@@ -240,6 +240,7 @@ model EntityType {
   contract    Contract       @relation(fields: [contractId], references: [id], onDelete: Cascade)
   fields      EntityField[]
   records     EntityRecord[]
+  stateUpdateIdentity StateUpdateIdentityDefinition?
   auditEvents AuditEvent[]
   createdAt   DateTime       @default(now())
   updatedAt   DateTime       @updatedAt
@@ -328,6 +329,7 @@ model EntityRecord {
   outgoingRelations EntityRelation[]    @relation("SourceRecordRelations")
   incomingRelations EntityRelation[]    @relation("TargetRecordRelations")
   auditEvents       AuditEvent[]
+  stateUpdateIdentitySlot StateUpdateIdentitySlot?
   idempotencyKeys   ApiIdempotencyKey[]
   createdAt         DateTime            @default(now())
   updatedAt         DateTime            @updatedAt
@@ -401,4 +403,31 @@ model AuditChange {
   newValue      Json?
   auditEvent    AuditEvent   @relation(fields: [auditEventId], references: [id], onDelete: Cascade)
   entityField   EntityField? @relation(fields: [entityFieldId], references: [id], onDelete: SetNull)
+}
+
+// Opt-in only: legacy entities and events remain unchanged.
+model StateUpdateIdentityDefinition {
+  id String @id
+  contractId String
+  targetEntityTypeId String @unique
+  subjectFieldId String
+  dateFieldId String
+  fieldIds Json
+  version Int @default(1)
+  targetEntityType EntityType @relation(fields: [targetEntityTypeId], references: [id], onDelete: Restrict)
+  slots StateUpdateIdentitySlot[]
+}
+model StateUpdateIdentitySlot {
+  id String @id
+  definitionId String
+  canonicalKey String
+  identityHash String
+  contextKey String
+  date DateTime @db.Date
+  subjectRecordId String
+  recordId String? @unique
+  definition StateUpdateIdentityDefinition @relation(fields: [definitionId], references: [id], onDelete: Restrict)
+  record EntityRecord? @relation(fields: [recordId], references: [id], onDelete: Restrict)
+  @@unique([definitionId, identityHash])
+  @@index([definitionId, date, contextKey])
 }

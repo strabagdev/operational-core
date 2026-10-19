@@ -32,6 +32,7 @@ export async function GET(
     pageSize: searchParams.get("pageSize"),
     search: searchParams.get("search"),
     subjectRecordId: searchParams.get("subjectRecordId"),
+    identity: parseIdentityQuery(searchParams.get("identity")),
     userId: access.context.user.id,
   });
   timing.mark("workflow_completed");
@@ -109,3 +110,5 @@ async function readJsonBody(request: Request) {
     };
   }
 }
+
+function parseIdentityQuery(value: string | null): unknown { if (value === null) return undefined; try { return JSON.parse(value); } catch { return false; } }

@@ -1,3 +1,4 @@
+import { claimReport, identityContextKey, canonicalReportKey, type CompositeIdentity, type CompositeDefinition } from "./state-update-identity";
 import { Prisma, type EntityFieldType } from "@prisma/client";
 
 import {
@@ -71,6 +72,8 @@ type StateUpdateIdempotencyKey = {
 };
 
 export type StateUpdateContext = {
+  transaction?: Prisma.TransactionClient;
+  composite?: { definition: CompositeDefinition; identity?: CompositeIdentity; recordIds: string[] };
   appView: { id: string; name: string; slug: string };
   config: StateUpdateWorkflowConfig;
   sourceEntityType: { fields: StateUpdateField[]; id: string; name: string; slug: string };
@@ -81,6 +84,7 @@ export type StateUpdateContext = {
 };
 
 export type StateUpdateInput = {
+  identity?: CompositeIdentity;
   clientRequestId?: string;
   date?: Date;
   dateValue?: string;
@@ -105,7 +109,7 @@ export type StateUpdateResult =
         requestedLabel?: string;
       }>;
       conflictReason?: "CURRENT_VALUE_DIFFERS" | "EXPECTED_UPDATED_AT_MISMATCH";
-      existing: { recordId: string; updatedAt: string };
+      existing: { recordId: string; updatedAt: string; stateValues?: Array<{fieldId:string;value?:unknown;optionId:string|null;label:string|null}>; extraValues?: Record<string,unknown> };
       requested: { states: Record<string, unknown> };
       result: "CONFLICT";
       subjectRecordId: string;
@@ -153,6 +157,59 @@ export function attendanceStateUpdateConfig(config: {
   };
 }
 
+function stateUpdateTransaction<T>(context: StateUpdateContext, work: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> {
+  return context.transaction ? work(context.transaction) : prisma.$transaction(work);
+}
+function compositeLatestWhere(context: StateUpdateContext, search?: string): Prisma.EntityRecordWhereInput {
+  return { entityTypeId: context.targetEntityType.id, id: { in: context.composite?.recordIds ?? [] }, ...(search ? { outgoingRelations: { some: { sourceFieldId: context.config.subjectFieldId, targetRecord: { displayName: { contains: search, mode: "insensitive" } } } } } : {}) };
+}
+function compositeMetadata(context: StateUpdateContext) {
+  return { identityDefinition: { definitionId: context.composite!.definition.id, version: 1 }, identityContext: context.composite!.identity ?? null, contextRequired: !context.composite!.identity,
+    identityFields: context.composite!.definition.fieldIds.map(id => { const field = requireField(context, id); return { fieldId: id, label: field.name, type: "SELECT", required: true, options: field.options.map(o => ({ optionId: o.id, value: o.value, label: o.label, active: o.isActive })) }; }) };
+}
+async function prepareCompositeRead(context: StateUpdateContext, raw: unknown, date?: string) {
+  const d = await prisma.stateUpdateIdentityDefinition.findUnique({ where: { targetEntityTypeId: context.targetEntityType.id } });
+  if (!d || d.version !== 1 || context.config.historyMode !== "update-current" || context.config.uniqueness.identityVersion !== 1 || d.id !== context.config.uniqueness.definitionId || d.subjectFieldId !== context.config.subjectFieldId || d.dateFieldId !== context.config.dateFieldId || JSON.stringify(d.fieldIds) !== JSON.stringify([...(context.config.uniqueness.fieldIds ?? [])].sort())) return writeError("INVALID_COMPOSITE_DEFINITION", "La definición de identidad no es compatible.");
+  const definition = { ...d, fieldIds: d.fieldIds as string[] };
+  context.composite = { definition, recordIds: [] };
+  if (raw == null) return { ok: true as const };
+  try {
+    const identity = raw as CompositeIdentity;
+    if (!isRecord(identity) || !isRecord(identity.values)) throw new Error("invalid");
+    canonicalReportKey(definition, "validation-subject", date ?? "", identity);
+    for (const [id, option] of Object.entries(identity.values)) if (!requireField(context, id).options.some(o => o.id === option)) throw new Error("invalid option");
+    context.composite.identity = identity;
+    const slots = await prisma.stateUpdateIdentitySlot.findMany({ where: { definitionId: d.id, date: new Date(date+"T00:00:00.000Z"), contextKey: identityContextKey(identity.values), recordId: { not: null } }, select: { recordId: true } });
+    context.composite.recordIds = slots.flatMap(s => s.recordId ? [s.recordId] : []);
+    return { ok: true as const };
+  } catch { return writeError("INVALID_COMPOSITE_IDENTITY", "La fecha o los campos de identidad están incompletos o son inválidos."); }
+}
+async function saveCompositeWorkflow({ appId, appViewId, contractId, userId, context, input, timing }: { appId: string; appViewId: string; contractId: string; userId: string; context: StateUpdateContext; input: StateUpdateInput; timing?: StateUpdateWorkflowTiming }) {
+  if (!input.clientRequestId || !input.identity) return writeError("COMPOSITE_IDENTITY_REQUIRED", "Identidad e idempotencia obligatorias.");
+  const valid = await prepareCompositeRead(context, input.identity, input.dateValue);
+  if (!valid.ok) return valid;
+  const operation = stateUpdateIdempotencyOperation({ appViewId, contractId });
+  const requestHash = canonicalStateUpdateRequestHash({ appViewId, body: input, contractId, userId });
+  return prisma.$transaction(async tx => {
+    await tx.$executeRaw`SET LOCAL lock_timeout = '5s'`;
+    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${appId + ":" + operation + ":" + input.clientRequestId}, 0))::text`;
+    const slot = await claimReport(tx, context.composite!.definition, input.subjectRecordId, input.dateValue!, input.identity!);
+    if (!slot.recordId && Object.entries(input.identity!.values).some(([id, option]) => !requireField(context,id).options.some(o => o.id === option && o.isActive))) return writeError("INACTIVE_COMPOSITE_OPTION", "No se puede crear con opciones de identidad desactivadas.");
+    const where = { externalAppId_operation_clientRequestId: { externalAppId: appId, operation, clientRequestId: input.clientRequestId! } };
+    const replay = await tx.apiIdempotencyKey.findUnique({ where });
+    if (replay) {
+      if (replay.requestHash !== requestHash) return { ok: false as const, response: conflict("clientRequestId ya fue usado con otro payload.", "IDEMPOTENCY_KEY_REUSED") };
+      if (!replay.completedAt || !isStateUpdateReplayData(replay.responseBody)) return writeError("IDEMPOTENCY_INCOMPLETE", "Resultado anterior no verificable.");
+      return { ok: true as const, data: replay.responseBody as unknown as ReturnType<typeof stateUpdateResponseData> };
+    }
+    await tx.apiIdempotencyKey.create({ data: { clientRequestId: input.clientRequestId!, externalAppId: appId, operation, requestHash, contractId, entityTypeId: context.targetEntityType.id } });
+    const scoped = { ...context, transaction: tx, composite: { ...context.composite!, recordIds: slot.recordId ? [slot.recordId] : [] } };
+    const result = await saveStateUpdateEntry({ appId, context: scoped, contractId, idempotencyKey: { operation, requestHash }, input, timing, userId });
+    if ("recordId" in result.result) await tx.stateUpdateIdentitySlot.update({ where: { id: slot.id }, data: { recordId: result.result.recordId } });
+    return { ok: true as const, data: stateUpdateResponseData(context, result.result) };
+  }, { timeout: 15000 });
+}
+
 export async function getStateUpdateWorkflow({
   appViewId,
   contractId,
@@ -161,6 +218,7 @@ export async function getStateUpdateWorkflow({
   pageSize,
   search,
   subjectRecordId,
+  identity,
   userId,
 }: {
   appViewId: string;
@@ -170,6 +228,7 @@ export async function getStateUpdateWorkflow({
   pageSize?: string | null;
   search?: string | null;
   subjectRecordId?: string | null;
+  identity?: unknown;
   userId: string;
 }) {
   const context = await getStateUpdateWorkflowContext({ appViewId, contractId, userId });
@@ -189,7 +248,12 @@ export async function getStateUpdateWorkflow({
     return pagination;
   }
 
-  const subjects = await findSubjects({
+  if (context.context.config.uniqueness.mode === "subject-date-fields") {
+    const prepared = await prepareCompositeRead(context.context, identity, date ?? undefined);
+    if (!prepared.ok) return prepared;
+  }
+  const contextRequired = context.context.config.uniqueness.mode === "subject-date-fields" && !context.context.composite?.identity;
+  const subjects = contextRequired ? [] : await findSubjects({
     context: context.context,
     search,
     subjectRecordId,
@@ -214,6 +278,7 @@ export async function getStateUpdateWorkflow({
         ? serializeField(requireField(context.context, context.context.config.dateFieldId))
         : null,
       stateFields: serializeStateFields(context.context),
+      ...(context.context.composite ? compositeMetadata(context.context) : {}),
       extraFields: serializeFields(context.context.targetEntityType.fields.filter((field) =>
         context.context.config.extraFieldIds.includes(field.id),
       )),
@@ -227,7 +292,7 @@ export async function getStateUpdateWorkflow({
       },
       subjects: subjects.map((subject) => ({
         subject,
-        current: serializeExisting(currentBySubjectId.get(subject.id), context.context),
+        ...(context.context.composite ? { current: undefined, reports: [{ identity: context.context.composite.identity, current: serializeExisting(currentBySubjectId.get(subject.id), context.context) }] } : { reports: undefined, current: serializeExisting(currentBySubjectId.get(subject.id), context.context) }),
       })),
       latest: await getLatestStateUpdates({
         context: context.context,
@@ -270,6 +335,10 @@ export async function saveStateUpdateWorkflow({
 
   if (!parsed.ok) {
     return parsed;
+  }
+
+  if (context.context.config.uniqueness.mode === "subject-date-fields") {
+    return saveCompositeWorkflow({ appId, appViewId, contractId, userId, context: context.context, input: parsed.body, timing });
   }
 
   const idempotency = await registerStateUpdateIdempotency({
@@ -332,7 +401,7 @@ export async function saveStateUpdateEntry({
   timing?: StateUpdateWorkflowTiming;
   userId: string;
 }): Promise<{ ok: true; result: StateUpdateResult }> {
-  const subject = (await prisma.entityRecord.findMany({
+  const subject = (await (context.transaction ?? prisma).entityRecord.findMany({
     select: { displayName: true, id: true },
     take: 1,
     where: {
@@ -448,7 +517,7 @@ export async function saveStateUpdateEntry({
 
   if (differences.length > 0) {
     if (!input.overwrite) {
-      const result = conflictResult({ conflictReason: "CURRENT_VALUE_DIFFERS", differences, existing, input });
+      const result = conflictResult({ conflictReason: "CURRENT_VALUE_DIFFERS", differences, existing, input, context });
 
       await persistStateUpdateResultIfNeeded({
         appId,
@@ -483,7 +552,7 @@ export async function saveStateUpdateEntry({
     }
 
     if (existing.record.updatedAt.toISOString() !== input.expectedUpdatedAt) {
-      const result = conflictResult({ conflictReason: "EXPECTED_UPDATED_AT_MISMATCH", differences, existing, input });
+      const result = conflictResult({ conflictReason: "EXPECTED_UPDATED_AT_MISMATCH", differences, existing, input, context });
 
       await persistStateUpdateResultIfNeeded({
         appId,
@@ -647,7 +716,7 @@ export async function getStateUpdateContextForConfig({
       stateOptionsByFieldId: validation.stateOptionsByFieldId,
       stateOptionsById: validation.stateOptionsById,
       stateOptionsByValueByFieldId: validation.stateOptionsByValueByFieldId,
-    },
+    } as StateUpdateContext,
   };
 }
 
@@ -717,6 +786,13 @@ function validateStateUpdateRuntimeConfig({
     }
   }
 
+  if (config.uniqueness.mode === "subject-date-fields") {
+    const ids = config.uniqueness.fieldIds ?? [];
+    if (config.historyMode !== "update-current" || !config.dateFieldId || !ids.length || new Set(ids).size !== ids.length || config.stateFields.some(field=>field.fieldId===config.dateFieldId || field.fieldId===config.subjectFieldId) || ids.some(id => {
+      const f = targetFields.find(f=>f.id===id);
+      return !f || f.type !== "SELECT" || f.multiple || id===config.dateFieldId || id===config.subjectFieldId || config.stateFields.some(s=>s.fieldId===id) || config.extraFieldIds.includes(id);
+    })) return { ok: false as const, response: badRequest("Identidad compuesta inválida o no soportada.", "INVALID_WORKFLOW_CONFIG") };
+  }
   const stateOptionsByFieldId = new Map<string, StateOption[]>();
   const stateOptionsById = new Map<string, StateOption>();
   const stateOptionsByValueByFieldId = new Map<string, Map<string, StateOption>>();
@@ -864,6 +940,7 @@ function parseStateUpdateBody(body: unknown, config: StateUpdateWorkflowConfig) 
     return parsedDate;
   }
 
+  if (config.uniqueness.mode === "subject-date-fields" && (!body.identity || !stringValue(body.date))) return writeError("COMPOSITE_IDENTITY_REQUIRED", "Selecciona fecha y todos los campos de identidad. Usa un Client compatible.");
   const rawStates = isRecord(body.states) ? body.states : {};
   const states: Record<string, unknown> = {};
   const allowedStateFieldIds = new Set(config.stateFields.map((field) => field.fieldId));
@@ -892,6 +969,7 @@ function parseStateUpdateBody(body: unknown, config: StateUpdateWorkflowConfig) 
   return {
     ok: true as const,
     body: {
+      ...(config.uniqueness.mode === "subject-date-fields" ? { identity: body.identity as CompositeIdentity } : {}),
       clientRequestId: stringValue(body.clientRequestId)?.trim() || undefined,
       date: parsedDate.date,
       dateValue: parsedDate.value ?? undefined,
@@ -1021,6 +1099,7 @@ export async function findExistingStateUpdates({
   subjectRecordIds: string[];
   selection?: "workflow-current";
 }): Promise<ExistingStateUpdate[]> {
+  if (context.composite && !context.composite.recordIds.length) return [];
   if (subjectRecordIds.length === 0 || context.config.uniqueness.mode === "none") {
     return [];
   }
@@ -1035,7 +1114,8 @@ export async function findExistingStateUpdates({
     },
   };
 
-  if (context.config.uniqueness.mode === "subject-date") {
+  if (context.composite) where.id = { in: context.composite.recordIds };
+  if (context.config.uniqueness.mode === "subject-date" || context.config.uniqueness.mode === "subject-date-fields") {
     if (!context.config.dateFieldId || !date) {
       return [];
     }
@@ -1048,7 +1128,7 @@ export async function findExistingStateUpdates({
     };
   }
 
-  const records = await prisma.entityRecord.findMany({
+  const records = await (context.transaction ?? prisma).entityRecord.findMany({
     include: {
       outgoingRelations: {
         select: { sourceFieldId: true, targetRecordId: true },
@@ -1212,11 +1292,13 @@ function resolveExistingStateFieldValue({
 }
 
 function conflictResult({
+  context,
   conflictReason,
   differences,
   existing,
   input,
 }: {
+  context: StateUpdateContext;
   conflictReason?: "CURRENT_VALUE_DIFFERS" | "EXPECTED_UPDATED_AT_MISMATCH";
   differences: Array<{
     fieldId: string;
@@ -1237,6 +1319,13 @@ function conflictResult({
     existing: {
       recordId: existing.record.id,
       updatedAt: existing.record.updatedAt.toISOString(),
+      ...(context.composite ? {
+        stateValues: Object.entries(serializeRecordStates(existing.record.values,context)).map(([fieldId,value])=>{
+          const option = requireField(context,fieldId).type === "SELECT" && isRecord(value) ? value as Record<string,unknown> : null;
+          return {fieldId, optionId: option && typeof option.optionId === "string" ? option.optionId : null, label: option && typeof option.label === "string" ? option.label : null, ...(option ? {} : {value})};
+        }),
+        extraValues: serializeRecordExtraValues(existing.record.values,context),
+      } : {}),
     },
     requested: { states: input.states },
     result: "CONFLICT",
@@ -1336,7 +1425,7 @@ async function createStateUpdateRecord({
   timing?.mark("create_mutation_build");
 
   timing?.mark("create_transaction_begin");
-  return prisma.$transaction(async (tx) => {
+  return stateUpdateTransaction(context, async (tx) => {
     const genericDisplayName = await buildEntityRecordDisplayName({
       client: tx,
       contractId,
@@ -1440,7 +1529,7 @@ async function updateStateUpdateRecord({
     .map((field) => field.id);
 
   timing?.mark("update_transaction_begin");
-  return prisma.$transaction(async (tx) => {
+  return stateUpdateTransaction(context, async (tx) => {
     const relationChanges = await buildRelationChanges({
       contractId,
       fields: context.targetEntityType.fields.filter((field) => mutableRelationFieldIds.includes(field.id)),
@@ -1584,6 +1673,12 @@ async function buildStateUpdateMutation({
     appendRawValue(formData, state.field, input.states[fieldId]);
   }
 
+  if (input.identity) for (const [fieldId, optionId] of Object.entries(input.identity.values)) {
+    const field = requireField(context, fieldId);
+    const option = field.options.find(option => option.id === optionId);
+    if (!option) throw new Error("INVALID_COMPOSITE_OPTION");
+    formData.set(fieldInputName(fieldId), option.value);
+  }
   for (const [fieldId, value] of Object.entries(input.extraValues)) {
     appendRawValue(formData, requireField(context, fieldId), value);
   }
@@ -1775,7 +1870,7 @@ async function getLatestStateUpdates({
     };
   }
 
-  const records = await prisma.entityRecord.findMany({
+  const records = await (context.transaction ?? prisma).entityRecord.findMany({
     include: {
       outgoingRelations: {
         select: { sourceFieldId: true, targetRecord: { select: { displayName: true, id: true } }, targetRecordId: true },
@@ -1829,6 +1924,7 @@ async function getStateUpdateSummary({
   date?: Date;
 }) {
   const where: Prisma.EntityRecordWhereInput = { entityTypeId: context.targetEntityType.id };
+  if (context.composite) where.id = { in: context.composite.recordIds };
 
   if (context.config.dateFieldId && date) {
     where.values = { some: { dateValue: date, entityFieldId: context.config.dateFieldId } };
@@ -1846,6 +1942,7 @@ async function countLatestStateUpdates({
   context: StateUpdateContext;
   search?: string;
 }) {
+  if (context.composite) return prisma.entityRecord.count({ where: compositeLatestWhere(context, search) });
   if (!context.config.dateFieldId) {
     return 0;
   }
@@ -1884,6 +1981,7 @@ async function latestStateUpdateIds({
     return [];
   }
 
+  if (context.composite) return (await prisma.entityRecord.findMany({ where: compositeLatestWhere(context, search), orderBy: { id: "asc" }, skip, take: pageSize, select: { id: true } })).map(row => row.id);
   const rows = await prisma.$queryRaw<Array<{ id: string }>>(Prisma.sql`
     SELECT record."id"
     FROM "EntityRecord" record
@@ -1919,6 +2017,7 @@ function serializeExisting(existing: ExistingStateUpdate | undefined, context: S
 
   return {
     recordId: existing.record.id,
+    ...(context.composite ? { extraValues: serializeRecordExtraValues(existing.record.values, context) } : {}),
     states: serializeRecordStates(existing.record.values, context),
     updatedAt: existing.record.updatedAt.toISOString(),
   };
@@ -2027,6 +2126,7 @@ function workflowValueFieldIds(config: StateUpdateWorkflowConfig) {
   return [
     ...config.stateFields.map((field) => field.fieldId),
     ...config.extraFieldIds,
+    ...(config.uniqueness.mode === "subject-date-fields" ? config.uniqueness.fieldIds ?? [] : []),
     ...(config.dateFieldId ? [config.dateFieldId] : []),
   ];
 }
@@ -2175,6 +2275,7 @@ function canonicalStateUpdateRequestHash({
   return stableRecordRequestHash({
     appViewId,
     contractId,
+    ...(body.identity ? { identity: { ...body.identity, values: JSON.parse(identityContextKey(body.identity.values)) } } : {}),
     date: body.dateValue ?? null,
     expectedUpdatedAt: body.expectedUpdatedAt ?? null,
     extraValues: Object.fromEntries(Object.entries(body.extraValues).sort(([left], [right]) => left.localeCompare(right))),
@@ -2319,7 +2420,7 @@ async function persistStateUpdateResultIfNeeded({
   if (!input.clientRequestId || !idempotencyKey) return;
 
   timing?.mark("idempotency_finalize_start");
-  await prisma.apiIdempotencyKey.update({
+  await (context.transaction ?? prisma).apiIdempotencyKey.update({
     data: stateUpdateIdempotencyResultData({
       context,
       entityRecordId: stateUpdateResultRecordId(result),
@@ -2387,6 +2488,7 @@ function stateUpdateIdempotencyResultData({
 function stateUpdateResponseData(context: StateUpdateContext, result: StateUpdateResult) {
   return {
     appView: context.appView,
+    ...(context.composite?.identity ? { identity: context.composite.identity } : {}),
     result,
   };
 }

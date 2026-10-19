@@ -766,6 +766,7 @@ export function AppViewForm({
           fieldErrors={state.fieldErrors}
           groupByFieldKey={groupByFieldKey}
           dateFieldId={dateFieldId}
+          identityFieldIds={valuesFromState(state, "identityFieldIds") ?? (initialValues?.config?.type === "WORKFLOW" && initialValues.config.workflowKey === "state-update" ? initialValues.config.uniqueness.fieldIds ?? [] : [])}
           extraFieldIds={extraFieldIds}
           appViews={appViews}
           latestByRelationRelatedEntityTypeId={latestByRelationRelatedEntityTypeId}
@@ -3654,6 +3655,7 @@ function ConfigFields({
   displayFieldIds,
   entityTypeId,
   entityTypes,
+  identityFieldIds,
   extraFieldIds,
   fieldErrors,
   groupByFieldKey,
@@ -3734,6 +3736,7 @@ function ConfigFields({
   displayFieldIds: string[];
   entityTypeId: string;
   entityTypes: AppViewEntityTypeOption[];
+  identityFieldIds: string[];
   extraFieldIds: Set<string>;
   fieldErrors?: Record<string, string[]>;
   groupByFieldKey: string;
@@ -3889,6 +3892,7 @@ function ConfigFields({
                   { label: "Sin unicidad", value: "none" },
                   { label: "Sujeto", value: "subject" },
                   { label: "Sujeto + fecha", value: "subject-date" },
+                  { label: "Sujeto + fecha + contexto", value: "subject-date-fields" },
                 ]}
                 value={uniquenessMode}
               />
@@ -3903,6 +3907,11 @@ function ConfigFields({
                 value={historyMode}
               />
             </div>
+            {uniquenessMode === "subject-date-fields" ? <div className="grid gap-2">
+              <p>Identidad adicional (obligatoria). Sólo Actualizar actual; entidad destino nueva. Estos campos no deben seleccionarse también como estado o extra.</p>
+              {activeTargetFields.filter(field => field.type === "SELECT" && !field.multiple).map(field => <label key={field.id}><input type="checkbox" name="identityFieldIds" value={field.id} defaultChecked={identityFieldIds.includes(field.id)} /> {field.name}</label>)}
+              <FieldError errors={fieldErrors?.identityFieldIds} />
+            </div> : null}
             <FieldChecklist
               fields={activeTargetFields.filter((field) =>
                 stateUpdateStateFieldTypes.has(field.type) &&

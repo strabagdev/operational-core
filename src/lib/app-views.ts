@@ -1,3 +1,4 @@
+import { registerCompositeDefinition } from "./state-update-identity";
 import { Prisma, type AppView, type AppViewType } from "@prisma/client";
 import { z } from "zod";
 
@@ -371,7 +372,10 @@ export type StateUpdateWorkflowConfig = {
   extraFieldIds: string[];
   dateFieldId?: string;
   uniqueness: {
-    mode: "none" | "subject" | "subject-date";
+    mode: "none" | "subject" | "subject-date" | "subject-date-fields";
+    fieldIds?: string[];
+    definitionId?: string;
+    identityVersion?: 1;
   };
   historyMode: "append" | "update-current";
 };
@@ -451,6 +455,7 @@ export function getAppViewInput(formData: FormData) {
       subjectFieldId: formData.get("subjectFieldId"),
       targetEntityTypeId: formData.get("targetEntityTypeId"),
       uniquenessMode: formData.get("uniquenessMode"),
+      identityFieldIds: formData.getAll("identityFieldIds"),
       visibleFieldIds: formData.getAll("visibleFieldIds"),
       workflow: formData.get("workflow"),
       workflowKey: formData.get("workflowKey") ?? formData.get("workflow"),
@@ -1011,6 +1016,7 @@ async function validateAppViewConfig({
     const sourceEntityType = await requireEntityType(client, contractId, config.sourceEntityTypeId);
     const targetEntityType = await requireEntityType(client, contractId, config.targetEntityTypeId);
 
+    if (targetEntityType.stateUpdateIdentity && (config.workflowKey !== "state-update" || config.uniqueness.mode !== "subject-date-fields")) throw new AppViewConfigError("Esta entidad sólo admite su workflow de identidad compuesta.", "targetEntityTypeId");
     if (config.workflowKey === "attendance") {
       validateAttendanceAppViewFields({
         config,
@@ -1047,6 +1053,12 @@ async function validateAppViewConfig({
       targetFields: targetEntityType.fields,
     });
 
+    if (config.uniqueness.mode === "subject-date-fields") {
+      let definitionId: string;
+      try { definitionId = await registerCompositeDefinition({ contractId, targetEntityTypeId: config.targetEntityTypeId, subjectFieldId: config.subjectFieldId, dateFieldId: config.dateFieldId!, fieldIds: config.uniqueness.fieldIds! }); }
+      catch (error) { if (error instanceof Error && error.message.startsWith("COMPOSITE_")) throw new AppViewConfigError("La entidad debe estar vacía, sin workflows anteriores, y reutilizar exactamente su definición de identidad registrada.", "identityFieldIds"); throw error; }
+      config.uniqueness = { ...config.uniqueness, definitionId, identityVersion: 1 };
+    }
     return {
       type,
       workflowKey: config.workflowKey,
@@ -1366,7 +1378,10 @@ const stateUpdateWorkflowConfigInputSchema = workflowBaseConfigInputSchema.exten
     z.string().trim().optional().transform((value) => value || undefined),
   ),
   uniqueness: z.object({
-    mode: z.enum(["none", "subject", "subject-date"]),
+    mode: z.enum(["none", "subject", "subject-date", "subject-date-fields"]),
+    fieldIds: z.array(z.string().trim().min(1)).optional(),
+    definitionId: z.string().min(1).optional(),
+    identityVersion: z.literal(1).optional(),
   }),
   historyMode: z.enum(["append", "update-current"]),
 });
@@ -1767,6 +1782,7 @@ async function requireEntityType(
 ) {
   const entityType = await client.entityType.findFirst({
     include: {
+      stateUpdateIdentity: { select: { id: true } },
       fields: {
         select: {
           config: true,
@@ -1857,7 +1873,7 @@ function parseWorkflowConfigInput(rawConfig: unknown) {
           })),
       uniqueness: isRecord(raw.uniqueness)
         ? raw.uniqueness
-        : { mode: raw.uniquenessMode ?? "none" },
+        : { mode: raw.uniquenessMode ?? "none", ...(raw.uniquenessMode === "subject-date-fields" ? { fieldIds: stringArray(raw.identityFieldIds), identityVersion: 1 } : {}) },
     });
   }
 
@@ -2754,6 +2770,15 @@ function validateStateUpdateAppViewFields({
     throw new AppViewConfigError("El campo sujeto debe ser una relación simple.", "subjectFieldId");
   }
 
+  if (config.uniqueness.mode === "subject-date-fields") {
+    const ids = config.uniqueness.fieldIds ?? [];
+    if (config.stateFields.some(field=>field.fieldId===config.dateFieldId || field.fieldId===config.subjectFieldId)) throw new AppViewConfigError("Sujeto y fecha son identidad; no pueden ser estados editables en este modo.", "stateFieldIds");
+    if (config.historyMode !== "update-current" || !config.dateFieldId || !ids.length || new Set(ids).size !== ids.length) throw new AppViewConfigError("La identidad compuesta requiere fecha, campos SELECT distintos y Actualizar actual.", "identityFieldIds");
+    for (const id of ids) {
+      const f = requireActiveTargetField(targetFields, id, "Identidad");
+      if (f.type !== "SELECT" || f.multiple || id === config.subjectFieldId || id === config.dateFieldId || config.stateFields.some(s => s.fieldId === id) || config.extraFieldIds.includes(id)) throw new AppViewConfigError("Identidad requiere SELECT simple sin repetir otros roles.", "identityFieldIds");
+    }
+  }
   const stateFieldIds = new Set<string>();
   for (const stateField of config.stateFields) {
     if (stateFieldIds.has(stateField.fieldId)) {

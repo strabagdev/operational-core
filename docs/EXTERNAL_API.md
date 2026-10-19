@@ -1535,3 +1535,30 @@ Readiness never runs migrations or modifies data.
 - No API-specific CORS policy yet.
 - No API keys.
 - No OAuth.
+
+
+### STATE_UPDATE composite identity — first stage, local implementation 2026-10-18
+
+New opt-in `uniqueness.mode=subject-date-fields` requires update-current, an explicit DATE and
+registered simple SELECT identity field IDs. It does not change none/subject/subject-date/append.
+The editor returns definitionId/identityVersion; clients send:
+
+```json
+{"date":"2026-10-18","identity":{"version":1,"definitionId":"registered-id","values":{"context-field-id":"option-id"}}}
+```
+
+GET uses JSON `identity` in the query, POST in the body alongside existing subjectRecordId,
+clientRequestId, states, extraValues, overwrite and expectedUpdatedAt. Missing/incomplete/unknown
+identity is rejected for writes. Omitting identity in GET is metadata-only (`contextRequired=true`),
+not complete report coverage. With context, subjects[].reports contains one identity/current pair,
+including explicit null; latest and summary are context-scoped. No cross-context implicit aggregate.
+POST echoes identity. New-mode conflict.existing includes full configured stateValues/extraValues
+and exact updatedAt, as well as existing differences/requested fields; Client must not refresh the
+confirmed base to bypass a conflict. Idempotent retries preserve one effect across AppViews' shared
+report identity. A request key reused with another payload returns IDEMPOTENCY_KEY_REUSED.
+
+Generic create/update API paths on a governed entity return controlled
+COMPOSITE_WORKFLOW_REQUIRED when they attempt to write; database guards also block web/import/bulk
+and deletion bypasses. Identity roles/option values are immutable. Stage1 activates only on a new
+empty target without legacy workflows. No generic/report deletion adaptation is implemented yet.
+Requires the additive Core migration, applied only to local development in this task. Not deployed.
