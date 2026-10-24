@@ -1562,3 +1562,22 @@ COMPOSITE_WORKFLOW_REQUIRED when they attempt to write; database guards also blo
 and deletion bypasses. Identity roles/option values are immutable. Stage1 activates only on a new
 empty target without legacy workflows. No generic/report deletion adaptation is implemented yet.
 Requires the additive Core migration, applied only to local development in this task. Not deployed.
+
+## STATE_UPDATE: SELECT extras — corrección 2026-10-24
+
+GET del workflow publica extraFields SELECT con el serializador de campos existente, incluidas
+opciones `{id,value,label,active,order}`, multiple y config. No habilita MULTISELECT como extra.
+Estados conservan optionId. extraValues usa claves fieldId y valores FieldOption.value en GET/POST;
+current/latest y el remoto de conflictos pueden añadir `extraValuesFormat: "field-value"`.
+Las diferencias de conflictos SELECT extras entregan valores canónicos, sin alterar su resolución.
+Clientes que lean cachés/respuestas anteriores sin esa marca deben resolver ID/valor sólo cuando
+sea inequívoco; no deben aplicar la marca de una definición nueva a snapshots antiguos ni reescribir
+comandos pendientes. No cambian permisos, scopes, idempotencia ni requisitos overwrite/base.
+
+Orden de despliegue SELECT extras acreditado en el cierre 2026-10-24: Core corregido antes de Client.
+El Client publicado conserva estados optionId y acepta los valores canónicos de lectura; su
+formulario key/fieldId aún defectuoso se rechaza sin mutación. Client nuevo sobre Core anterior
+puede enviar null cuando current omite un SELECT opcional; no utilizar ese orden ni volver a Core
+anterior con Client nuevo activo. Verificar SHA/health/readiness y metadata antes de actualizar
+Client; no dar por disponible la edición de extras en la transición. Sin migraciones ni activación
+de configuraciones. Detalle/evidencia local y límites en STATE_UPDATE.

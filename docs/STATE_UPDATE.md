@@ -327,3 +327,44 @@ migration is planned. Once a governed definition/report/intention exists, rollba
 AND Client builds supporting this identity and durable authorization/idempotency. Never drop guards,
 slots, definitions or reinterpret pending work as a rollback. Incomplete older writes are rejected;
 that fence does not certify old Client manipulation of new local intentions. V11/general audit open.
+
+## Extras SELECT: metadata y valores de lectura — 2026-10-24
+
+Corrección local genérica: extraFields SELECT usa serializeApiEntityField para publicar opciones
+(id, value, label, active, order), multiple y configuración. Estados mantienen su contrato optionId.
+serializeRecordExtraValues entrega el textValue canónico del SELECT, separado de la normalización
+usada para comparar estados/extras. current y conflictos incluyen extras cuando hay SELECT extras,
+también fuera del modo compuesto; latest conserva todos los configurados. Diferencias SELECT extra
+exponen valores canónicos sin cambiar la decisión de conflicto ni autorizar sobrescrituras.
+Lecturas nuevas identifican extraValuesFormat="field-value" para evitar ambigüedad con IDs antiguos.
+
+Dos RED archivados fallaron antes (opciones ausentes; opt_alpha en lugar de ALPHA) y pasan después.
+75 pruebas afectadas/3 archivos, typecheck, lint y diff-check PASS. Se mantiene la prueba de conflicto
+por contenido, actualizando únicamente su expectativa de representación al valor canónico.
+Integración con PostgreSQL local validado: Client crea/edita y sincroniza SELECT, conserva estado
+optionId, replay único, cambio remoto posterior→conflicto con comando original conservado y «Usar
+Opco». HTTP de ensayo invoca funciones reales Core; no acredita autenticación de rutas Next ni
+Chrome/OPFS. Sin cambios de esquema, configuración ni datos productivos. Fixtures propios limpiados.
+MULTISELECT continúa no admitido como extra; RELATION y horarios fuera de este lote, V11 pausado.
+
+### Cierre y compatibilidad SELECT extras — 2026-10-24
+
+75 pruebas/typecheck/lint reutilizados por identidad funcional; reconstrucción/hashes/diff-check
+PASS. Build producción Webpack (`npm run build -- --webpack`) PASS. Turbopack habitual no acreditado:
+enlace node_modules externo inválido, luego descarga de fuentes bloqueada; con dependencias físicas
+y red habilitada, EPERM en el puerto interno PostCSS. Es el límite local ya documentado; no se
+modifica configuración ni se presenta como un build habitual aprobado.
+
+Orden Core → Client, comprobado con dominio/Prisma/PostgreSQL locales y adaptadores Client reales.
+Client publicado c67b9ea entiende labels/canónicos nuevos, conserva optionId de estados y sus comandos
+fieldId/valor siguen dando UNCHANGED. El formulario publicado con key equivocado falla cerrado con
+UNKNOWN_EXTRA_FIELD/400, sin mutar. El inverso es inseguro: Core anterior58a2a2a omite extras de
+current; Client nuevo construye null para un SELECT opcional y Core anterior acepta el reemplazo
+confirmado, borrando sólo el valor sintético del ensayo. No desplegar Client antes de verificar
+Core corregido, ni revertir Core anterior mientras se ejecute Client nuevo. Se puede mantener Core
+corregido al revertir Client. No hubo cambios de registros reales, contratos ni migraciones.
+
+Renderer real revisado con respuesta capturada del fixture local y sesión/caché sintéticas: opciones,
+current/latest por label y selección correctas, sin guardado. No se repite SQLite/sync; su evidencia
+previa corresponde a idéntico código. Respaldo final y límites en
+`/home/dannysilver/dev2026/backups/state-update-select-extras-close/2026-10-24/`.

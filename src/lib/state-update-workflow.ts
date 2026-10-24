@@ -1,3 +1,4 @@
+import { serializeApiEntityField } from "./api-entity-serializer";
 import { claimReport, identityContextKey, canonicalReportKey, type CompositeIdentity, type CompositeDefinition } from "./state-update-identity";
 import { Prisma, type EntityFieldType } from "@prisma/client";
 
@@ -109,7 +110,7 @@ export type StateUpdateResult =
         requestedLabel?: string;
       }>;
       conflictReason?: "CURRENT_VALUE_DIFFERS" | "EXPECTED_UPDATED_AT_MISMATCH";
-      existing: { recordId: string; updatedAt: string; stateValues?: Array<{fieldId:string;value?:unknown;optionId:string|null;label:string|null}>; extraValues?: Record<string,unknown> };
+      existing: { recordId: string; updatedAt: string; stateValues?: Array<{fieldId:string;value?:unknown;optionId:string|null;label:string|null}>; extraValues?: Record<string,unknown>; extraValuesFormat?: "field-value" };
       requested: { states: Record<string, unknown> };
       result: "CONFLICT";
       subjectRecordId: string;
@@ -279,7 +280,7 @@ export async function getStateUpdateWorkflow({
         : null,
       stateFields: serializeStateFields(context.context),
       ...(context.context.composite ? compositeMetadata(context.context) : {}),
-      extraFields: serializeFields(context.context.targetEntityType.fields.filter((field) =>
+      extraFields: serializeExtraFields(context.context.targetEntityType.fields.filter((field) =>
         context.context.config.extraFieldIds.includes(field.id),
       )),
       subjectEntityType: {
@@ -1315,16 +1316,19 @@ function conflictResult({
 }): StateUpdateResult {
   return {
     conflictReason,
-    differences,
+    differences: differences.map(difference => difference.kind === "extra" && requireField(context, difference.fieldId).type === "SELECT"
+      ? { ...difference, currentValue: existing.record.values.find(value => value.entityFieldId === difference.fieldId)?.textValue ?? null, requestedValue: input.extraValues[difference.fieldId] }
+      : difference),
     existing: {
       recordId: existing.record.id,
       updatedAt: existing.record.updatedAt.toISOString(),
-      ...(context.composite ? {
+      ...(context.composite || hasSelectExtras(context) ? {
         stateValues: Object.entries(serializeRecordStates(existing.record.values,context)).map(([fieldId,value])=>{
           const option = requireField(context,fieldId).type === "SELECT" && isRecord(value) ? value as Record<string,unknown> : null;
           return {fieldId, optionId: option && typeof option.optionId === "string" ? option.optionId : null, label: option && typeof option.label === "string" ? option.label : null, ...(option ? {} : {value})};
         }),
         extraValues: serializeRecordExtraValues(existing.record.values,context),
+        extraValuesFormat: "field-value" as const,
       } : {}),
     },
     requested: { states: input.states },
@@ -1902,6 +1906,7 @@ async function getLatestStateUpdates({
       .map((record) => ({
         recordId: record.id,
         extraValues: serializeRecordExtraValues(record.values, context),
+        extraValuesFormat: "field-value" as const,
         subject: record.outgoingRelations[0]?.targetRecord ?? null,
         date: serializeRecordDate(record.values, context),
         states: serializeRecordStates(record.values, context),
@@ -2017,7 +2022,7 @@ function serializeExisting(existing: ExistingStateUpdate | undefined, context: S
 
   return {
     recordId: existing.record.id,
-    ...(context.composite ? { extraValues: serializeRecordExtraValues(existing.record.values, context) } : {}),
+    ...(context.composite || hasSelectExtras(context) ? { extraValues: serializeRecordExtraValues(existing.record.values, context), extraValuesFormat: "field-value" as const } : {}),
     states: serializeRecordStates(existing.record.values, context),
     updatedAt: existing.record.updatedAt.toISOString(),
   };
@@ -2062,7 +2067,7 @@ function serializeRecordExtraValues(values: Array<{
     const field = requireField(context, fieldId);
     const value = values.find((item) => item.entityFieldId === fieldId);
 
-    return [fieldId, normalizedSerializedValue(value, field)];
+    return [fieldId, field.type === "SELECT" ? value?.textValue ?? null : normalizedSerializedValue(value, field)];
   }));
 }
 
@@ -2098,8 +2103,12 @@ export function serializeStateFields(context: StateUpdateContext) {
   });
 }
 
-function serializeFields(fields: StateUpdateField[]) {
-  return fields.map(serializeField);
+function hasSelectExtras(context: StateUpdateContext) {
+  return context.config.extraFieldIds.some(id => requireField(context, id).type === "SELECT");
+}
+
+function serializeExtraFields(fields: StateUpdateField[]) {
+  return fields.map(field => field.type === "SELECT" ? serializeApiEntityField(field) : serializeField(field));
 }
 
 function serializeField(field: StateUpdateField) {

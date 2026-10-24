@@ -1142,8 +1142,8 @@ describe("state-update workflow runtime", () => {
             {
               fieldId: "condition_field",
               kind: "extra",
-              currentValue: "condition_ok_option",
-              requestedValue: "condition_bad_option",
+              currentValue: "condition_ok",
+              requestedValue: "condition_bad",
             },
           ],
         },
@@ -1756,3 +1756,64 @@ function idempotencyUniqueError() {
     meta: { target: ["externalAppId", "operation", "clientRequestId"] },
   });
 }
+
+describe("configurable SELECT extra contract", () => {
+  function mockSelectExtra() {
+    const extra = field("choice_extra", "choice_key", "Campo configurable sintético", "SELECT", {
+      required: false,
+      multiple: false,
+      config: { display: { showInClient: true, showInList: true } },
+      options: [
+        option("opt_alpha", "Opción sintética Alfa", "ALPHA"),
+        option("opt_beta", "Opción sintética Beta", "BETA"),
+        option("opt_gamma", "Opción sintética Gamma", "GAMMA"),
+      ],
+    });
+    const target = targetEntityType();
+    target.fields.push(extra);
+    entityTypeFindFirst.mockImplementation((async (args: { where?: { id?: string } }) =>
+      args.where?.id === "equipment" ? sourceEntityType() : target) as never);
+    appViewFindFirst.mockResolvedValue(appView({ config: {
+      ...stateConfig(), extraFieldIds: [extra.id], stateFields: [{ fieldId: "revision_field", required: false }],
+    } }) as never);
+    const row = latestStateRecord({ id: "synthetic_event", subjectDisplayName: "Sujeto sintético", subjectRecordId: "equipment_1" });
+    row.values.push({ entityFieldId: extra.id, textValue: "ALPHA", jsonValue: null } as never);
+    entityRecordFindMany.mockImplementation(defaultRecordFindMany([row]));
+    queryRaw.mockResolvedValueOnce([{ total: BigInt(1) }] as never).mockResolvedValueOnce([{ id: row.id }] as never);
+    return extra;
+  }
+
+  it("exposes configured options and cardinality to the shared form (archived RED)", async () => {
+    mockSelectExtra();
+    const result = await getStateUpdateWorkflow(query({ search: "sintético" }));
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw Error("Fixture failed");
+    expect(result.data.extraFields[0]).toMatchObject({ multiple: false, options: [
+      { id: "opt_alpha", value: "ALPHA", label: "Opción sintética Alfa" },
+      { id: "opt_beta", value: "BETA", label: "Opción sintética Beta" },
+      { id: "opt_gamma", value: "GAMMA", label: "Opción sintética Gamma" },
+    ] });
+  });
+
+  it("returns the canonical SELECT extra value instead of the option ID (archived RED)", async () => {
+    mockSelectExtra();
+    const result = await getStateUpdateWorkflow(query({ search: "sintético" }));
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw Error("Fixture failed");
+    expect(result.data.latest.items[0].extraValues.choice_extra).toBe("ALPHA");
+    expect(result.data.latest.items[0].extraValuesFormat).toBe("field-value");
+  });
+
+  it("retains inactive option metadata for historical reads without enabling it", async () => {
+    const extra = mockSelectExtra();
+    (extra.options as Array<{ isActive: boolean }>)[0].isActive = false;
+    const result = await getStateUpdateWorkflow(query({ search: "sintético" }));
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw Error("Fixture failed");
+    expect(result.data.extraFields[0]).toMatchObject({ options: [
+      { id: "opt_alpha", value: "ALPHA", label: "Opción sintética Alfa", active: false },
+      { id: "opt_beta", active: true }, { id: "opt_gamma", active: true },
+    ] });
+    expect(result.data.latest.items[0].extraValues.choice_extra).toBe("ALPHA");
+  });
+});
