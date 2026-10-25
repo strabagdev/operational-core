@@ -1,5 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
+import { getEntityFieldEditorInput } from "@/lib/entity-config";
 
 import {
   FIELD_OPTIONS_PAYLOAD_NAME,
@@ -50,6 +51,20 @@ function optionPayload(size: number) {
 }
 
 describe("field editor controls", () => {
+  it("submits the precision rendered from the stored editor configuration", async () => {
+    const html = renderControls({ mode: "edit", defaultValues: {
+      name: "Lectura", key: "lectura", type: "DECIMAL", validation: { decimalPlaces: 1 },
+    } });
+    const control = html.match(/<input\b[^>]*name="validationDecimalPlaces"[^>]*>/)?.[0];
+    expect(control).toBeDefined();
+    const value = control!.match(/value="([^"]*)"/)?.[1];
+    expect(value).toBe("1");
+    const form = new FormData();
+    for (const [name, entry] of Object.entries({ name: "Lectura", key: "lectura", type: "DECIMAL", isActive: "true", validationDecimalPlaces: value! })) form.set(name, entry);
+    const request = new Request("https://synthetic.invalid/editor", { method: "POST", body: form });
+    expect(getEntityFieldEditorInput(await request.formData()).field.validation.decimalPlaces).toBe(1);
+  });
+
   it("renders the field type selector on create", () => {
     const html = renderControls({ mode: "create" });
 

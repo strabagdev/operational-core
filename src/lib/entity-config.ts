@@ -83,6 +83,7 @@ export const entityFieldSchema = z
       maxLength: z.number().int().min(0).optional(),
       minimum: z.number().optional(),
       maximum: z.number().optional(),
+      decimalPlaces: z.number().int().min(0).max(6).optional(),
       regex: z
         .object({
           pattern: z.string().trim().min(1),

@@ -33,6 +33,27 @@ function appendOption(formData: FormData, rowKey: string, label: string, value: 
 }
 
 describe("entity field editor input", () => {
+  it.each([0, 1, 6])("preserves decimalPlaces=%s through the editor multipart request", async (places) => {
+    const form = baseFieldForm("DECIMAL");
+    form.set("validationDecimalPlaces", String(places));
+    const request = new Request("https://synthetic.invalid/editor", { method: "POST", body: form });
+    const input = getEntityFieldEditorInput(await request.formData());
+
+    expect(input.field.validation).toMatchObject({ decimalPlaces: places });
+  });
+
+  it.each(["-1", "7", "1.5", "not-a-number"])("rejects invalid decimal precision %s", (places) => {
+    const form = baseFieldForm("DECIMAL");
+    form.set("validationDecimalPlaces", places);
+    expect(() => getEntityFieldEditorInput(form)).toThrow();
+  });
+
+  it("does not add decimal precision when the optional input is empty", () => {
+    const form = baseFieldForm("DECIMAL");
+    form.set("validationDecimalPlaces", "");
+    expect(getEntityFieldEditorInput(form).field.validation.decimalPlaces).toBeUndefined();
+  });
+
   it("parses form booleans explicitly", () => {
     const formData = new FormData();
 

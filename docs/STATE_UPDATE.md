@@ -408,3 +408,26 @@ Errores inesperados no se convierten en éxito. El fixture de concurrencia de la
 se aisló por fecha y verifica todas las filas previas intactas; no se eliminó ninguna aserción.
 Dos AppViews compuestas con MULTISELECT/RELATION/DECIMAL: un ganador concurrente, otra combinación
 independiente, replay único, invalidación antigua incompleta sin mutación y rollback de precisión.
+
+
+## Precisión del editor — 2026-10-25, LOCAL SIN PUBLICAR
+
+El parser de entity-config.entityFieldSchema.validation ahora conserva decimalPlaces opcional,
+entero de 0 a 6. El formulario ya emitía validationDecimalPlaces, pero Zod lo eliminaba. No se
+agregan valores predeterminados, redondeos, cambios de valores ni activaciones automáticas.
+Se reutiliza el dominio de validación existente.
+
+Regresión RED en Core79034ef: seis casos del parser y dos integraciones PostgreSQL pierden la regla.
+GREEN tras añadir la propiedad: control real SSR, Request/FormData multipart, parser,
+create/update con permisos, PostgreSQL y lectura del editor/API. Se valida un decimal y se conserva
+el valor anterior 12.34 al editar sólo la configuración, sin redondearlo. Aplicar esa regla a
+INTEGER se rechaza antes de mutar. Los fixtures propios de PostgreSQL local se eliminan al terminar.
+
+Validación: 101 pruebas focalizadas y 2 integraciones PostgreSQL locales, un worker; typecheck,
+lint afectado y diff-check PASS. Conexión cargada explícitamente desde .env.local, restringida a
+127.0.0.1:5432/opco_development como opco_dev. No sesión Next autenticada ni navegador nuevos;
+no suite completa, build, configuración productiva, commit, push o deploy.
+
+La transición SELECT→MULTISELECT queda cancelada por instrucción del usuario: Operador continúa
+SELECT simple. Este lote no cambia opciones, valores, outbox ni el soporte MULTISELECT publicado.
+Horarios, 402 exclusiones y pendientes ajenos permanecen intactos. V11 pausado.
