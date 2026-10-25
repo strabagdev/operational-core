@@ -288,6 +288,7 @@ function getFieldValidationInput(formData: FormData): FieldValidationRules {
     maxLength: optionalInteger(formData.get("validationMaxLength")),
     minimum: optionalNumber(formData.get("validationMinimum")),
     maximum: optionalNumber(formData.get("validationMaximum")),
+    decimalPlaces: optionalNumber(formData.get("validationDecimalPlaces")),
     regex: regexPattern
       ? {
           pattern: regexPattern,

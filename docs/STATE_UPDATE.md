@@ -368,3 +368,43 @@ Renderer real revisado con respuesta capturada del fixture local y sesión/cach�
 current/latest por label y selección correctas, sin guardado. No se repite SQLite/sync; su evidencia
 previa corresponde a idéntico código. Respaldo final y límites en
 `/home/dannysilver/dev2026/backups/state-update-select-extras-close/2026-10-24/`.
+
+## Extras tipados y precisión — candidato local 2026-10-25
+
+MULTISELECT es ahora un extra configurable en editor/validadores/runtime, nunca un estado o campo
+adicional de identidad. Wire por fieldId y valores canónicos FieldOption.value[]; estados SELECT
+conservan optionId. El constructor de FormData admite el arreglo y reutiliza validación, auditoría,
+idempotencia y conflictos. Metadata de extras usa el serializer genérico completo.
+
+RELATION extra entrega target/cardinalidad y current/latest/conflicto con ID + displayName (arreglo
+para MANY). Las relaciones del sujeto se identifican por sourceFieldId, no por posición. Lectura de
+catálogo conserva autorización/contrato y paginación de la API existente. Null sólo representa vacío
+en una lectura compatible; no se infiere un catálogo ni se rellena un label inexistente.
+
+DECIMAL admite config.validation.decimalPlaces opcional, entero 0–6, validado en el editor y las
+puertas genéricas que reutilizan validateEntityValues. Máximo de decimales, sin redondeo ni mutación
+retroactiva; valores existentes de mayor precisión permanecen visibles. Presentación completa ceros
+sólo si el valor es compatible. Transporte conserva número/string decimal admitidos; Client nuevo
+usa string exacto al configurar precisión. No cambia DECIMAL(20,6), no hay migración ni reglas de dominio.
+
+PostgreSQL local validado desde .env.local: metadata, arreglo persistido, relación ID/label en
+current/latest, replay único, rechazo de precisión excesiva sin mutación y usuario ajeno rechazado.
+Core suite final: 1120 PASS / 28 omitidas opt-in y 12 PASS PostgreSQL locales, typecheck/lint/build habitual Turbopack PASS.
+Primer run tuvo seis fallos Attendance porque su fixture omitía sourceFieldId; se completó esa
+proyección real sin cambiar aserciones. No regresión de dominio ni bypass de sus confirmaciones.
+
+Horarios no integrados: consumidor publicado Client403be589 sigue perdiendo metadata propuesta;
+5 caracterizaciones PASS y 2 RED de conservación. Borrado remoto no implementado: usuario confirmó
+sólo administradores, auditoría y recreación explícita nueva. Slots actuales carecen de generación/
+tombstone; no es seguro borrar/liberar recordId porque un envío anterior podría reclamar la clave.
+Hace falta protocolo de generación y replay, más acción de auditoría de eliminación. No se abre una
+puerta DELETE, no se añade anulación, no se cambia el schema ni se activa ningún modo nuevo.
+Publicación eventual: Core primero y Client después; activar campos nuevos sólo tras actualizar Client.
+
+Precisión de extra compuesto: regresión RED PostgreSQL devolvía excepción sin mapear; ahora se
+mapean sólo errores conocidos después del rollback a HTTP400 INVALID_FIELD_VALUE, sin reserva/fila/
+idempotencia parcial. La corrección con el mismo request rechazado puede crear posteriormente.
+Errores inesperados no se convierten en éxito. El fixture de concurrencia de la integración completa
+se aisló por fecha y verifica todas las filas previas intactas; no se eliminó ninguna aserción.
+Dos AppViews compuestas con MULTISELECT/RELATION/DECIMAL: un ganador concurrente, otra combinación
+independiente, replay único, invalidación antigua incompleta sin mutación y rollback de precisión.

@@ -1,3 +1,4 @@
+import { formatConfiguredDecimal } from "./decimal-precision";
 import { Prisma, type EntityField, type EntityFieldType } from "@prisma/client";
 
 import {
@@ -1911,7 +1912,9 @@ export function deserializeEntityValue(value: {
       );
     }
 
-    return value.decimalValue.toString();
+    return value.entityField?.type === "DECIMAL"
+      ? formatConfiguredDecimal(value.decimalValue.toString(), { validation: parseFieldConfig(value.entityField.config).validation })
+      : value.decimalValue.toString();
   }
 
   if (value.booleanValue !== null) {

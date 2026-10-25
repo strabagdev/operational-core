@@ -66,6 +66,7 @@ type FieldEditorFormValues = {
     required?: boolean;
     minLength?: number;
     maxLength?: number;
+    decimalPlaces?: number;
     minimum?: number;
     maximum?: number;
     regex?: { pattern?: string; message?: string };
@@ -623,6 +624,7 @@ export function FieldEditorControls({
               <div className="grid gap-3 md:grid-cols-2">
                 <NumberInput defaultValue={defaultValues?.validation?.minimum} label="Valor mínimo" name="validationMinimum" step="any" />
                 <NumberInput defaultValue={defaultValues?.validation?.maximum} label="Valor máximo" name="validationMaximum" step="any" />
+                {type === "DECIMAL" ? <NumberInput defaultValue={defaultValues?.validation?.decimalPlaces} label="Máximo de decimales (0–6; sin redondeo)" name="validationDecimalPlaces" step="1" /> : null}
               </div>
             ) : null}
             {validationControls.includes("regex") ? (

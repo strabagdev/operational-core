@@ -132,12 +132,15 @@ test("composite STATE_UPDATE real PostgreSQL",()=>{
  });
 
  it("evidence review: persisted concurrent winner is not overwritten",async()=>{
-  const requests=[body("evidence-concurrent-a",71),body("evidence-concurrent-b",72)];
+  const previousRows=await prisma.entityRecord.findMany({where:{entityTypeId:f.target},include:{values:true},orderBy:{id:"asc"}});
+  const requests=[body("evidence-concurrent-a",71),body("evidence-concurrent-b",72)].map(request=>({...request,date:"2026-10-22"}));
   const results=(await Promise.all(requests.map(request=>save(request)))).map(data);
   expect(results.map(r=>r.result).sort()).toEqual(["CONFLICT","CREATED"]);
   const winner=results.findIndex(r=>r.result==="CREATED");
-  const rows=await prisma.entityRecord.findMany({where:{entityTypeId:f.target},include:{values:true}});
+  const rows=await prisma.entityRecord.findMany({where:{entityTypeId:f.target,values:{some:{entityFieldId:f.date,dateValue:new Date("2026-10-22T00:00:00.000Z")}}},include:{values:true}});
   expect(rows).toHaveLength(1);
+  expect(await prisma.entityRecord.count({where:{entityTypeId:f.target}})).toBe(previousRows.length+1);
+  expect(await prisma.entityRecord.findMany({where:{id:{in:previousRows.map(row=>row.id)}},include:{values:true},orderBy:{id:"asc"}})).toEqual(previousRows);
   expect(Number(rows[0].values.find(v=>v.entityFieldId===f.counter)?.decimalValue)).toBe(winner===0?71:72);
  });
  it("evidence review: full save rolls back after persisted audit and incomplete requests mutate nothing",async()=>{
@@ -172,6 +175,25 @@ test("composite STATE_UPDATE real PostgreSQL",()=>{
   const replay=data(await save(request));expect(replay).toEqual(retry);
   const after=await counts(prisma);expect(after.records).toBe(before.records+1);
   expect(after.slots).toBe(before.slots+1);expect(after.idempotency).toBe(before.idempotency+1);
+ });
+
+
+ it("returns a field validation response and rolls back the identity when extra DECIMAL precision is exceeded", async () => {
+  const extraId=id("precision_extra");
+  await prisma.entityField.create({data:{id:extraId,entityTypeId:f.target,key:"precision_extra",name:"Precision extra",type:"DECIMAL",config:{validation:{decimalPlaces:1}}}});
+  const input=new FormData();for(const [k,v]of Object.entries({type:"WORKFLOW",name:"Precision synthetic",slug:id("precision-view").replaceAll("_","-"),active:"on",workflowKey:"state-update",sourceEntityTypeId:f.source,targetEntityTypeId:f.target,subjectFieldId:f.subject,dateFieldId:f.date,uniquenessMode:"subject-date-fields",historyMode:"update-current"}))input.set(k,v);
+  for(const field of[f.shift,f.group])input.append("identityFieldIds",field);
+  for(const field of[f.status,f.counter,f.note])input.append("stateFieldIds",field);
+  input.append("requiredStateFieldIds",f.status);input.append("extraFieldIds",extraId);
+  const view=await createAppView(f.contract,f.user,getAppViewInput(input));if(!view)throw Error("View setup denied");
+  await prisma.userAppViewAccess.create({data:{contractId:f.contract,userId:f.user,appViewId:view.id}});
+  const count=async()=>({slots:await prisma.stateUpdateIdentitySlot.count({where:{definitionId:f.definition}}),records:await prisma.entityRecord.count({where:{entityTypeId:f.target}}),keys:await prisma.apiIdempotencyKey.count({where:{externalAppId:f.app}})});
+  const before=await count(), request={...body("precision-invalid",12),date:"2026-10-21",extraValues:{[extraId]:"12.34"}};
+  const invalid=await save(request,view.id);expect(invalid.ok).toBe(false);
+  if(invalid.ok)throw Error("Expected validation rejection");
+  expect(invalid.response.status).toBe(400);expect(await invalid.response.json()).toMatchObject({error:{code:"INVALID_FIELD_VALUE"}});
+  expect(await count()).toEqual(before);
+  expect(data(await save({...request,extraValues:{[extraId]:"12.3"}},view.id)).result).toBe("CREATED");
  });
 
 });

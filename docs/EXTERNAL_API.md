@@ -1581,3 +1581,20 @@ puede enviar null cuando current omite un SELECT opcional; no utilizar ese orden
 anterior con Client nuevo activo. Verificar SHA/health/readiness y metadata antes de actualizar
 Client; no dar por disponible la edición de extras en la transición. Sin migraciones ni activación
 de configuraciones. Detalle/evidencia local y límites en STATE_UPDATE.
+
+### STATE_UPDATE extras tipados / DECIMAL — candidato local 2026-10-25
+
+Extras MULTISELECT: extraValues[fieldId] es un arreglo de valores canónicos de opciones, no optionId.
+SELECT extra sigue siendo canónico; estados SELECT conservan optionId. Metadata extra incluye opciones,
+actividad, configuración y cardinalidad mediante serializeApiEntityField. RELATION extra lee ID/label
+(o arreglo para MANY) y escribe ID(s), validados en el contrato; etiquetas no son identidad.
+Current/latest/conflicto incluyen los extras configurados. No se incorporan MULTISELECT a identidad.
+
+EntityField.config.validation.decimalPlaces es opcional sólo para DECIMAL, entero 0–6; exceso devuelve
+INVALID_FIELD_VALUE sin redondear ni modificar la fila. Transporte decimal número/string sigue admitido.
+No hay cambios de schema, horarios ni DELETE remoto. Core corregido debe preceder a Client nuevo y la
+activación de campos; no se certifica completitud de un catálogo por una página de resultados.
+
+Errores conocidos de validación de extras en la transacción compuesta se mapean tras rollback al
+mismo HTTP400 INVALID_FIELD_VALUE usado por el motor común; no quedan reservas ni idempotencia
+parciales. No se transforma una excepción inesperada en resultado exitoso.

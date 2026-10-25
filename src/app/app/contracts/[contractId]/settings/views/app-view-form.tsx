@@ -5908,6 +5908,7 @@ const stateUpdateExtraFieldTypes = new Set([
   "TIME",
   "DATETIME",
   "SELECT",
+  "MULTISELECT",
   "RELATION",
 ]);
 

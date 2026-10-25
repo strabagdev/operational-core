@@ -695,3 +695,18 @@ function recordField({
     })),
   };
 }
+
+describe("DECIMAL precision configuration", () => {
+  it("rejects values beyond the configured fractional precision without rounding", () => {
+    const f = field({ type: "DECIMAL", config: { validation: { decimalPlaces: 1 } } });
+    expectFieldError(() => validateRecordValues({ fields: [f], mode: "edit", formData: formData([["field_field_1", "12.34"]]) }));
+    expect(() => validateRecordValues({ fields: [f], mode: "edit", formData: formData([["field_field_1", "12.3"]]) })).not.toThrow();
+    expect(() => validateRecordValues({ fields: [f], mode: "edit", formData: formData([["field_field_1", "12.300"]]) })).not.toThrow();
+  });
+});
+
+it("admits scale only for DECIMAL in range 0–6", () => {
+  for (const decimalPlaces of [-1, 7, 1.5]) expect(() => buildMergedFieldConfig({ type: "DECIMAL", validation: { decimalPlaces } })).toThrow();
+  expect(() => buildMergedFieldConfig({ type: "INTEGER", validation: { decimalPlaces: 1 } })).toThrow();
+  expect(buildMergedFieldConfig({ type: "DECIMAL", validation: { decimalPlaces: 1 } })).toMatchObject({ validation: { decimalPlaces: 1 } });
+});

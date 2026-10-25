@@ -1512,6 +1512,28 @@ function attendanceConfig() {
   };
 }
 
+describe("configurable extra metadata and values", () => {
+  it("accepts MULTISELECT extras with canonical values and exposes all options", async () => {
+    appViewFindFirst.mockResolvedValue(appView({ config: { ...stateConfig(), extraFieldIds: ["tags_field"] } }) as never);
+    const read = await getStateUpdateWorkflow(query());
+    expect(read.ok).toBe(true);
+    if (read.ok) expect(read.data.extraFields).toEqual([expect.objectContaining({ id: "tags_field", type: "MULTISELECT", options: [expect.objectContaining({ id: "tag_one", value: "etiqueta", label: "Etiqueta" })] })]);
+  });
+  it("writes canonical multiple values through the real mutation builder", async () => {
+    appViewFindFirst.mockResolvedValue(appView({ config: { ...stateConfig(), extraFieldIds: ["tags_field"] } }) as never);
+    const saved = await saveStateUpdateWorkflow(saveBody({ states: { operational_field: "operational_ok" }, extraValues: { tags_field: ["etiqueta"] } }));
+    expect(saved.ok).toBe(true);
+    if (saved.ok) expect(saved.data.result.result).toBe("CREATED");
+    expect(tx.entityValue.createMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.arrayContaining([expect.objectContaining({ entityFieldId: "tags_field", jsonValue: ["etiqueta"] })]) }));
+  });
+  it("serializes relation metadata and labels without altering remote IDs", async () => {
+    appViewFindFirst.mockResolvedValue(appView({ config: { ...stateConfig(), extraFieldIds: ["location_field"] } }) as never);
+    const read = await getStateUpdateWorkflow(query());
+    expect(read.ok).toBe(true);
+    if (read.ok) expect(read.data.extraFields).toEqual([expect.objectContaining({ id: "location_field", config: expect.objectContaining({ relation: { targetEntityTypeId: "equipment", relationKind: "ONE" } }) })]);
+  });
+});
+
 function sourceEntityType() {
   return {
     fields: [field("name_field", "nombre", "Nombre", "TEXT", { searchable: true })],

@@ -761,7 +761,7 @@ function existingAttendance({
   return {
     displayName: `${people().find((person) => person.id === personRecordId)?.displayName ?? personRecordId} · 22-08-2026`,
     id,
-    outgoingRelations: personRecordId ? [{ targetRecordId: personRecordId }] : [],
+    outgoingRelations: personRecordId ? [{ sourceFieldId: "person_field", targetRecordId: personRecordId }] : [],
     updatedAt,
     values: [
       {

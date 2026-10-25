@@ -73,6 +73,7 @@ export type FieldValidationRules = {
   maxLength?: number;
   minimum?: number;
   maximum?: number;
+  decimalPlaces?: number;
   regex?: {
     pattern: string;
     message?: string;
@@ -133,7 +134,7 @@ export const configurableValidationMatrix: Record<
   TEXT: ["required", "minLength", "maxLength", "regex", "defaultValue"],
   TEXTAREA: ["required", "minLength", "maxLength", "regex", "defaultValue"],
   INTEGER: ["required", "minimum", "maximum", "defaultValue"],
-  DECIMAL: ["required", "minimum", "maximum", "defaultValue"],
+  DECIMAL: ["required", "minimum", "maximum", "decimalPlaces", "defaultValue"],
   MONEY: ["required", "minimum", "maximum", "defaultValue"],
   BOOLEAN: ["required", "defaultValue"],
   DATE: ["required", "defaultValue"],
@@ -159,6 +160,7 @@ const fieldConfigSchema = z.object({
       maxLength: z.number().int().min(0).optional(),
       minimum: z.number().optional(),
       maximum: z.number().optional(),
+      decimalPlaces: z.number().int().min(0).max(6).optional(),
       regex: z
         .object({
           pattern: z.string().trim().min(1),
@@ -519,6 +521,14 @@ export function validateFieldConfiguration({
     clean.minimum = validation.minimum;
   }
 
+  if (validation.decimalPlaces !== undefined) {
+    ensureCompatible(type, "decimalPlaces");
+    if (!Number.isInteger(validation.decimalPlaces) || validation.decimalPlaces < 0 || validation.decimalPlaces > 6) {
+      throw userError("Los decimales permitidos deben estar entre 0 y 6.");
+    }
+    clean.decimalPlaces = validation.decimalPlaces;
+  }
+
   if (validation.maximum !== undefined) {
     ensureCompatible(type, "maximum");
     clean.maximum = validation.maximum;
@@ -842,6 +852,10 @@ function validateNormalizedValue({
       ? value.decimalValue.toNumber()
       : null);
 
+  if (value.decimalValue != null && rules.decimalPlaces !== undefined &&
+      value.decimalValue.decimalPlaces() > rules.decimalPlaces) {
+    addFieldError(fieldErrors, field, `Admite como máximo ${rules.decimalPlaces} decimales; no se redondea automáticamente.`);
+  }
   if (numericValue !== null) {
     if (rules.minimum !== undefined && numericValue < rules.minimum) {
       addFieldError(fieldErrors, field, `Debe ser mayor o igual a ${rules.minimum}.`);
