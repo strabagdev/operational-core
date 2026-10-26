@@ -1105,6 +1105,7 @@ function isUniqueIdempotencyConflict(error: unknown) {
 }
 
 function mapApiWriteException(error: unknown) {
+  if (error instanceof Error && /SCHEDULE_(CATALOG_MANAGED|WORKFLOW_REQUIRED|APPLICATION_IMMUTABLE|STRUCTURE_IMMUTABLE|CONFIG_MANAGED)/.test(error.message)) return writeError("SCHEDULE_WRITE_REQUIRES_EDITOR", "Esta entidad usa horarios protegidos. Utiliza su editor o workflow configurado.");
   if (error instanceof Error && error.message.includes("COMPOSITE_WORKFLOW_REQUIRED")) return writeError("COMPOSITE_WORKFLOW_REQUIRED", "Esta entidad requiere el workflow de identidad compuesta; la escritura genérica está deshabilitada.");
   if (error instanceof ApiRecordInputError) {
     return writeError(error.code, error.message);

@@ -1598,3 +1598,35 @@ activación de campos; no se certifica completitud de un catálogo por una pági
 Errores conocidos de validación de extras en la transacción compuesta se mapean tras rollback al
 mismo HTTP400 INVALID_FIELD_VALUE usado por el motor común; no quedan reservas ni idempotencia
 parciales. No se transforma una excepción inesperada en resultado exitoso.
+
+
+### STATE_UPDATE schedule metadata — compatibility boundary, disabled (2026-10-25)
+
+POST workflow/state-update rejects own top-level schedule and scheduleApplication properties,
+including null, with HTTP400 SCHEDULE_NOT_SUPPORTED before idempotency reservation or writes.
+No schedule processing or activation is available in this release; unsupported metadata is not silently
+discarded and acknowledged. Commands without these properties keep their existing contract/hash/replay.
+Clients must retain the rejected intention/reference/snapshot for explicit review, without replacing
+its authorization, base or clientRequestId. This adds no schedule fields to the legacy Attendance API.
+
+### STATE_UPDATE: horarios opt-in (candidato local, no publicado)
+
+Sólo destinos subject-date-fields/update-current activados explícitamente. GET añade
+`schedulePolicy` y `scheduleResolution` del contexto seleccionado (resolved/unavailable/context-required).
+Una resolución resolved transporta referencia/digest y aplicación inmutable; una unavailable
+no autoriza altas. Current/latest y recibos llevan `scheduleApplication` individual o legacy
+explícito en registros anteriores. No cambia selección de current, identidad, estados ni extras.
+
+POST acepta `schedule: {schemaVersion:1,bindingId,revisionId,revisionDigest}` o legacy únicamente
+para editar un registro previo sin aplicación. No acepta `scheduleApplication` del cliente.
+Core construye el snapshot y lo persiste con contenido/auditoría/idempotencia, conserva el
+aplicado al editar y reproduce recibos exactos. SCHEDULE_CLIENT_UPDATE_REQUIRED para escrituras
+nuevas incompletas; SCHEDULE_REVISION_CHANGED si una alta guardada dejó de corresponder;
+referencias inválidas no se aplican. Horario diferente al ya aplicado produce conflicto sin
+reasignación. Sin política continúa el rechazo SCHEDULE_NOT_SUPPORTED del puente; solicitudes
+sin horario y sus hashes conservan el contrato previo. La API genérica rechaza mutaciones a
+entidades administradas con SCHEDULE_WRITE_REQUIRES_EDITOR.
+
+No hay activación productiva ni API paralela de sincronización. El catálogo se administra por
+acciones autorizadas del editor; sus revisiones se preparan en el GET del contexto, no mediante
+una descarga de todas las combinaciones. SQLite v10/epoch2 y outbox existentes en Client.

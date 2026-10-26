@@ -17,13 +17,14 @@ import {
 import { DiagnosticReferenceCopyButton } from "../diagnostic-reference-copy-button";
 import { updateAppViewAction } from "../actions";
 import { AppViewForm } from "../app-view-form";
+import { SchedulePanel } from "../schedule-panel";
 
 export default async function AppViewDetailPage({
   params,
   searchParams,
 }: {
   params: Promise<{ appViewId: string; contractId: string }>;
-  searchParams: Promise<{ error?: string; notice?: string }>;
+  searchParams: Promise<{ error?: string; notice?: string; scheduleError?: string; scheduleNotice?: string }>;
 }) {
   const session = await auth();
 
@@ -38,7 +39,7 @@ export default async function AppViewDetailPage({
     notFound();
   }
 
-  const { error } = await searchParams;
+  const { error, scheduleError, scheduleNotice } = await searchParams;
 
   const isPanel = data.appView.type === "PANEL";
   const parsedAppViews = data.appViews.flatMap((appView) => {
@@ -181,6 +182,7 @@ export default async function AppViewDetailPage({
         </CardContent>
       </Card>
       ) : null}
+      {currentConfig ? <SchedulePanel contractId={contractId} appViewId={appViewId} userId={session.user.id} config={currentConfig} error={scheduleError} notice={scheduleNotice}/> : null}
     </div>
   );
 }

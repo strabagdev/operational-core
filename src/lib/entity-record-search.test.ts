@@ -878,6 +878,7 @@ function recordWithFieldValue({
 }) {
   return {
     id,
+    scheduleApplication: null,
     createdAt: new Date("2026-01-01"),
     displayName: String(value),
     entityTypeId: "entity_1",

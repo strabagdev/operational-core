@@ -309,3 +309,30 @@ production confirmation remain distinct forms of evidence.
 
 Operational staging, backup, restore, and deployment hardening remain tracked in
 [`OPERATIONS.md`](OPERATIONS.md) and are not started by this closure.
+
+## Horarios genéricos: integración local posterior al puente — 2026-10-25
+
+Catálogo/editor, revisiones inmutables, política compartida, aplicación transaccional y transporte
+para preparación offline implementados localmente; producción sigue sin horarios. Detalle y dos
+migraciones locales nuevas en STATE_UPDATE; 23 anteriores intactas, ningún backfill. 149 pruebas
+focalizadas PASS, incluidas integraciones PostgreSQL reales y controles Attendance/sin horario.
+Editor Next y API/Auth reales comprobados con Chrome/OPFS; un reporte, ACK de edición en la misma
+fila, outbox vacío y lectura offline tras cierre. Sin suite completa ni build de cierre.
+
+Inventario/parches/hashes y límites en el respaldo externo
+`/home/dannysilver/dev2026/backups/schedule-catalog-local-integration/2026-10-25/`.
+Pendientes ajenos y puente preservados; no commit/push/deploy ni cambios productivos.
+Publicación/activación bloqueadas hasta excluir runtimes antiguos capaces de alterar intenciones
+nuevas; no se declara solucionada esa coexistencia. V11 pausado; auditoría general abierta.
+
+## Horarios — cierre técnico local — 2026-10-26
+
+Core16 archivos/46 hunks; Client18/92, puente y evaluación consolidados sin cambiar código. Builds
+finales habituales PASS; reutilizados149/393 PASS y13 pruebas de compatibilidad por igualdad de hashes.
+No nuevas suites/navegador; typecheck/lint/diff/reconstrucción acreditados. Horarios siguen desactivados.
+Bloqueo de publicación: falta respaldo productivo actualizado; la copia lógica19-10 verificada no cubre
+cambios posteriores. No acceder/respaldar producción en este cierre. Orden Core+migraciones→verificar
+→Client; activación posterior exige adopción comprobada de runtime compatible y resolver pendientes
+sin horario del destino. Rollback sólo compatible después de activar. Detalle en STATE_UPDATE y
+`backups/schedule-technical-close/2026-10-26/`. Sin nuevos cambios funcionales/producción/commit/push/
+deploy; pendientes y respaldos previos intactos, V11 pausado, lectura de códigos no iniciada.

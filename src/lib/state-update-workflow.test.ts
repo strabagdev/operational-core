@@ -1839,3 +1839,40 @@ describe("configurable SELECT extra contract", () => {
     expect(result.data.latest.items[0].extraValues.choice_extra).toBe("ALPHA");
   });
 });
+
+
+describe("disabled schedule compatibility boundary", () => {
+  it.each([
+    { schedule: { schemaVersion: 1, bindingId: "binding", revisionId: "r1", revisionDigest: "digest" } },
+    { scheduleApplication: { kind: "legacy" } },
+    { schedule: null },
+    { scheduleApplication: null },
+    { schedule: { schemaVersion: 999 } },
+  ])("rejects schedule metadata before reserving idempotency or mutating content: %j", async (metadata) => {
+    const result = await saveStateUpdateWorkflow(saveBody({ states: { operational_field: "operational_ok" }, ...metadata, clientRequestId: "rejected-schedule-command" }));
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Schedule must remain disabled");
+    expect(result.response.status).toBe(400);
+    expect(await result.response.json()).toMatchObject({ error: { code: "SCHEDULE_NOT_SUPPORTED" } });
+    expect(prisma.apiIdempotencyKey.findUnique).not.toHaveBeenCalled();
+    expect(prisma.apiIdempotencyKey.create).not.toHaveBeenCalled();
+    expect(transaction).not.toHaveBeenCalled();
+    expect(tx.entityRecord.create).not.toHaveBeenCalled();
+    expect(tx.entityRecord.update).not.toHaveBeenCalled();
+    expect(tx.auditEvent.create).not.toHaveBeenCalled();
+  });
+});
+
+
+it("replaying a disabled schedule command repeats the same explicit rejection without a reservation", async () => {
+  const request = saveBody({states:{operational_field:"operational_ok"},clientRequestId:"disabled-schedule-replay",schedule:{kind:"legacy"}});
+  const results = [await saveStateUpdateWorkflow(request), await saveStateUpdateWorkflow(request)];
+  for (const result of results) {
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Schedules remain disabled");
+    expect(await result.response.json()).toMatchObject({error:{code:"SCHEDULE_NOT_SUPPORTED"}});
+  }
+  expect(prisma.apiIdempotencyKey.findUnique).not.toHaveBeenCalled();
+  expect(prisma.apiIdempotencyKey.create).not.toHaveBeenCalled();
+  expect(transaction).not.toHaveBeenCalled();
+});

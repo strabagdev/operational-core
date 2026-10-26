@@ -1,3 +1,4 @@
+import { applySchedule, parseScheduleReference, resolveSchedule, scheduleConsumer, ScheduleError, type ScheduleConsumer, type ScheduleApplication, type ScheduleReference } from "./state-update-schedules";
 import { serializeApiEntityField } from "./api-entity-serializer";
 import { claimReport, identityContextKey, canonicalReportKey, type CompositeIdentity, type CompositeDefinition } from "./state-update-identity";
 import { Prisma, type EntityFieldType } from "@prisma/client";
@@ -74,6 +75,9 @@ type StateUpdateIdempotencyKey = {
 
 export type StateUpdateContext = {
   transaction?: Prisma.TransactionClient;
+  schedulePolicy?: ScheduleConsumer;
+  scheduleApplication?: ScheduleApplication;
+  scheduleApplicationConflict?: boolean;
   composite?: { definition: CompositeDefinition; identity?: CompositeIdentity; recordIds: string[] };
   appView: { id: string; name: string; slug: string };
   config: StateUpdateWorkflowConfig;
@@ -85,6 +89,7 @@ export type StateUpdateContext = {
 };
 
 export type StateUpdateInput = {
+  schedule?: ScheduleReference;
   identity?: CompositeIdentity;
   clientRequestId?: string;
   date?: Date;
@@ -96,7 +101,7 @@ export type StateUpdateInput = {
   subjectRecordId: string;
 };
 
-export type StateUpdateResult =
+export type StateUpdateResult = (
   | { recordId: string; result: "CREATED" | "UNCHANGED" | "UPDATED"; subjectRecordId: string; updatedAt: string }
   | {
       differences: Array<{
@@ -115,7 +120,7 @@ export type StateUpdateResult =
       result: "CONFLICT";
       subjectRecordId: string;
     }
-  | { code: string; message: string; result: "ERROR"; subjectRecordId: string };
+  | { code: string; message: string; result: "ERROR"; subjectRecordId: string }) & { scheduleApplication?: ScheduleApplication };
 
 export type StateUpdateWorkflowTiming = {
   mark(phase: string): void;
@@ -194,6 +199,9 @@ async function saveCompositeWorkflow({ appId, appViewId, contractId, userId, con
   return prisma.$transaction(async tx => {
     await tx.$executeRaw`SET LOCAL lock_timeout = '5s'`;
     await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${appId + ":" + operation + ":" + input.clientRequestId}, 0))::text`;
+    await tx.$queryRaw`SELECT id FROM "EntityType" WHERE id=${context.targetEntityType.id} FOR KEY SHARE`;
+    const freshType = await tx.entityType.findUniqueOrThrow({where:{id:context.targetEntityType.id},select:{scheduleConfig:true}});
+    const policy = scheduleConsumer(freshType.scheduleConfig);
     const slot = await claimReport(tx, context.composite!.definition, input.subjectRecordId, input.dateValue!, input.identity!);
     if (!slot.recordId && Object.entries(input.identity!.values).some(([id, option]) => !requireField(context,id).options.some(o => o.id === option && o.isActive))) return writeError("INACTIVE_COMPOSITE_OPTION", "No se puede crear con opciones de identidad desactivadas.");
     const where = { externalAppId_operation_clientRequestId: { externalAppId: appId, operation, clientRequestId: input.clientRequestId! } };
@@ -203,8 +211,20 @@ async function saveCompositeWorkflow({ appId, appViewId, contractId, userId, con
       if (!replay.completedAt || !isStateUpdateReplayData(replay.responseBody)) return writeError("IDEMPOTENCY_INCOMPLETE", "Resultado anterior no verificable.");
       return { ok: true as const, data: replay.responseBody as unknown as ReturnType<typeof stateUpdateResponseData> };
     }
+    let scheduleApplication: ScheduleApplication | undefined;
+    let scheduleApplicationConflict = false;
+    if (policy) {
+      const existingSchedule = slot.recordId ? await tx.entityRecord.findUniqueOrThrow({where:{id:slot.recordId},select:{scheduleApplication:true}}) : undefined;
+      try { scheduleApplication = await applySchedule(tx,contractId,policy,input.schedule,input.dateValue!,input.identity!.values[policy.sourceFieldId],existingSchedule); }
+      catch(error) {
+        if (!(error instanceof ScheduleError) || error.code!=="SCHEDULE_APPLICATION_CHANGED" || !existingSchedule) throw error;
+        scheduleApplication=(existingSchedule.scheduleApplication??{kind:"legacy"}) as ScheduleApplication;
+        scheduleApplicationConflict=true;
+      }
+      await tx.$queryRaw`SELECT set_config('opco.schedule_binding',${policy.bindingId},true)`;
+    } else if (input.schedule) throw new ScheduleError("SCHEDULE_NOT_SUPPORTED","Este destino no tiene horarios activados.");
     await tx.apiIdempotencyKey.create({ data: { clientRequestId: input.clientRequestId!, externalAppId: appId, operation, requestHash, contractId, entityTypeId: context.targetEntityType.id } });
-    const scoped = { ...context, transaction: tx, composite: { ...context.composite!, recordIds: slot.recordId ? [slot.recordId] : [] } };
+    const scoped = { ...context, schedulePolicy: policy, scheduleApplication, scheduleApplicationConflict, transaction: tx, composite: { ...context.composite!, recordIds: slot.recordId ? [slot.recordId] : [] } };
     const result = await saveStateUpdateEntry({ appId, context: scoped, contractId, idempotencyKey: { operation, requestHash }, input, timing, userId });
     if ("recordId" in result.result) await tx.stateUpdateIdentitySlot.update({ where: { id: slot.id }, data: { recordId: result.result.recordId } });
     return { ok: true as const, data: stateUpdateResponseData(context, result.result) };
@@ -253,6 +273,8 @@ export async function getStateUpdateWorkflow({
     const prepared = await prepareCompositeRead(context.context, identity, date ?? undefined);
     if (!prepared.ok) return prepared;
   }
+  const schedulePolicy = context.context.schedulePolicy;
+  const scheduleResolution = schedulePolicy ? await resolveSchedule(prisma,contractId,schedulePolicy,parsedDate.value ?? undefined,context.context.composite?.identity?.values[schedulePolicy.sourceFieldId]) : undefined;
   const contextRequired = context.context.config.uniqueness.mode === "subject-date-fields" && !context.context.composite?.identity;
   const subjects = contextRequired ? [] : await findSubjects({
     context: context.context,
@@ -279,6 +301,7 @@ export async function getStateUpdateWorkflow({
         ? serializeField(requireField(context.context, context.context.config.dateFieldId))
         : null,
       stateFields: serializeStateFields(context.context),
+      ...(schedulePolicy ? {schedulePolicy, scheduleResolution} : {}),
       ...(context.context.composite ? compositeMetadata(context.context) : {}),
       extraFields: serializeExtraFields(context.context.targetEntityType.fields.filter((field) =>
         context.context.config.extraFieldIds.includes(field.id),
@@ -331,7 +354,7 @@ export async function saveStateUpdateWorkflow({
     return context;
   }
 
-  const parsed = parseStateUpdateBody(body, context.context.config);
+  const parsed = parseStateUpdateBody(body, context.context.config, context.context.schedulePolicy);
   timing?.mark("body_validation");
 
   if (!parsed.ok) {
@@ -342,7 +365,7 @@ export async function saveStateUpdateWorkflow({
     return saveCompositeWorkflow({ appId, appViewId, contractId, userId, context: context.context, input: parsed.body, timing }).catch(error => {
       // Map only known validation failures after the transaction has rolled back.
       // Unexpected failures retain their existing propagation and diagnostics.
-      if (error instanceof FieldValidationError || error instanceof StateUpdateInputError || (error instanceof Error && error.name === "UserFacingError")) {
+      if (error instanceof ScheduleError || error instanceof FieldValidationError || error instanceof StateUpdateInputError || (error instanceof Error && error.name === "UserFacingError")) {
         return mapStateUpdateException(error, { context: context.context, input: parsed.body });
       }
       throw error;
@@ -477,6 +500,7 @@ export async function saveStateUpdateEntry({
     });
 
     const result: StateUpdateResult = {
+      ...(context.scheduleApplication ? {scheduleApplication:context.scheduleApplication} : {}),
       recordId: record.id,
       result: "CREATED",
       subjectRecordId: input.subjectRecordId,
@@ -503,8 +527,15 @@ export async function saveStateUpdateEntry({
   });
   const differences = intentDiff.differences;
 
+  if (context.scheduleApplicationConflict) {
+    const result=conflictResult({conflictReason:"CURRENT_VALUE_DIFFERS",differences,existing,input,context});
+    await persistStateUpdateResultIfNeeded({appId,context,idempotencyKey,input,result,timing});
+    return {ok:true,result};
+  }
+
   if (differences.length === 0 && !intentDiff.hasAllowedFirstFill) {
     const result: StateUpdateResult = {
+      ...(context.scheduleApplication ? {scheduleApplication:context.scheduleApplication} : {}),
       recordId: existing.record.id,
       result: "UNCHANGED",
       subjectRecordId: input.subjectRecordId,
@@ -589,6 +620,7 @@ export async function saveStateUpdateEntry({
   });
 
   const result: StateUpdateResult = {
+    ...(context.scheduleApplication ? {scheduleApplication:context.scheduleApplication} : {}),
     recordId: record.id,
     result: "UPDATED",
     subjectRecordId: input.subjectRecordId,
@@ -721,6 +753,7 @@ export async function getStateUpdateContextForConfig({
       config,
       sourceEntityType,
       targetEntityType,
+      ...(targetEntityType.scheduleConfig ? {schedulePolicy: scheduleConsumer(targetEntityType.scheduleConfig)} : {}),
       stateOptionsByFieldId: validation.stateOptionsByFieldId,
       stateOptionsById: validation.stateOptionsById,
       stateOptionsByValueByFieldId: validation.stateOptionsByValueByFieldId,
@@ -758,6 +791,7 @@ function entityTypeSelect() {
     id: true,
     name: true,
     slug: true,
+    scheduleConfig: true,
   } satisfies Prisma.EntityTypeSelect;
 }
 
@@ -933,11 +967,21 @@ function parseLatestPagination({
   return { ok: true as const, page: parsedPage, pageSize: parsedPageSize };
 }
 
-function parseStateUpdateBody(body: unknown, config: StateUpdateWorkflowConfig) {
+function parseStateUpdateBody(body: unknown, config: StateUpdateWorkflowConfig, schedulePolicy?: ScheduleConsumer) {
   if (!isRecord(body)) {
     return writeError("INVALID_STATE_UPDATE_BODY", "El body debe ser un objeto JSON.");
   }
 
+  // Opt-in destinations accept references only; unconfigured workflows retain the bridge rejection.
+  if ((!schedulePolicy && Object.prototype.hasOwnProperty.call(body, "schedule")) || Object.prototype.hasOwnProperty.call(body, "scheduleApplication")) {
+    return writeError("SCHEDULE_NOT_SUPPORTED", "El destino no admite esta metadata de horario. Conserva la intención y revisa su configuración.");
+  }
+
+  let schedule: ScheduleReference | undefined;
+  if (schedulePolicy && Object.prototype.hasOwnProperty.call(body,"schedule")) {
+    try { schedule = parseScheduleReference(body.schedule); }
+    catch (error) { if (error instanceof ScheduleError) return writeError(error.code,error.message); throw error; }
+  }
   const subjectRecordId = stringValue(body.subjectRecordId)?.trim();
   if (!subjectRecordId) {
     return writeError("INVALID_STATE_UPDATE_BODY", "subjectRecordId es obligatorio.");
@@ -977,6 +1021,7 @@ function parseStateUpdateBody(body: unknown, config: StateUpdateWorkflowConfig) 
   return {
     ok: true as const,
     body: {
+      ...(schedule ? {schedule} : {}),
       ...(config.uniqueness.mode === "subject-date-fields" ? { identity: body.identity as CompositeIdentity } : {}),
       clientRequestId: stringValue(body.clientRequestId)?.trim() || undefined,
       date: parsedDate.date,
@@ -1080,6 +1125,7 @@ async function resolveRequestedStates({
 export type ExistingStateUpdate = {
   subjectRecordId: string;
   record: {
+    scheduleApplication?: Prisma.JsonValue | null;
     displayName: string;
     id: string;
     outgoingRelations: Array<{ sourceFieldId: string; targetRecordId: string; targetRecord?: { displayName: string; id: string } }>;
@@ -1324,6 +1370,7 @@ function conflictResult({
       ? { ...difference, currentValue: existing.record.values.find(value => value.entityFieldId === difference.fieldId)?.textValue ?? null, requestedValue: input.extraValues[difference.fieldId] }
       : difference),
     existing: {
+      ...scheduleRecordMetadata(context, existing.record),
       recordId: existing.record.id,
       updatedAt: existing.record.updatedAt.toISOString(),
       ...(context.composite || hasConfiguredExtras(context) ? {
@@ -1453,7 +1500,7 @@ async function createStateUpdateRecord({
     });
     timing?.mark("create_relation_changes");
     const record = await tx.entityRecord.create({
-      data: { displayName, entityTypeId: context.targetEntityType.id },
+      data: { displayName, entityTypeId: context.targetEntityType.id, ...(context.scheduleApplication ? {scheduleApplication: context.scheduleApplication as Prisma.InputJsonValue} : {}) },
     });
     timing?.mark("create_entity_record");
 
@@ -1479,12 +1526,14 @@ async function createStateUpdateRecord({
         apiExternalAppId: appId,
         displayName: record.displayName,
         workflowKey: "state-update",
+        ...(context.scheduleApplication ? {scheduleApplication: context.scheduleApplication as Prisma.InputJsonValue} : {}),
       },
       summary: `Creó ${context.targetEntityType.name} ${record.displayName}`,
     });
     timing?.mark("create_audit_event");
 
     const result: StateUpdateResult = {
+      ...(context.scheduleApplication ? {scheduleApplication:context.scheduleApplication} : {}),
       recordId: record.id,
       result: "CREATED",
       subjectRecordId: input.subjectRecordId,
@@ -1616,6 +1665,7 @@ async function updateStateUpdateRecord({
     }
 
     const result: StateUpdateResult = {
+      ...(context.scheduleApplication ? {scheduleApplication:context.scheduleApplication} : {}),
       recordId: record.id,
       result: "UPDATED",
       subjectRecordId: input.subjectRecordId,
@@ -1916,6 +1966,7 @@ async function getLatestStateUpdates({
     items: records
       .sort((left, right) => (order.get(left.id) ?? 0) - (order.get(right.id) ?? 0))
       .map((record) => ({
+        ...scheduleRecordMetadata(context, record),
         recordId: record.id,
         extraValues: serializeRecordExtraValues(record.values, context, record.outgoingRelations),
         extraValuesFormat: "field-value" as const,
@@ -2033,6 +2084,7 @@ function serializeExisting(existing: ExistingStateUpdate | undefined, context: S
   }
 
   return {
+    ...scheduleRecordMetadata(context, existing.record),
     recordId: existing.record.id,
     ...(context.composite || hasConfiguredExtras(context) ? { extraValues: serializeRecordExtraValues(existing.record.values, context, existing.record.outgoingRelations), extraValuesFormat: "field-value" as const } : {}),
     states: serializeRecordStates(existing.record.values, context),
@@ -2303,6 +2355,7 @@ function canonicalStateUpdateRequestHash({
     appViewId,
     contractId,
     ...(body.identity ? { identity: { ...body.identity, values: JSON.parse(identityContextKey(body.identity.values)) } } : {}),
+    ...(body.schedule ? {schedule: body.schedule} : {}),
     date: body.dateValue ?? null,
     expectedUpdatedAt: body.expectedUpdatedAt ?? null,
     extraValues: Object.fromEntries(Object.entries(body.extraValues).sort(([left], [right]) => left.localeCompare(right))),
@@ -2651,6 +2704,8 @@ export function mapStateUpdateException(
     input: StateUpdateInput;
   },
 ) {
+  if (error instanceof ScheduleError) return writeError(error.code,error.message);
+
   if (error instanceof StateUpdateInputError) {
     return writeError(error.code, error.message);
   }
@@ -2773,4 +2828,8 @@ function sanitizeStateUpdateDiagnosticValue(value: unknown): unknown {
   }
 
   return "[object]";
+}
+
+function scheduleRecordMetadata(context: StateUpdateContext, record: {scheduleApplication?: Prisma.JsonValue | null}) {
+  return context.schedulePolicy ? {scheduleApplication:(record.scheduleApplication ?? {kind:"legacy"}) as ScheduleApplication} : {};
 }

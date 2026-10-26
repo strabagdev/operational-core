@@ -240,6 +240,7 @@ model EntityType {
   contract    Contract       @relation(fields: [contractId], references: [id], onDelete: Cascade)
   fields      EntityField[]
   records     EntityRecord[]
+  scheduleConfig Json?
   stateUpdateIdentity StateUpdateIdentityDefinition?
   auditEvents AuditEvent[]
   createdAt   DateTime       @default(now())
@@ -329,6 +330,7 @@ model EntityRecord {
   outgoingRelations EntityRelation[]    @relation("SourceRecordRelations")
   incomingRelations EntityRelation[]    @relation("TargetRecordRelations")
   auditEvents       AuditEvent[]
+  scheduleApplication Json?
   stateUpdateIdentitySlot StateUpdateIdentitySlot?
   idempotencyKeys   ApiIdempotencyKey[]
   createdAt         DateTime            @default(now())

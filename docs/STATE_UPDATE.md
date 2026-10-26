@@ -431,3 +431,136 @@ no suite completa, build, configuración productiva, commit, push o deploy.
 La transición SELECT→MULTISELECT queda cancelada por instrucción del usuario: Operador continúa
 SELECT simple. Este lote no cambia opciones, valores, outbox ni el soporte MULTISELECT publicado.
 Horarios, 402 exclusiones y pendientes ajenos permanecen intactos. V11 pausado.
+
+
+## Schedule compatibility boundary — local, disabled — 2026-10-25
+
+This release does not implement a schedule catalogue, policy, editor or application. The shared
+STATE_UPDATE parser rejects own top-level schedule or scheduleApplication properties (including null)
+with HTTP400 SCHEDULE_NOT_SUPPORTED before idempotency lookup/reservation, transactions or content/
+audit writes. Unsupported metadata is never acknowledged after being silently stripped. Authentication
+and workflow access still run first. Valid commands without schedules, Attendance, hashes/replays,
+authorization and conflicts retain their existing behavior. No schema/migration/configuration changes.
+
+77 focused tests pass (shared engine plus Attendance), worker1/default timeouts; typecheck/affected
+lint/diff-check pass. Six new cases cover the explicit rejection and its replay with no mutation calls;
+Prisma is mocked, so this is not PostgreSQL acceptance/integration. Client companion uses real file
+SQLite with controlled transport/ACK. No new browser/OPFS or complete catalogue claim.
+
+Order if later authorized: Core guard then Client compatibility, schedules still disabled. Complete
+catalogue/application/preparation separately; activation requires excluding pre-bridge runtimes, not
+merely updating SW. Preserve reference/snapshot/authorization/idempotency; future rollback only to
+compatible builds. V11 remains paused. Durable inventory/patches:
+/home/dannysilver/dev2026/backups/schedule-runtime-compatibility-bridge/2026-10-25/.
+
+## Horarios genéricos opt-in — implementación exclusivamente local, 2026-10-25
+
+Primera etapa sobre STATE_UPDATE compuesto/update-current, posterior al puente. Catálogo único
+por contrato, zona IANA configurada al crearlo; códigos y revisiones en dos entidades REFERENCE
+con EAV/relaciones/auditoría existentes. `EntityType.scheduleConfig` guarda roles y política
+compartida del destino; `EntityRecord.scheduleApplication` conserva el snapshot aplicado.
+Editor: sección «Horarios y jornadas» al editar una AppView compuesta. Crear catálogo → publicar
+revisiones explícitas → vincular opciones SELECT de identidad → confirmar activación con fecha.
+No se activa al guardar la AppView ni al desplegar; producción no se consulta ni modifica aquí.
+
+Revisiones publicadas inmutables; secuencia y vigencia serializadas por lock del catálogo.
+Primera vigencia y activación explícitas, admitiendo fecha pasada para altas tardías sin completar
+reportes anteriores. Revisiones posteriores futuras y posteriores a la última, sin empates. Retiro
+no retrospectivo e irreversible en esta etapa; permite publicar revisiones anteriores al corte
+futuro, rechazando las que comiencen en o después del retiro. No desactiva SELECT ni borra revisiones. Resolución
+por DATE operacional del inicio; duración = offset×1440 + fin − inicio (positiva, offset 0/1),
+independiente de DST/UTC. No expresa horas trabajadas. Política/vinculaciones inmutables tras
+activar; no incluye herramientas de reorganización del catálogo o cambio retrospectivo de zona.
+
+GET devuelve política/resolución del contexto para nuevas altas y snapshot individual en
+current/latest. Referencias usan binding/revision/digest; las opciones e identidad compuesta no
+cambian. Core valida y construye la aplicación canónica. Ediciones conservan la aplicación
+anterior; registros previos sin snapshot se leen como legacy explícito y no se completan.
+Nuevas altas legacy se rechazan. Sin revisión aplicable no se crea un reporte.
+
+Dentro de la transacción compuesta: lock del destino → reserva exacta/replay → lock del catálogo
+para resolver altas → contenido+aplicación+auditoría+resultado idempotente. Replay completado
+se conserva aunque cambie el catálogo. Una revisión offline aún válida se acepta; si dejó de
+corresponder, SCHEDULE_REVISION_CHANGED sin reservas/escrituras/recibos parciales. Cliente antiguo
+sin referencia: SCHEDULE_CLIENT_UPDATE_REQUIRED sin mutación (salvo replay ya completado).
+Si otro escritor aplicó otro horario, conflicto explícito; no se cambia esa aplicación ni siquiera
+con overwrite. Las comprobaciones de contenido/base/conflicto sin horarios permanecen intactas.
+
+Guardas SQL adicionales bloquean escrituras genéricas, importación/borrado y cambios de estructura
+en catálogo/revisiones, así como puertas antiguas sobre consumidores activados. Las funciones
+administradas usan flags transaccionales propios; las puertas genéricas no los emiten. No cambia
+el contrato de entidades no activadas. La API genérica traduce el rechazo de las guardas nuevas
+a SCHEDULE_WRITE_REQUIRES_EDITOR. La publicación revalida ADMIN con capabilities del contrato. El parser del formulario exige el
+desplazamiento explícito 0/1; una política sin vinculaciones válidas se rechaza antes de persistir.
+
+Migraciones locales, ninguna productiva:
+- `20261025000100_state_update_schedules`: dos columnas JSONB nullable, sin backfill, y guardas.
+- `20261025000200_schedule_value_guard`: permite reemplazo EAV autorizado sin permitir DELETE
+  de reporte, y compara snapshots mediante JSON para soportar los tres tipos de trigger. Corrige
+  dos errores detectados en la primera integración real; no se reescriben migraciones aplicadas.
+Las 23 anteriores permanecen sin cambios. Destino validado desde `.env.local`, pasado explícito:
+127.0.0.1:5432/opco_development, opco_dev. Sin reseteos ni modificación de registros existentes.
+
+Evidencia: 149 pruebas focalizadas Core (dos suites PostgreSQL habilitadas), sin omisiones;
+contraste adicional Intl/IANA de noches Santiago de 11/13 h transcurridas frente a 12 h nominales
+(sólo en pruebas; no hay cálculo de instantes en runtime);
+concurrencia, dos AppViews, rollback tras auditoría, replay, referencia alterada, cliente antiguo,
+retiro, revisión futura, conflicto de aplicación y controles Attendance/compuesto sin horario.
+Editor Next real y API/Auth reales en Chrome/OPFS con fixture propio; sincronización actualiza una
+sola fila y conserva horario. Core no usa ACK simulado para acreditar aceptación. Resoluciones
+SQLite/late responses se acreditan separadamente en Client. Sin suite completa ni build de cierre.
+
+Respaldo: `backups/schedule-catalog-local-integration/2026-10-25/` fuera de los repositorios.
+Activación/publicación bloqueadas por coexistencia con JS previo al puente: no se ha excluido.
+Orden futuro Core compatible+migraciones → Client compatible → exclusión verificada de runtimes
+anteriores → activación revisada, nunca automática. Rollback sólo compatible después de activar;
+no hay reversión destructiva. Sin horarios productivos, V11 pausado y auditoría general abierta.
+
+## Horarios — compatibilidad de publicación desactivada — evaluación 2026-10-26
+
+La coexistencia con Client anterior bloquea producir metadata nueva, **no publicar el soporte sin
+activar políticas consumer**. Orden recomendado Core + las dos migraciones aditivas ya inventariadas
+→ SUCCESS/health/readiness → Client, manteniendo horarios desactivados. Sin backfill/default nuevo;
+guardas inertes para scheduleConfig NULL. La activación sigue siendo una acción administrativa explícita.
+
+Nueva prueba local complementaria: Core publicado e3a0a995 y Prisma6.19.3 generado desde su esquema
+exacto anterior, confirmado SIN scheduleConfig/scheduleApplication en DMMF; ambas columnas existen en
+PostgreSQL local, nullable y sin default. 13 PASS/2 archivos: comprobación de las25 migraciones/checksums
+más12 integraciones compuestas del HEAD publicado, sin política activa (concurrencia, confirmación,
+replay, rollback y puertas genéricas). Sin nuevas migraciones ni fallos; sólo fixture propio, retirado.
+Reutilizados149 PASS del candidato y evidencia Client sin horario, sin suite/build/navegador repetidos.
+
+Activar requiere adopción verificada del Client compatible en todos los perfiles usados, ausencia de
+instancias antiguas y sincronizar/resolver explícitamente intenciones sin horario del destino antes
+del cambio. Un Client anterior omite la referencia al enviar y puede perderla durablemente al editar:
+Core rechaza sin crear otro efecto (o IDEMPOTENCY_KEY_REUSED si hay recibo de otro hash), pero no evita
+esa pérdida local. No existe exclusión automática demostrada por SW/OPFS. Para el único usuario el
+procedimiento de cierre/verificación es la condición mínima; si no puede acreditarse, no activar.
+
+Rollback antes de activar, sin datos nuevos de horarios, puede conservar las dos migraciones. Después
+de activar, sólo builds compatibles; no revertir destructivamente datos/migraciones. El preflight y
+respaldo productivo quedan para una publicación autorizada; este ensayo no los acredita ni ejecuta.
+Parche/candidato original intacto; documentación complementaria y tiempos en
+`backups/schedule-publication-evaluation/2026-10-26/`. Sin producción, commit/push/deploy; V11 pausado.
+
+## Horarios — cierre técnico desactivado — 2026-10-26
+
+Candidato final Core16 archivos/46 hunks, combinado con puente e integración, sin cambios funcionales.
+Reutiliza149 PASS del candidato y13 comprobaciones Core/Prisma publicados sobre ambas migraciones
+locales; contenido y tests idénticos por hash. Build normal Next/Turbopack final PASS (incluido TypeScript),
+con URL exclusivamente local validada. Primer intento rechazado por symlink de dependencias fuera de
+raíz aislada; otro comenzó antes de confirmar la copia y reportó módulos ausentes. Repetición con copia
+completa PASS; no se cambió bundler/configuración/dependencias ni se atribuye fallo al runtime.
+Sin nuevas suites/navegador; lint previo por hash y diff-check/reconstrucción finales PASS.
+
+20261025000100_state_update_schedules y20261025000200_schedule_value_guard: aditivas, nullable,
+sin default/backfill ni activación. Compatibilidad desactivada con Client publicado acreditada.
+Orden posterior Core+migraciones→SUCCESS/health/readiness→Client, sin activar. Activación requiere
+adopción verificada de runtimes compatibles y resolver/sincronizar previamente las intenciones sin
+horario del destino. No vaciar colas ni cambiar namespace. Rollback tras activar sólo compatible.
+
+Bloqueado para publicar hasta acreditar respaldo productivo actualizado: copia lógica19-10 intacta
+por SHA256,22 migraciones y restauración local entonces, no copia actual. Sin acceso productivo ni
+nuevo respaldo en este cierre. Detalle, inventario y tiempos en
+`backups/schedule-technical-close/2026-10-26/`. Sin código adicional, commit/push/deploy/activación;
+pendientes ajenos preservados, V11 pausado, lectura de códigos no iniciada.
