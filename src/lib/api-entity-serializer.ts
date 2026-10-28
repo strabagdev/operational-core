@@ -32,6 +32,7 @@ type ApiFieldOptionInput = {
 type ApiEntityField = {
   active: boolean;
   config: {
+    searchComparison?: ReturnType<typeof parseFieldConfig>["searchComparison"];
     defaultValue?: Prisma.JsonValue;
     display: ReturnType<typeof parseFieldConfig>["display"];
     money?: ReturnType<typeof parseFieldConfig>["money"];
@@ -129,6 +130,7 @@ export function serializeApiEntityField(field: ApiEntityFieldInput): ApiEntityFi
         ? {}
         : { defaultValue: parsedConfig.defaultValue }),
       display: parsedConfig.display,
+      ...(parsedConfig.searchComparison ? { searchComparison:parsedConfig.searchComparison } : {}),
       ...(field.type === "MONEY" ? { money: parsedConfig.money } : {}),
       ...(relation ? {
         relation: {

@@ -1,3 +1,4 @@
+import { fieldSearchComparison, parseSearchComparison, type SearchComparison } from "./search-comparison";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
 
@@ -73,6 +74,7 @@ export const entityFieldSchema = z
     required: z.boolean(),
     isUnique: z.boolean(),
     searchable: z.boolean(),
+    searchComparison: z.custom<SearchComparison | null>(v=>v===null||!!parseSearchComparison(v)).optional(),
     multiple: z.boolean(),
     isActive: z.boolean(),
     targetEntityTypeId: z.string().trim().optional(),
@@ -103,6 +105,7 @@ export const entityFieldSchema = z
     }),
   })
   .superRefine((value, ctx) => {
+    if(value.searchComparison && (!["TEXT","TEXTAREA"].includes(value.type)||value.multiple||!value.searchable||!value.isActive))ctx.addIssue({code:"custom",message:"La comparación requiere un texto simple, activo y buscable.",path:["searchComparison"]});
     if (value.multiple && !multipleFieldTypes.has(value.type)) {
       ctx.addIssue({
         code: "custom",
@@ -203,6 +206,7 @@ export function getEntityFieldInput(formData: FormData) {
     required: validation.required ?? parseFormBoolean(formData, "required"),
     isUnique: parseFormBoolean(formData, "isUnique"),
     searchable: parseFormBoolean(formData, "searchable"),
+    searchComparison: getSearchComparisonInput(formData),
     multiple: parseFormBoolean(formData, "multiple"),
     isActive: parseFormBoolean(formData, "isActive"),
     targetEntityTypeId: formData.get("targetEntityTypeId") || undefined,
@@ -775,9 +779,10 @@ export async function updateEntityField(
   validatePrimaryInput(input);
   await validateTypeChange(field, input.type);
   const wasPrimary = parseFieldConfig(field.config).display.primary === true;
+  const comparisonOnly = isComparisonOnlyEdit(field, input);
 
   return prisma.$transaction(async (tx) => {
-    if (input.display.primary) {
+    if (input.display.primary && !comparisonOnly) {
       await unsetPrimaryFields(
         tx,
         authorized.entityType.fields.filter((item) => item.id !== field.id),
@@ -800,7 +805,7 @@ export async function updateEntityField(
       },
     });
 
-    if (wasPrimary || input.display.primary) {
+    if ((wasPrimary || input.display.primary) && !comparisonOnly) {
       await recalculateEntityTypeDisplayNames(
         tx,
         authorized.entityType.id,
@@ -841,9 +846,10 @@ export async function updateEntityFieldWithOptions(
   await validateTypeChange(field, input.type);
   await validateOptionValueChanges(field, options);
   const wasPrimary = parseFieldConfig(field.config).display.primary === true;
+  const comparisonOnly = isComparisonOnlyEdit(field, input);
 
   return prisma.$transaction(async (tx) => {
-    if (input.display.primary) {
+    if (input.display.primary && !comparisonOnly) {
       await unsetPrimaryFields(
         tx,
         authorized.entityType.fields.filter((item) => item.id !== field.id),
@@ -873,7 +879,7 @@ export async function updateEntityFieldWithOptions(
       await syncFieldOptions(tx, field.id, options);
     }
 
-    if (wasPrimary || input.display.primary) {
+    if ((wasPrimary || input.display.primary) && !comparisonOnly) {
       await recalculateEntityTypeDisplayNames(
         tx,
         authorized.entityType.id,
@@ -1381,6 +1387,7 @@ function buildFieldConfig(
     display: input.display,
     money: input.money,
     optionValues,
+    searchComparison: input.searchComparison,
   });
 }
 
@@ -1718,4 +1725,21 @@ async function validateOptionValueChanges(
       "No puedes cambiar el valor interno de opciones que ya tienen información registrada.",
     );
   }
+}
+
+function getSearchComparisonInput(form: FormData): SearchComparison | null | undefined {
+  if(!form.has("searchComparisonEditorVersion"))return undefined;
+  try {
+    if(form.get("searchComparisonEditorVersion")!=="1")throw new Error();
+    if(!parseFormBoolean(form,"searchComparisonEnabled"))return null;
+    return parseSearchComparison({version:1,ignoreCase:parseFormBoolean(form,"searchComparisonIgnoreCase"),ignoreCharacters:JSON.parse(String(form.get("searchComparisonIgnoreCharacters")??"[]")),ignoreWhitespace:parseFormBoolean(form,"searchComparisonIgnoreWhitespace"),match:form.get("searchComparisonMatch")});
+  } catch { throw new FieldEditorInputError("Revisa la comparación de búsqueda.",{searchComparison:["La comparación debe tener una versión, modo y lista literal de caracteres válidos."]}); }
+}
+function isComparisonOnlyEdit(field: {config: unknown; name:string; key:string; description:string|null; type:string; required:boolean; isUnique:boolean; searchable:boolean; multiple:boolean; isActive:boolean; options:{value:string}[]}, input: z.infer<typeof entityFieldSchema>) {
+  if(input.searchComparison===undefined || JSON.stringify(fieldSearchComparison(field.config))===JSON.stringify(input.searchComparison))return false;
+  for(const key of ["name","key","type","isUnique","searchable","multiple","isActive"] as const)if(field[key]!==input[key])return false;
+  if(field.description!==(input.description||null)||field.required!==(input.validation.required??input.required))return false;
+  const withoutPolicy=(config:unknown)=>{const parsed=parseFieldConfig(config);const rest={...parsed};delete rest.searchComparison;return rest;};
+  const canonical=(value:unknown):unknown=>Array.isArray(value)?value.map(canonical):value&&typeof value==="object"?Object.fromEntries(Object.entries(value).filter(([,v])=>v!==undefined).sort(([a],[b])=>a<b?-1:1).map(([k,v])=>[k,canonical(v)])):value;
+  return JSON.stringify(canonical(withoutPolicy(field.config)))===JSON.stringify(canonical(withoutPolicy(buildFieldConfig(input,field.config,field.options.map(o=>o.value)))));
 }

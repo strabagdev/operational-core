@@ -1,5 +1,7 @@
 "use client";
 
+import type { SearchComparison } from "@/lib/search-comparison";
+
 import * as React from "react";
 import { useActionState, useEffect, useMemo, useRef, useState } from "react";
 import { useFormStatus } from "react-dom";
@@ -58,6 +60,7 @@ type FieldEditorFormValues = {
   required?: boolean;
   isUnique?: boolean;
   searchable?: boolean;
+  searchComparison?: SearchComparison;
   multiple?: boolean;
   isActive?: boolean;
   targetEntityTypeId?: string;
@@ -565,6 +568,8 @@ export function FieldEditorControls({
           <CheckboxControl checked={isActive} label="Activo" name="isActive" onChange={setIsActive} />
         </section>
 
+        <SearchComparisonControls initial={defaultValues?.searchComparison} eligible={["TEXT","TEXTAREA"].includes(type)&&searchable&&isActive&&!multiple} />
+        <FieldError errors={fieldErrors.searchComparison} />
         <section className="grid gap-3 rounded-md border border-border p-4">
           <SectionIntro
             description="Controla cómo este campo participa en listados y en la identidad visible del registro."
@@ -832,4 +837,20 @@ function getClientOptionRows(formData: FormData) {
 
 function stringValue(value: FormDataEntryValue | null) {
   return typeof value === "string" ? value : "";
+}
+
+function SearchComparisonControls({initial,eligible}:{initial?:SearchComparison;eligible:boolean}) {
+  const [enabled,setEnabled]=useState(Boolean(initial));
+  return <section className="grid gap-3 rounded-md border border-border p-4">
+    <SectionIntro title="Comparación de búsqueda" description="Sólo búsquedas globales y por campo de Attendance/Actualización de estado. No cambia registros, unicidad, RECORDS, relaciones ni filtros REPORT/PANEL." />
+    <input type="hidden" name="searchComparisonEditorVersion" value="1" />
+    <CheckboxControl name="searchComparisonEnabled" label="Configurar comparación" checked={enabled} onChange={setEnabled} disabled={!eligible&&!enabled} />
+    {enabled ? <>
+      {!eligible?<p role="alert" className="text-sm text-destructive">Requiere un texto simple, activo y buscable. Desactiva explícitamente la comparación o conserva esos atributos.</p>:null}
+      <CheckboxControl name="searchComparisonIgnoreCase" label="Ignorar mayúsculas/minúsculas (Unicode simple)" checked={initial?.ignoreCase??true} />
+      <CheckboxControl name="searchComparisonIgnoreWhitespace" label="Ignorar blancos: espacios, tabulaciones, saltos y NBSP" checked={initial?.ignoreWhitespace??false} />
+      <TextInput name="searchComparisonIgnoreCharacters" label={'Caracteres literales a ignorar (lista JSON, por ejemplo [".","-"])'} defaultValue={JSON.stringify(initial?.ignoreCharacters??[])} />
+      <label className="grid gap-2 text-sm font-medium">Coincidencia<select name="searchComparisonMatch" defaultValue={initial?.match??"contains"} className="h-10 rounded-md border border-input bg-background px-3"><option value="contains">Parcial</option><option value="exact">Exacta</option></select></label>
+    </>:null}
+  </section>;
 }

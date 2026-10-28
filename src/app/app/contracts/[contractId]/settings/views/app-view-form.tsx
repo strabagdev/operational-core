@@ -3837,7 +3837,7 @@ function ConfigFields({
           <select name="codeSearchFieldId" value={codeSearchFieldId} onChange={event => setCodeSearchFieldId(event.target.value)}
             className="h-10 rounded-md border border-input bg-background px-3 text-sm font-normal outline-none ring-ring focus-visible:ring-2">
             <option value="">Sin lector de códigos</option>
-            {codeSearchFieldId && !sourceFields.some(field => field.id === codeSearchFieldId) ? <option value={codeSearchFieldId} disabled>Campo configurado no disponible</option> : null}
+            {codeSearchFieldId && !sourceFields.some(field => field.id === codeSearchFieldId) ? <option value={codeSearchFieldId}>Campo configurado no disponible</option> : null}
             {sourceFields.map(field => <option key={field.id} value={field.id}>{field.name}</option>)}
           </select>
           <span className="text-xs font-normal text-muted-foreground">El código busca en este campo de texto. La búsqueda manual continúa siendo global; una lectura no selecciona ni guarda.</span>

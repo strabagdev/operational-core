@@ -31,6 +31,7 @@ export async function GET(
     page: searchParams.get("page"),
     pageSize: searchParams.get("pageSize"),
     search: searchParams.get("search"),
+    ...(searchParams.has("searchComparisonVersion") ? {searchComparisonVersion:searchParams.get("searchComparisonVersion")} : {}),
     ...(searchParams.has("searchFieldId") ? { searchFieldId: searchParams.get("searchFieldId") } : {}),
     subjectRecordId: searchParams.get("subjectRecordId"),
     identity: parseIdentityQuery(searchParams.get("identity")),

@@ -2207,3 +2207,9 @@ function hiddenInputValue(html: string, name: string) {
 
   return html.match(pattern)?.[1] ?? html.match(alternatePattern)?.[1] ?? "";
 }
+
+it("keeps the configured reader field in the submitted select when metadata is unavailable",()=>{
+ const html=renderToStaticMarkup(<AppViewForm action={async()=>({success:true})} submitLabel="Guardar experiencia" entityTypes={entityTypes} initialValues={{active:true,icon:null,name:"Asistencia sintética",slug:"attendance-reader",sortOrder:0,type:"WORKFLOW",config:{type:"WORKFLOW",workflowKey:"attendance",sourceEntityTypeId:"people",targetEntityTypeId:"attendance",personFieldId:"person_field",dateFieldId:"date_field",statusFieldId:"status_field",defaultCheckInOptionId:"present_option",contextFieldIds:[],codeSearch:{fieldId:"old-search-id"}}}} />);
+ const select=html.match(/<select[^>]*name="codeSearchFieldId"[^>]*>[\s\S]*?<\/select>/)![0];
+ const option=select.match(/<option[^>]*value="old-search-id"[^>]*>/)![0];expect(option).toContain('selected=""');expect(option).not.toContain("disabled");
+});

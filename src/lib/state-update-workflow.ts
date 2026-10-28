@@ -1,3 +1,5 @@
+import { workflowSearchMetadata, usesWorkflowSearchComparison, workflowSearchPredicate, workflowSubjectsSql } from "./workflow-search-comparison";
+import { SearchComparisonError } from "./search-comparison";
 import { requestedCodeSearchField, codeSearchRecordWhere, literalCodeSearchText, WorkflowCodeSearchError } from "./workflow-code-search";
 import { applySchedule, parseScheduleReference, resolveSchedule, scheduleConsumer, ScheduleError, type ScheduleConsumer, type ScheduleApplication, type ScheduleReference } from "./state-update-schedules";
 import { serializeApiEntityField } from "./api-entity-serializer";
@@ -242,6 +244,7 @@ export async function getStateUpdateWorkflow({
   pageSize,
   search,
   searchFieldId,
+  searchComparisonVersion,
   subjectRecordId,
   identity,
   userId,
@@ -253,6 +256,7 @@ export async function getStateUpdateWorkflow({
   pageSize?: string | null;
   search?: string | null;
   searchFieldId?: string | null;
+  searchComparisonVersion?: string | null;
   subjectRecordId?: string | null;
   identity?: unknown;
   userId: string;
@@ -267,6 +271,12 @@ export async function getStateUpdateWorkflow({
   try { codeSearch = requestedCodeSearchField(context.context.sourceEntityType.fields, context.context.config.codeSearch, searchFieldId); }
   catch (error) { if (error instanceof WorkflowCodeSearchError) return { ok: false as const, response: badRequest(error.message, "INVALID_CODE_SEARCH_FIELD") }; throw error; }
   if (searchFieldId && (!search?.trim() || subjectRecordId)) return { ok: false as const, response: badRequest("La búsqueda por campo requiere texto y no admite subjectRecordId.", "INVALID_CODE_SEARCH_QUERY") };
+
+  let searchComparison;
+  try {
+    if(searchComparisonVersion!==undefined&&searchComparisonVersion!==null&&searchComparisonVersion!=="1")throw new SearchComparisonError("La versión de comparación solicitada no es compatible.");
+    searchComparison=workflowSearchMetadata(context.context.sourceEntityType.fields,context.context.sourceEntityType.id,"state-update",search,codeSearch.fieldId,subjectRecordId);
+  } catch(error) { if(error instanceof SearchComparisonError)return {ok:false as const,response:badRequest(error.message,error.code)};throw error; }
 
   const parsedDate = parseOptionalDate(date, context.context.config);
 
@@ -306,6 +316,7 @@ export async function getStateUpdateWorkflow({
     ok: true as const,
     data: {
       appView: context.context.appView,
+      searchComparison,
       ...(codeSearch.metadata ? { codeSearchField: codeSearch.metadata } : {}),
       ...(codeSearch.fieldId ? { searchFieldId: codeSearch.fieldId } : {}),
       workflow: workflowMetadata(context.context),
@@ -1890,6 +1901,9 @@ async function findSubjects({
     return [];
   }
 
+  const metadata=workflowSearchMetadata(context.sourceEntityType.fields,context.sourceEntityType.id,"state-update",normalizedSearch,searchFieldId);
+  if(usesWorkflowSearchComparison(metadata,searchFieldId))return prisma.$queryRaw<Array<{id:string;displayName:string}>>(workflowSubjectsSql(metadata,normalizedSearch,searchFieldId));
+
   return prisma.entityRecord.findMany({
     orderBy: [{ displayName: "asc" }, { id: "asc" }],
     select: { displayName: true, id: true },
@@ -2032,7 +2046,11 @@ async function countLatestStateUpdates({
   search?: string;
   searchFieldId?: string;
 }) {
-  if (context.composite) return prisma.entityRecord.count({ where: compositeLatestWhere(context, search, searchFieldId) });
+  if (context.composite) {
+    const sql=compositeComparisonSql(context,search,searchFieldId);
+    if(sql){const rows=await prisma.$queryRaw<Array<{total:bigint}>>(Prisma.sql`SELECT COUNT(*)::bigint AS total ${sql}`);return Number(rows[0]?.total??0);}
+    return prisma.entityRecord.count({ where: compositeLatestWhere(context, search, searchFieldId) });
+  }
   if (!context.config.dateFieldId) {
     return 0;
   }
@@ -2050,7 +2068,7 @@ async function countLatestStateUpdates({
       AND order_value."entityFieldId" = ${context.config.dateFieldId}
     WHERE record."entityTypeId" = ${context.targetEntityType.id}
       AND order_value."dateValue" IS NOT NULL
-      ${latestStateUpdateSearchSql(search, searchFieldId)}
+      ${latestStateUpdateSearchSql(search, searchFieldId, context)}
   `);
 
   return Number(rows[0]?.total ?? 0);
@@ -2073,7 +2091,11 @@ async function latestStateUpdateIds({
     return [];
   }
 
-  if (context.composite) return (await prisma.entityRecord.findMany({ where: compositeLatestWhere(context, search, searchFieldId), orderBy: { id: "asc" }, skip, take: pageSize, select: { id: true } })).map(row => row.id);
+  if (context.composite) {
+    const sql=compositeComparisonSql(context,search,searchFieldId);
+    if(sql)return (await prisma.$queryRaw<Array<{id:string}>>(Prisma.sql`SELECT record."id" ${sql} ORDER BY record."id" ASC OFFSET ${skip} LIMIT ${pageSize}`)).map(row=>row.id);
+    return (await prisma.entityRecord.findMany({ where: compositeLatestWhere(context, search, searchFieldId), orderBy: { id: "asc" }, skip, take: pageSize, select: { id: true } })).map(row => row.id);
+  }
   const rows = await prisma.$queryRaw<Array<{ id: string }>>(Prisma.sql`
     SELECT record."id"
     FROM "EntityRecord" record
@@ -2087,7 +2109,7 @@ async function latestStateUpdateIds({
       AND order_value."entityFieldId" = ${context.config.dateFieldId}
     WHERE record."entityTypeId" = ${context.targetEntityType.id}
       AND order_value."dateValue" IS NOT NULL
-      ${latestStateUpdateSearchSql(search, searchFieldId)}
+      ${latestStateUpdateSearchSql(search, searchFieldId, context)}
     ORDER BY order_value."dateValue" DESC, record."id" ASC
     OFFSET ${skip}
     LIMIT ${pageSize}
@@ -2096,7 +2118,8 @@ async function latestStateUpdateIds({
   return rows.map((row) => row.id);
 }
 
-function latestStateUpdateSearchSql(search?: string, searchFieldId?: string) {
+function latestStateUpdateSearchSql(search?: string, searchFieldId?: string, context?: StateUpdateContext) {
+  if(search&&context){const metadata=workflowSearchMetadata(context.sourceEntityType.fields,context.sourceEntityType.id,"state-update",search,searchFieldId);if(usesWorkflowSearchComparison(metadata,searchFieldId))return Prisma.sql`AND subject_record."entityTypeId"=${context.sourceEntityType.id} AND ${workflowSearchPredicate(metadata,search,searchFieldId)}`;}
   if (search && searchFieldId) return Prisma.sql`AND EXISTS (SELECT 1 FROM "EntityValue" search_value WHERE search_value."entityRecordId" = subject_record."id" AND search_value."entityFieldId" = ${searchFieldId} AND search_value."textValue" ILIKE ${`%${literalCodeSearchText(search)}%`})`;
   return search
     ? Prisma.sql`AND subject_record."displayName" ILIKE ${`%${search}%`}`
@@ -2857,4 +2880,12 @@ function sanitizeStateUpdateDiagnosticValue(value: unknown): unknown {
 
 function scheduleRecordMetadata(context: StateUpdateContext, record: {scheduleApplication?: Prisma.JsonValue | null}) {
   return context.schedulePolicy ? {scheduleApplication:(record.scheduleApplication ?? {kind:"legacy"}) as ScheduleApplication} : {};
+}
+
+function compositeComparisonSql(context: StateUpdateContext, search?: string, searchFieldId?: string) {
+  if(!search)return null;
+  const metadata=workflowSearchMetadata(context.sourceEntityType.fields,context.sourceEntityType.id,"state-update",search,searchFieldId);
+  if(!usesWorkflowSearchComparison(metadata,searchFieldId))return null;
+  const ids=context.composite?.recordIds??[];
+  return Prisma.sql`FROM "EntityRecord" record WHERE record."entityTypeId"=${context.targetEntityType.id} AND ${ids.length?Prisma.sql`record."id" IN (${Prisma.join(ids)})`:Prisma.sql`FALSE`} AND EXISTS(SELECT 1 FROM "EntityRelation" subject_relation JOIN "EntityRecord" subject_record ON subject_record."id"=subject_relation."targetRecordId" WHERE subject_relation."sourceRecordId"=record."id" AND subject_relation."sourceFieldId"=${context.config.subjectFieldId} AND subject_record."entityTypeId"=${context.sourceEntityType.id} AND ${workflowSearchPredicate(metadata,search,searchFieldId)})`;
 }

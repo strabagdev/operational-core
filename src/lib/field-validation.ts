@@ -1,3 +1,4 @@
+import { fieldSearchComparison, parseSearchComparison, type SearchComparison } from "./search-comparison";
 import { Prisma, type EntityFieldType } from "@prisma/client";
 import { z } from "zod";
 
@@ -88,6 +89,7 @@ export type FieldDisplayConfig = {
 };
 
 export type ParsedFieldConfig = RelationConfig & {
+  searchComparison?: SearchComparison;
   validation: FieldValidationRules;
   defaultValue?: Prisma.JsonValue;
   display: FieldDisplayConfig;
@@ -190,6 +192,7 @@ export function parseFieldConfig(config: unknown): ParsedFieldConfig {
     return { validation: {}, display: {}, money: { currency: DEFAULT_MONEY_CURRENCY } };
   }
 
+  const searchComparison = fieldSearchComparison(config);
   const parsed = fieldConfigSchema.safeParse(config);
 
   if (!parsed.success) {
@@ -197,6 +200,7 @@ export function parseFieldConfig(config: unknown): ParsedFieldConfig {
   }
 
   return {
+    ...(searchComparison ? {searchComparison} : {}),
     targetEntityTypeId: parsed.data.targetEntityTypeId,
     relationKind: parsed.data.relationKind,
     validation: parsed.data.validation,
@@ -340,7 +344,9 @@ export function buildMergedFieldConfig({
   display,
   money,
   optionValues = [],
+  searchComparison,
 }: {
+  searchComparison?: SearchComparison | null;
   existingConfig?: unknown;
   type: EntityFieldType;
   relation?: RelationConfig;
@@ -366,6 +372,9 @@ export function buildMergedFieldConfig({
     ...base,
     validation: cleanValidation.validation,
   };
+
+  if(searchComparison===null)delete nextConfig.searchComparison;
+  else if(searchComparison!==undefined)nextConfig.searchComparison=parseSearchComparison(searchComparison);
 
   if (relation?.targetEntityTypeId) {
     nextConfig.targetEntityTypeId = relation.targetEntityTypeId;

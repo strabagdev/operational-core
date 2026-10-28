@@ -603,3 +603,71 @@ response lacking the echo/descriptor from an older Core. Rollback loses reader c
 Core that preserves config to retain it; it does not migrate data or change durable intentions.
 Original credential/camera/Safari physical validation remains pending. No production configuration,
 commit/push/deploy. Inventory/patches/evidence: backups/code-reader-field-search/2026-10-27.
+
+
+## Comparación de búsqueda por campo v1 — candidato local, 2026-10-28
+
+Config opcional EntityField.config.searchComparison: objeto completo {version:1,ignoreCase:boolean,
+ignoreCharacters:string[],ignoreWhitespace:boolean,match:"exact"|"contains"}; sólo TEXT/TEXTAREA simple,
+activo y buscable. Lista literal de hasta32 puntos Unicode válidos, canónica, no regex. Sin regla se
+conservan ramas existentes. Editor/validador/serializer preservan la regla; cambio exclusivo de comparación
+omite recálculo de displayName para no modificar registros/versiones. Sin regla no se altera ese recorrido.
+AppView admin entrega searchable; update distingue codeSearchFieldId ausente (conservar) de vacío (quitar).
+
+Sólo Attendance y STATE_UPDATE manual/global/dirigido: SQL parametrizado previo a LIMIT/OFFSET/COUNT,
+incluidos latest y contexto compuesto. Global combina campos, no se limita a codeSearch. Si el principal
+tiene regla, displayName no elude exactitud. Attendance conserva resumen/lista diarios independientes
+ y límite20. Las superficies RECORDS/RELATION/REPORT/PANEL mantienen sus predicados, aunque la metadata
+ del campo sea visible. No cambia selección current, identidades, intenciones ni escrituras.
+
+Unicode17.0.0 Simple Case Folding C/S (1512 pares, tabla/licencia locales compartidas con Client),25 blancos;
+translate literal y comparación C; contains escapa %, _ y backslash. Ruta rápida ASCII equivalente al
+mismo mapa. Sin NFC/NFKC, acentos ni plegado completo: no prometer ß=ss o İ=i. Se conserva trim de consulta.
+Vacío normalizado dirigido → EMPTY_NORMALIZED_SEARCH; global omite ese campo, no todos los predicados.
+La equivalencia nueva se acredita para las políticas configuradas; ILIKE/collation legacy se mantienen,
+sin afirmar paridad universal con la búsqueda local anterior.
+
+Respuesta GET searchComparison v1 confirma entidad, lista canónica de campos/reglas, fingerprint de
+metadata completa y applied.mode definition/global/field/record. No hay valores de registros en la clave;
+no es contador de frescura. Parámetro opcional searchComparisonVersion, sólo1 admitido. Core anterior
+no confirma esta política; Client nuevo rechaza esa búsqueda, sin fallback. Core nuevo + Client anterior,
+sin reglas, conserva lecturas/escrituras. Activación posterior requiere actualizar lectores y metadata;
+lector offline anterior ignora reglas. Orden Core → Client; rollback anterior tras activar pierde capacidad,
+no cambia la representación de outbox. Sin migraciones/dependencias ni activación productiva.
+
+Pruebas:394 Core focalizadas,5 integraciones PostgreSQL locales con conexión validada explícitamente
+opco_dev@127.0.0.1:5432/opco_development desde .env.local; editor SSR/multipart/validación/persistencia/
+lectura, codeSearch conservado/retirado explícitamente y registros/displayName/versiones idénticos.
+240 sujetos/240 eventos:160 coincidencias dirigidas,161 globales; límites/count/page y compuesto;
+1512 pares SQL y fixtures Unicode/literales compartidos con SQLite reabierto Client. 213 Client afectadas,
+typecheck/lint afectados aprobados. Coste local paginado: cinco muestras10.8–121.1ms; EXPLAIN123.116ms,
+sin estimación productiva ni benchmark masivo Unicode. No suite completa/build/navegador/Safari/cámara.
+Fixtures sintéticos propios eliminados; sin acceso productivo. V11 sin reabrir.
+Inventario/parches/hashes/evidencia: backups/workflow-search-comparison/2026-10-28/.
+
+
+### Cierre técnico de comparación v1 — 2026-10-28, sin publicar
+
+Reconstrucción exacta de23 archivos/59 hunks desde el respaldo de implementación; hashes y whitespace
+verificados. Build habitual npm run build PASS automatizado (código0): Next16.3.0/Turbopack,59.458s,
+20/20 páginas estáticas. Dependencias copiadas en scratch, sin enlace externo ni .env; AUTH_SECRET/
+API_AUTH_SECRET ficticios, URLs loopback y DATABASE_URL ficticia en127.0.0.1:1. No conexión productiva.
+No EPERM en este intento; sin cambiar compilador/configuración ni ejecutar migraciones. Los391 archivos
+fuente/configuración reconstruidos quedaron idénticos tras el build. Aviso informativo: sin caché de build.
+
+Se reutilizan394 pruebas Core,213 Client,5 PostgreSQL, typecheck y lint por identidad funcional exacta.
+Comprobación complementaria: motores reales publicado/candidato sin reglas producen el mismo resultado
+salvo descriptor aditivo (2 casos, Prisma simulado); adaptador real del Client publicado acepta respuestas
+nuevas global/dirigida y nuevo adaptador rechaza respuesta sin confirmación (4 casos, fetch simulado).
+No suite completa, navegador ni nueva integración PostgreSQL. Sin cambios funcionales en este cierre.
+
+Orden: Core → Client con reglas desactivadas. Activar sólo tras acreditar runtimes compatibles y preparar
+metadata/campos del origen en sus scopes; el service worker por sí solo no retira pestañas antiguas.
+Sin barrera automática contra lectores antiguos: offline seguirán usando comparación legacy. Antes de
+activar, rollback Client pierde únicamente la comparación nueva; Core anterior con Client nuevo produce
+error explícito de búsqueda aun sin reglas, por lo que requiere retirar primero los runtimes nuevos.
+Después de activar, no prometer rollback sin pérdida de capacidad: coordinar desactivación y refresco de
+metadata antes de permitir lectores anteriores. Nunca borrar pendientes ni cambiar su identidad para
+lograrlo. RECORDS/RELATION/REPORT/PANEL y los límites Unicode/legacy/cobertura del apartado anterior siguen
+fuera. Candidato listo para la siguiente etapa autorizada; publicación/activación no ejecutadas.
+Inventario/parches/checks de cierre: backups/workflow-search-comparison-close/2026-10-28/.

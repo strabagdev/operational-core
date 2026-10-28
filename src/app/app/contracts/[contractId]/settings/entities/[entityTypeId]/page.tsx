@@ -410,6 +410,7 @@ async function FieldEditorOverlay({
         required: field.required,
         isUnique: field.isUnique,
         searchable: field.searchable,
+        searchComparison: fieldConfig.searchComparison,
         multiple: field.multiple,
         isActive: field.isActive,
         targetEntityTypeId: fieldConfig.targetEntityTypeId,

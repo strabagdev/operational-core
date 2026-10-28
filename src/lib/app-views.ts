@@ -415,6 +415,7 @@ export function getAppViewInput(formData: FormData) {
       defaultCheckInOptionId: formData.get("defaultCheckInOptionId") ?? formData.get("presentOptionId"),
       contextFieldIds: formData.getAll("contextFieldIds"),
       codeSearch: formData.get("codeSearchFieldId") ? { fieldId: formData.get("codeSearchFieldId") } : undefined,
+      codeSearchSpecified: formData.has("codeSearchFieldId"),
       extraFieldIds: formData.getAll("extraFieldIds"),
       historyMode: formData.get("historyMode"),
       observationFieldId: formData.get("observationFieldId"),
@@ -489,6 +490,7 @@ export async function getAppViewAdminData(contractId: string, userId: string) {
             isActive: true,
             key: true,
             multiple: true,
+            searchable: true,
             name: true,
             config: true,
             options: {
@@ -587,7 +589,9 @@ export async function updateAppView(
 
   const config = await validateAppViewConfig({
     contractId: authorized.contract.id,
-    rawConfig: input.rawConfig,
+    rawConfig: !input.rawConfig.codeSearchSpecified && input.common.type === "WORKFLOW"
+      ? { ...input.rawConfig, codeSearch: (authorized.appView.config as {codeSearch?:{fieldId:string}})?.codeSearch }
+      : input.rawConfig,
     type: input.common.type,
   });
 

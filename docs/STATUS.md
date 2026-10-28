@@ -349,3 +349,33 @@ focused tests, real Chromium/OPFS with synthetic API/camera; no combined real Co
 Safari/credential proof. Core→Client before optional configuration; no activation authorized here.
 Details: STATE_UPDATE/EXTERNAL_API; durable inventory/patches/checks in
 backups/code-reader-field-search/2026-10-27. All prior pending work preserved; V11 remains paused.
+
+
+## Comparación de búsqueda v1 — implementación local, 2026-10-28
+
+Config/editor EntityField y metadata de AppViews, Attendance/STATE_UPDATE global + dirigida y latest/
+compuesto antes de count/paginación; descriptor efectivo versionado y caché Client. Sin mutar registros
+ni displayName al cambiar sólo la regla; sin cambio de escrituras. Detalle en STATE_UPDATE/EXTERNAL_API.
+394 pruebas Core +5 PostgreSQL locales,213 Client focalizadas, typecheck/lint afectados aprobados.
+Unicode17 C/S compartido, SQLite reabierto y conteos/páginas contrastados; coste medido sólo localmente.
+Sin suites completas/build/navegador repetidos. Orden futuro Core → Client; mantener reglas desactivadas
+hasta actualizar/preparar lectores. Core anterior no confirma la comparación y Client rechaza; rollback
+anterior tras activar pierde capacidad offline. RECORDS/RELATION/REPORT/PANEL quedan para otra etapa.
+Respaldo reconstruible: backups/workflow-search-comparison/2026-10-28/. Sin producción ni migraciones,
+commit/push/deploy. Pendientes preservados; V11 pausado.
+
+
+### Cierre comparación genérica v1 — 2026-10-28
+
+LISTO para siguiente etapa autorizada, sin publicar/activar. Reconstrucción exacta: Core23 archivos/59
+hunks y Client17/53. Builds habituales PASS automatizados: Core Turbopack59.458s y Client Metro47.168s,
+código0, variables ficticias para Core y sin .env/productivo. Artefacto local API https://web.opco.cl,
+index/sw con entry-058409be1645b5952e8f472a5a840863.js, epoch2 y lector JS/WASM local precacheado íntegros.
+394 Core/213 Client/5 PostgreSQL/typecheck/lint reutilizados por hashes;6 comprobaciones complementarias
+con motores/adaptadores reales y Prisma/fetch sintéticos. Sin suites completas ni navegador/cámara.
+Core → Client con reglas desactivadas; activación pendiente de runtimes/metadata compatibles. Rollback
+Core anterior con Client nuevo impide búsquedas aunque no haya reglas; coordinar retirada de runtime.
+Lectores antiguos offline no conocen reglas: no basta actualizar service worker. Sin pérdida ni cambios
+de outbox. Attendance/STATE_UPDATE solamente; RECORDS/RELATION/REPORT/PANEL continúan pendientes.
+Inventario/parches/checks/tiempos: backups/workflow-search-comparison-close/2026-10-28/.402 exclusiones,
+prefijos documentales y demás pendientes preservados. Sin migración/commit/push/deploy; V11 pausado.

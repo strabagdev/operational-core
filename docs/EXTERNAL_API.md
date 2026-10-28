@@ -1653,3 +1653,18 @@ contracts, expected versions, authorization and idempotency are unchanged. No sc
 Core must precede Client; new Client requires the echo and descriptor, while old Clients continue to
 use manual/global search. Feature remains unconfigured in production. Scope and evidence are in
 STATE_UPDATE, «Optional code-reader field search»; physical camera/original credential are not accredited.
+
+
+### Comparación de búsquedas WORKFLOW v1 — candidato local, 2026-10-28
+
+GET attendance/state-update añade searchComparison, opcional para consumidores anteriores:
+{version:1,sourceEntityTypeId,fields:[{id,key,type,primary,policy,options?}],fingerprint,
+applied:{mode:"definition"|"global"|"field"|"record",fieldId?}}. policy es null (legacy) o la regla
+completa EntityField.config.searchComparison v1. fingerprint es JSON canónico de entidad/metadata,
+no hash de datos ni garantía de frescura. `record` confirma lectura por ID, no ejecución de búsqueda.
+searchComparisonVersion=1 es opcional; versión distinta se rechaza. Client nuevo lo solicita con texto
+y exige modo/versión/source/fingerprint confirmados: el eco searchFieldId anterior resulta insuficiente.
+Los POST, idempotencia y conflictos conservan sus contratos. Sin reglas, Core nuevo mantiene semántica
+legacy; Client nuevo + Core anterior falla explícitamente en búsqueda no confirmada. Publicar Core antes
+que Client; no activar reglas para lectores antiguos offline. Alcance/predicados y límites en STATE_UPDATE.
+Sin migraciones; RECORDS, RELATION, REPORT/PANEL no aplican esta regla en esta etapa.

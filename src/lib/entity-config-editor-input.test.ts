@@ -292,3 +292,13 @@ describe("entity field editor input", () => {
     }
   });
 });
+
+it("distinguishes old forms, explicit removal and a valid literal comparison roundtrip",async()=>{
+ const old=baseFieldForm();expect(getEntityFieldEditorInput(old).field.searchComparison).toBeUndefined();
+ old.set("searchComparisonEditorVersion","1");expect(getEntityFieldEditorInput(old).field.searchComparison).toBeNull();
+ old.set("searchComparisonEnabled","true");old.set("searchable","true");old.set("searchComparisonIgnoreCase","true");old.set("searchComparisonIgnoreWhitespace","true");old.set("searchComparisonIgnoreCharacters",JSON.stringify([".","-","."]));old.set("searchComparisonMatch","exact");
+ const body=await new Request("https://synthetic.invalid",{method:"POST",body:old}).formData();
+ expect(getEntityFieldEditorInput(body).field.searchComparison).toEqual({version:1,ignoreCase:true,ignoreWhitespace:true,ignoreCharacters:["-","."],match:"exact"});
+ old.set("searchComparisonIgnoreCharacters",'[".*"]');expect(()=>getEntityFieldEditorInput(old)).toThrow(FieldEditorInputError);
+ old.set("searchComparisonIgnoreCharacters",'[]');old.set("type","SELECT");expect(()=>getEntityFieldEditorInput(old)).toThrow();
+});

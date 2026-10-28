@@ -1,3 +1,5 @@
+import { workflowSearchMetadata, usesWorkflowSearchComparison, workflowSubjectsSql } from "./workflow-search-comparison";
+import { SearchComparisonError } from "./search-comparison";
 import { requestedCodeSearchField, codeSearchRecordWhere, WorkflowCodeSearchError } from "./workflow-code-search";
 import { Prisma, type EntityFieldType } from "@prisma/client";
 
@@ -102,6 +104,7 @@ export async function getAttendanceWorkflowDay({
   personRecordId,
   search,
   searchFieldId,
+  searchComparisonVersion,
   userId,
 }: {
   appViewId: string;
@@ -110,6 +113,7 @@ export async function getAttendanceWorkflowDay({
   personRecordId?: string | null;
   search?: string | null;
   searchFieldId?: string | null;
+  searchComparisonVersion?: string | null;
   userId: string;
 }) {
   const parsedDate = parseAttendanceDate(date);
@@ -128,6 +132,12 @@ export async function getAttendanceWorkflowDay({
   try { codeSearch = requestedCodeSearchField(context.context.sourceEntityType.fields, context.context.config.codeSearch, searchFieldId); }
   catch (error) { if (error instanceof WorkflowCodeSearchError) return { ok: false as const, response: badRequest(error.message, "INVALID_CODE_SEARCH_FIELD") }; throw error; }
   if (searchFieldId && (!search?.trim() || personRecordId)) return { ok: false as const, response: badRequest("La búsqueda por campo requiere texto y no admite personRecordId.", "INVALID_CODE_SEARCH_QUERY") };
+
+  let searchComparison;
+  try {
+    if(searchComparisonVersion!==undefined&&searchComparisonVersion!==null&&searchComparisonVersion!=="1")throw new SearchComparisonError("La versión de comparación solicitada no es compatible.");
+    searchComparison=workflowSearchMetadata(context.context.sourceEntityType.fields,context.context.sourceEntityType.id,"attendance",search,codeSearch.fieldId,personRecordId);
+  } catch(error) { if(error instanceof SearchComparisonError)return {ok:false as const,response:badRequest(error.message,error.code)};throw error; }
 
   const people = await findAttendancePeople({
     context: context.context,
@@ -153,6 +163,7 @@ export async function getAttendanceWorkflowDay({
     ok: true as const,
     data: {
       appView: context.context.appView,
+      searchComparison,
       ...(codeSearch.metadata ? { codeSearchField: codeSearch.metadata } : {}),
       ...(codeSearch.fieldId ? { searchFieldId: codeSearch.fieldId } : {}),
       contextFields: serializeAttendanceContextFields(context.context.contextFields),
@@ -594,6 +605,9 @@ async function findAttendancePeople({
   if (!normalizedSearch) {
     return [];
   }
+
+  const metadata=workflowSearchMetadata(context.sourceEntityType.fields,context.sourceEntityType.id,"attendance",normalizedSearch,searchFieldId);
+  if(usesWorkflowSearchComparison(metadata,searchFieldId))return prisma.$queryRaw<Array<{id:string;displayName:string}>>(workflowSubjectsSql(metadata,normalizedSearch,searchFieldId));
 
   return prisma.entityRecord.findMany({
     orderBy: [{ displayName: "asc" }, { id: "asc" }],
