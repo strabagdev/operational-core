@@ -564,3 +564,42 @@ por SHA256,22 migraciones y restauración local entonces, no copia actual. Sin a
 nuevo respaldo en este cierre. Detalle, inventario y tiempos en
 `backups/schedule-technical-close/2026-10-26/`. Sin código adicional, commit/push/deploy/activación;
 pendientes ajenos preservados, V11 pausado, lectura de códigos no iniciada.
+
+## Optional code-reader field search — local implementation, 2026-10-27
+
+Attendance and STATE_UPDATE may configure `codeSearch: { fieldId: "stable-source-field-id" }`.
+The editor lists only active, searchable, single TEXT/TEXTAREA fields of the authorized source entity;
+FormData/parser/validation/persistence/API projection retain the stable ID. No default is selected,
+no identity/state/extra role is changed. Existing workflows without codeSearch remain unchanged.
+The feature is not enabled or configured in production by this change; no migration is required.
+
+GET attendance/state-update accepts optional `searchFieldId` with nonempty `search`. It must equal
+the AppView's configured field and pass source/type/activity/searchability validation after existing
+contract/user/AppView access guards. A simultaneous personRecordId/subjectRecordId is rejected.
+Reader queries never fall back to global search. Response echoes the applied `searchFieldId` and
+returns `codeSearchField: { id, key, name, type }`; manual GETs may include metadata without an echo.
+An optional field that later becomes unavailable does not block the existing manual global search.
+
+The new branch uses a literal case-insensitive substring, trimming the query only. PostgreSQL LIKE
+wildcards are escaped to match Client includes semantics; no RUT punctuation removal, numeric casting,
+accent normalization or exact-match claim. Source subjects and latest both use the same field,
+including composite contexts. The existing latest order, current selection, history, write conditions,
+conflicts, request hashes and idempotency are unchanged. Attendance's preset preserves codeSearch in
+normalization but never adds it to a write payload or an intention.
+
+Validation:205 focused Core tests reused/executed for validators/FormData/engine reads/manual modes,
+API projection and route forwarding; one additional PostgreSQL-local test validates six synthetic
+predicates and the pattern actually sent by Prisma. Only SELECT/CTE with fictitious values and a
+nonexistent entity query; destination 127.0.0.1:5432/opco_development as opco_dev checked from .env.local,
+credentials never recorded. No records copied, fixtures persisted or migrations executed.
+Client counterpart has197 focused tests and SQLite reopen coverage. Chromium real renderers/OPFS use
+synthetic API transport/camera, not Core browser end-to-end or physical Safari. No full suite/Core build.
+Typecheck and affected lint pass on the identical isolated candidate; direct tsc in the restricted
+checkout hit EROFS writing tsbuildinfo, not a TypeScript diagnostic. No timeout increases.
+
+Publish order, not authorization: Core then Client, with configurations left absent until both are
+compatible. An old Client keeps manual/global searches and all writes; a new Client rejects a field
+response lacking the echo/descriptor from an older Core. Rollback loses reader capability and needs
+Core that preserves config to retain it; it does not migrate data or change durable intentions.
+Original credential/camera/Safari physical validation remains pending. No production configuration,
+commit/push/deploy. Inventory/patches/evidence: backups/code-reader-field-search/2026-10-27.

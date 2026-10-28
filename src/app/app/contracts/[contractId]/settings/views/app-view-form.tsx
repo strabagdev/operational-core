@@ -78,6 +78,7 @@ type AppViewEntityTypeOption = {
       value: string;
     }>;
     multiple?: boolean;
+    searchable?: boolean;
     type: string;
   }>;
   icon?: string | null;
@@ -220,6 +221,7 @@ export function AppViewForm({
       : entityTypes[0]?.id ?? ""),
   );
   const targetEntityType = entityTypes.find((entityType) => entityType.id === targetEntityTypeId);
+  const [codeSearchFieldId, setCodeSearchFieldId] = useState(valueFromState(state, "codeSearchFieldId") || (initialValues?.config.type === "WORKFLOW" ? initialValues.config.codeSearch?.fieldId ?? "" : ""));
   const [workflowKey, setWorkflowKey] = useState(
     valueFromState(state, "workflowKey") ||
     (initialValues?.config.type === "WORKFLOW" ? initialValues.config.workflowKey : "attendance"),
@@ -821,6 +823,8 @@ export function AppViewForm({
           setTargetEntityTypeId={setTargetEntityTypeId}
           setUniquenessMode={setUniquenessMode}
           setWorkflowKey={setWorkflowKey}
+          codeSearchFieldId={codeSearchFieldId}
+          setCodeSearchFieldId={setCodeSearchFieldId}
           sourceEntityTypeId={sourceEntityTypeId}
           stateFieldIds={stateFieldIds}
           stateUpdateAppViewId={stateUpdateAppViewId}
@@ -3710,6 +3714,8 @@ function ConfigFields({
   setTargetEntityTypeId,
   setUniquenessMode,
   setWorkflowKey,
+  codeSearchFieldId,
+  setCodeSearchFieldId,
   sourceEntityTypeId,
   stateFieldIds,
   stateUpdateAppViewId,
@@ -3791,6 +3797,8 @@ function ConfigFields({
   setTargetEntityTypeId: (value: string) => void;
   setUniquenessMode: (value: string) => void;
   setWorkflowKey: (value: string) => void;
+  codeSearchFieldId: string;
+  setCodeSearchFieldId: (value: string) => void;
   sourceEntityTypeId: string;
   stateFieldIds: Set<string>;
   stateUpdateAppViewId: string;
@@ -3805,6 +3813,7 @@ function ConfigFields({
   workflowKey: string;
 }) {
   if (type === "WORKFLOW") {
+    const sourceFields = entityTypes.find(entity => entity.id === sourceEntityTypeId)?.fields.filter(field => field.isActive && field.searchable && !field.multiple && ["TEXT", "TEXTAREA"].includes(field.type)) ?? [];
     const targetEntityType = entityTypes.find((entityType) => entityType.id === targetEntityTypeId);
     const activeTargetFields = targetEntityType?.fields.filter((field) => field.isActive) ?? [];
     const statusField = activeTargetFields.find((field) => field.id === statusFieldId);
@@ -3818,11 +3827,22 @@ function ConfigFields({
         <EntitySelect
           label="Entidad fuente"
           name="sourceEntityTypeId"
-          onChange={setSourceEntityTypeId}
+          onChange={value => { setSourceEntityTypeId(value); setCodeSearchFieldId(""); }}
           options={entityTypes}
           value={sourceEntityTypeId}
           errors={fieldErrors?.sourceEntityTypeId}
         />
+        <label className="grid gap-2 text-sm font-medium">
+          Campo de búsqueda del lector (opcional)
+          <select name="codeSearchFieldId" value={codeSearchFieldId} onChange={event => setCodeSearchFieldId(event.target.value)}
+            className="h-10 rounded-md border border-input bg-background px-3 text-sm font-normal outline-none ring-ring focus-visible:ring-2">
+            <option value="">Sin lector de códigos</option>
+            {codeSearchFieldId && !sourceFields.some(field => field.id === codeSearchFieldId) ? <option value={codeSearchFieldId} disabled>Campo configurado no disponible</option> : null}
+            {sourceFields.map(field => <option key={field.id} value={field.id}>{field.name}</option>)}
+          </select>
+          <span className="text-xs font-normal text-muted-foreground">El código busca en este campo de texto. La búsqueda manual continúa siendo global; una lectura no selecciona ni guarda.</span>
+          {fieldErrors?.codeSearchFieldId?.map(message => <span key={message} className="text-sm text-destructive">{message}</span>)}
+        </label>
         <EntitySelect
           label="Entidad destino"
           name="targetEntityTypeId"

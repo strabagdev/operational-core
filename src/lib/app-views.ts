@@ -1,3 +1,4 @@
+import { codeSearchField } from "./workflow-code-search";
 import { registerCompositeDefinition } from "./state-update-identity";
 import { Prisma, type AppView, type AppViewType } from "@prisma/client";
 import { z } from "zod";
@@ -347,6 +348,7 @@ const defaultReportTimeFilter = {
 export type AttendanceWorkflowConfig = {
       type: "WORKFLOW";
       workflowKey: "attendance";
+      codeSearch?: { fieldId: string };
       sourceEntityTypeId: string;
       targetEntityTypeId: string;
       personFieldId: string;
@@ -360,6 +362,7 @@ export type AttendanceWorkflowConfig = {
 export type StateUpdateWorkflowConfig = {
   type: "WORKFLOW";
   workflowKey: "state-update";
+  codeSearch?: { fieldId: string };
   sourceEntityTypeId: string;
   targetEntityTypeId: string;
   subjectFieldId: string;
@@ -411,6 +414,7 @@ export function getAppViewInput(formData: FormData) {
       defaultSortFieldId: formData.get("defaultSortFieldId"),
       defaultCheckInOptionId: formData.get("defaultCheckInOptionId") ?? formData.get("presentOptionId"),
       contextFieldIds: formData.getAll("contextFieldIds"),
+      codeSearch: formData.get("codeSearchFieldId") ? { fieldId: formData.get("codeSearchFieldId") } : undefined,
       extraFieldIds: formData.getAll("extraFieldIds"),
       historyMode: formData.get("historyMode"),
       observationFieldId: formData.get("observationFieldId"),
@@ -1016,6 +1020,9 @@ async function validateAppViewConfig({
     const sourceEntityType = await requireEntityType(client, contractId, config.sourceEntityTypeId);
     const targetEntityType = await requireEntityType(client, contractId, config.targetEntityTypeId);
 
+    try { codeSearchField(sourceEntityType.fields, config.codeSearch); }
+    catch { throw new AppViewConfigError("Selecciona un campo de texto activo y buscable de la fuente para el lector.", "codeSearchFieldId"); }
+
     if (targetEntityType.stateUpdateIdentity && (config.workflowKey !== "state-update" || config.uniqueness.mode !== "subject-date-fields")) throw new AppViewConfigError("Esta entidad sólo admite su workflow de identidad compuesta.", "targetEntityTypeId");
     if (config.workflowKey === "attendance") {
       validateAttendanceAppViewFields({
@@ -1033,6 +1040,7 @@ async function validateAppViewConfig({
       return {
         type,
         workflowKey: config.workflowKey,
+        ...(config.codeSearch ? { codeSearch: config.codeSearch } : {}),
         sourceEntityTypeId: config.sourceEntityTypeId,
         targetEntityTypeId: config.targetEntityTypeId,
         personFieldId: config.personFieldId,
@@ -1062,6 +1070,7 @@ async function validateAppViewConfig({
     return {
       type,
       workflowKey: config.workflowKey,
+      ...(config.codeSearch ? { codeSearch: config.codeSearch } : {}),
       sourceEntityTypeId: config.sourceEntityTypeId,
       targetEntityTypeId: config.targetEntityTypeId,
       subjectFieldId: config.subjectFieldId,
@@ -1336,6 +1345,7 @@ const reportConfigInputSchema = z.union([
 ]);
 
 const workflowBaseConfigInputSchema = z.object({
+  codeSearch: z.object({ fieldId: z.string().trim().min(1) }).strict().optional(),
   workflowKey: z.enum(workflowKeys),
   sourceEntityTypeId: z.string().trim().min(1, "Selecciona una entidad fuente."),
   targetEntityTypeId: z.string().trim().min(1, "Selecciona una entidad destino."),
@@ -1790,6 +1800,7 @@ async function requireEntityType(
           isActive: true,
           key: true,
           multiple: true,
+          searchable: true,
           name: true,
           options: {
             select: {

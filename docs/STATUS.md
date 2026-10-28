@@ -336,3 +336,16 @@ cambios posteriores. No acceder/respaldar producción en este cierre. Orden Core
 sin horario del destino. Rollback sólo compatible después de activar. Detalle en STATE_UPDATE y
 `backups/schedule-technical-close/2026-10-26/`. Sin nuevos cambios funcionales/producción/commit/push/
 deploy; pendientes y respaldos previos intactos, V11 pausado, lectura de códigos no iniciada.
+
+## Local configurable code-reader search — 2026-10-27
+
+Optional codeSearch.fieldId now survives the editor/FormData/parser, validation, persistence and API
+projection for Attendance/STATE_UPDATE. Active searchable single TEXT/TEXTAREA source field; no new
+schema or default. GET searchFieldId must match it and is echoed with descriptor; manual global and
+all writes remain unchanged. Current/latest filter the same field. No RUT/tenant-specific rules.
+205 affected tests reused/executed;1 read-only PostgreSQL-local predicate/Prisma-pattern test passed.
+Typecheck/affected lint/diff-check on isolated content; no full suite/build or production. Client197
+focused tests, real Chromium/OPFS with synthetic API/camera; no combined real Core/browser or physical
+Safari/credential proof. Core→Client before optional configuration; no activation authorized here.
+Details: STATE_UPDATE/EXTERNAL_API; durable inventory/patches/checks in
+backups/code-reader-field-search/2026-10-27. All prior pending work preserved; V11 remains paused.

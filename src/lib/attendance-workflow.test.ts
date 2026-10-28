@@ -777,3 +777,22 @@ function existingAttendance({
     ],
   };
 }
+
+describe("Attendance code search field", () => {
+  beforeEach(() => {
+    const view = appView();
+    appViewFindFirst.mockResolvedValue({ ...view, config: { ...view.config, codeSearch: { fieldId: "person_name" } } } as never);
+    entityTypeFindFirst.mockImplementation((async (args: { where?: { id?: string } }) => {
+      const id = (args as { where?: { id?: string } }).where?.id;
+      return id === "people" ? { ...sourceEntityType(), fields: sourceEntityType().fields.map(field => ({ ...field, isActive: true, searchable: true })) } as never : attendanceEntityType() as never;
+    }) as never);
+  });
+  it("performs one limited read on the exact field without selecting or writing attendance", async () => {
+    const result = await getAttendanceWorkflowDay({ appViewId: "view_attendance", contractId: "contract", userId: "user", date: "2026-10-20", search: "TEST", searchFieldId: "person_name" });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.searchFieldId).toBe("person_name");
+    expect(entityRecordFindMany.mock.calls[0][0]?.where).toMatchObject({ entityTypeId: "people", values: { some: { entityFieldId: "person_name", textValue: { contains: "TEST", mode: "insensitive" } } } });
+    expect(tx.entityRecord.create).not.toHaveBeenCalled(); expect(tx.entityRecord.update).not.toHaveBeenCalled();
+  });
+});

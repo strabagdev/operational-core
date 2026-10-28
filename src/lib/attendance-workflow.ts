@@ -1,3 +1,4 @@
+import { requestedCodeSearchField, codeSearchRecordWhere, WorkflowCodeSearchError } from "./workflow-code-search";
 import { Prisma, type EntityFieldType } from "@prisma/client";
 
 import { userCanAccessAppView } from "@/lib/app-view-access";
@@ -60,6 +61,7 @@ type AttendanceField = {
   multiple: boolean;
   required: boolean;
   searchable: boolean;
+  isActive: boolean;
   sortOrder: number;
   type: EntityFieldType;
 };
@@ -99,6 +101,7 @@ export async function getAttendanceWorkflowDay({
   date,
   personRecordId,
   search,
+  searchFieldId,
   userId,
 }: {
   appViewId: string;
@@ -106,6 +109,7 @@ export async function getAttendanceWorkflowDay({
   date: string | null;
   personRecordId?: string | null;
   search?: string | null;
+  searchFieldId?: string | null;
   userId: string;
 }) {
   const parsedDate = parseAttendanceDate(date);
@@ -120,10 +124,16 @@ export async function getAttendanceWorkflowDay({
     return context;
   }
 
+  let codeSearch;
+  try { codeSearch = requestedCodeSearchField(context.context.sourceEntityType.fields, context.context.config.codeSearch, searchFieldId); }
+  catch (error) { if (error instanceof WorkflowCodeSearchError) return { ok: false as const, response: badRequest(error.message, "INVALID_CODE_SEARCH_FIELD") }; throw error; }
+  if (searchFieldId && (!search?.trim() || personRecordId)) return { ok: false as const, response: badRequest("La búsqueda por campo requiere texto y no admite personRecordId.", "INVALID_CODE_SEARCH_QUERY") };
+
   const people = await findAttendancePeople({
     context: context.context,
     personRecordId,
     search,
+    searchFieldId: codeSearch.fieldId,
   });
   const attendances = people.length === 0
     ? []
@@ -143,6 +153,8 @@ export async function getAttendanceWorkflowDay({
     ok: true as const,
     data: {
       appView: context.context.appView,
+      ...(codeSearch.metadata ? { codeSearchField: codeSearch.metadata } : {}),
+      ...(codeSearch.fieldId ? { searchFieldId: codeSearch.fieldId } : {}),
       contextFields: serializeAttendanceContextFields(context.context.contextFields),
       date: parsedDate.value,
       items: people.map((person) => {
@@ -554,10 +566,12 @@ async function findAttendancePeople({
   context,
   personRecordId,
   search,
+  searchFieldId,
 }: {
   context: AttendanceContext;
   personRecordId?: string | null;
   search?: string | null;
+  searchFieldId?: string;
 }) {
   const normalizedPersonRecordId = personRecordId?.trim();
   const normalizedSearch = search?.trim();
@@ -588,7 +602,7 @@ async function findAttendancePeople({
       id: true,
     },
     take: attendanceSearchLimit,
-    where: buildAttendancePeopleSearchWhere({
+    where: searchFieldId ? { entityTypeId: context.sourceEntityType.id, ...codeSearchRecordWhere(searchFieldId, normalizedSearch) } : buildAttendancePeopleSearchWhere({
       entityTypeId: context.sourceEntityType.id,
       fields: context.sourceEntityType.fields,
       query: normalizedSearch,
@@ -832,6 +846,7 @@ async function getAttendanceWorkflowContext({
             },
             required: true,
             searchable: true,
+            isActive: true,
             sortOrder: true,
             type: true,
           },
@@ -868,6 +883,7 @@ async function getAttendanceWorkflowContext({
             },
             required: true,
             searchable: true,
+            isActive: true,
             sortOrder: true,
             type: true,
           },

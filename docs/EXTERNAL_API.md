@@ -1630,3 +1630,26 @@ entidades administradas con SCHEDULE_WRITE_REQUIRES_EDITOR.
 No hay activación productiva ni API paralela de sincronización. El catálogo se administra por
 acciones autorizadas del editor; sus revisiones se preparan en el GET del contexto, no mediante
 una descarga de todas las combinaciones. SQLite v10/epoch2 y outbox existentes en Client.
+
+### Optional configured field search for code readers — local candidate, 2026-10-27
+
+WORKFLOW attendance/state-update config may include `codeSearch: { "fieldId": "source_text_field_id" }`.
+Only a single active searchable TEXT/TEXTAREA source field is supported initially. The ID is stable;
+labels, tenant names and particular credential formats are not rules. No automatic selection/write.
+
+Existing workflow GET routes accept `searchFieldId` together with nonempty `search`. Core validates
+it against the configured field under the existing assignment/user/contract guards. Incompatible IDs,
+missing search text or combined personRecordId/subjectRecordId return a controlled400 response;
+the requested filter is never silently dropped. Manual queries without searchFieldId retain global search.
+Successful field responses include `searchFieldId` and `codeSearchField: { id, key, name, type }`.
+The descriptor also accompanies ordinary reads for preparation/cache; the echo means the field branch ran.
+
+The predicate is case-insensitive literal substring with trim exterior, no RUT/number/format conversion;
+`_`, `%` and backslash are literal characters. Subject and latest matching use the same source field,
+including composite identity. Limits/order/pagination remain unchanged (20 matching subjects online);
+no proof of complete catalog/history/freshness follows from this query. POST bodies, optionId/value
+contracts, expected versions, authorization and idempotency are unchanged. No schema migration.
+
+Core must precede Client; new Client requires the echo and descriptor, while old Clients continue to
+use manual/global search. Feature remains unconfigured in production. Scope and evidence are in
+STATE_UPDATE, «Optional code-reader field search»; physical camera/original credential are not accredited.

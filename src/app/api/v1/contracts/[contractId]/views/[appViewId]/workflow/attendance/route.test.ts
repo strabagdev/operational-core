@@ -108,3 +108,11 @@ function apiAccess() {
     },
   };
 }
+
+it("forwards the optional reader field through the authenticated route", async () => {
+    requireApiContractAccessMock.mockResolvedValue(apiAccess() as never);
+    getAttendanceWorkflowDayMock.mockResolvedValue({ ok: true, data: {} } as never);
+    const response = await GET(new Request("https://synthetic.invalid/api?date=2026-08-22&search=fictional&searchFieldId=stable-source-id"), { params: Promise.resolve({ appViewId: "view_1", contractId: "contract_1" }) });
+    expect(response.status).toBe(200);
+    expect(getAttendanceWorkflowDayMock).toHaveBeenCalledWith(expect.objectContaining({ search: "fictional", searchFieldId: "stable-source-id" }));
+  });

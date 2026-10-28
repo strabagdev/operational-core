@@ -3197,3 +3197,22 @@ function panelFields({ procedureConfig = { targetEntityTypeId: "procedures", rel
     },
   ];
 }
+
+describe("optional code reader configuration", () => {
+  it.each(["attendance", "state-update"])("roundtrips %s editor FormData, validation, persistence and API config parsing", async workflowKey => {
+    entityTypeFindFirst.mockResolvedValueOnce(entityType({ id: "people", fields: [{ id: "search-id", key: "identifier", name: "Identificador", type: "TEXT", isActive: true, searchable: true, multiple: false }] }) as never)
+      .mockResolvedValueOnce(attendanceEntityType() as never);
+    const input = getAppViewInput(formData({ type: "WORKFLOW", workflowKey, sourceEntityTypeId: "people", targetEntityTypeId: "attendance", personFieldId: "person_field", subjectFieldId: "person_field", dateFieldId: "date_field", statusFieldId: "status_field", defaultCheckInOptionId: "present_option", stateFieldIds: ["status_field"], requiredStateFieldIds: ["status_field"], historyMode: "update-current", uniquenessMode: "subject-date", codeSearchFieldId: "search-id" }));
+    expect(input.rawConfig.codeSearch).toEqual({ fieldId: "search-id" });
+    await createAppView("contract_1", "user_1", input);
+    const saved = appViewCreate.mock.calls.at(-1)![0].data.config;
+    expect(saved).toMatchObject({ codeSearch: { fieldId: "search-id" } });
+    expect(parseAppViewConfig({ type: "WORKFLOW", config: saved as Prisma.JsonValue })).toMatchObject({ codeSearch: { fieldId: "search-id" } });
+  });
+  it.each([{ searchable: false }, { isActive: false }, { type: "RELATION" }, { multiple: true }, { id: "foreign" }])("rejects an incompatible or foreign field before persisting", async change => {
+    entityTypeFindFirst.mockResolvedValueOnce(entityType({ id: "people", fields: [{ id: "search-id", key: "identifier", name: "Id", type: "TEXT", isActive: true, searchable: true, multiple: false, ...change }] }) as never)
+      .mockResolvedValueOnce(attendanceEntityType() as never);
+    await expect(createAppView("contract_1", "user_1", getAppViewInput(formData({ type: "WORKFLOW", workflowKey: "attendance", sourceEntityTypeId: "people", targetEntityTypeId: "attendance", personFieldId: "person_field", dateFieldId: "date_field", statusFieldId: "status_field", defaultCheckInOptionId: "present_option", codeSearchFieldId: "search-id" })))).rejects.toThrow("texto activo y buscable");
+    expect(appViewCreate).not.toHaveBeenCalled();
+  });
+});

@@ -1876,3 +1876,28 @@ it("replaying a disabled schedule command repeats the same explicit rejection wi
   expect(prisma.apiIdempotencyKey.create).not.toHaveBeenCalled();
   expect(transaction).not.toHaveBeenCalled();
 });
+
+describe("field-scoped code search reads", () => {
+  beforeEach(() => {
+    appViewFindFirst.mockResolvedValue(appView({ config: { ...stateConfig(), codeSearch: { fieldId: "name_field" } } }) as never);
+  });
+  it("limits subjects and latest to the configured field and echoes the executed branch", async () => {
+    const result = await getStateUpdateWorkflow(query({ search: "EQ_0001", searchFieldId: "name_field" }));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data).toMatchObject({ searchFieldId: "name_field", codeSearchField: { id: "name_field", key: "nombre", type: "TEXT" } });
+    expect(entityRecordFindMany.mock.calls[0][0]?.where).toEqual({ entityTypeId: "equipment", values: { some: { entityFieldId: "name_field", textValue: { contains: "EQ\\_0001", mode: "insensitive" } } } });
+    expect(queryRaw.mock.calls.some(([sql]) => JSON.stringify(sql).includes("search_value"))).toBe(true);
+    expect(tx.entityRecord.create).not.toHaveBeenCalled(); expect(tx.entityRecord.update).not.toHaveBeenCalled();
+  });
+  it("rejects another field or a conflicting record selector before executing record reads", async () => {
+    const invalid = await getStateUpdateWorkflow(query({ search: "test", searchFieldId: "foreign-field" }));
+    expect(invalid.ok).toBe(false); expect(entityRecordFindMany).not.toHaveBeenCalled();
+    const conflicting = await getStateUpdateWorkflow(query({ search: "test", searchFieldId: "name_field", subjectRecordId: "selected" }));
+    expect(conflicting.ok).toBe(false); expect(entityRecordFindMany).not.toHaveBeenCalled();
+  });
+  it("retains the global search branch when no field is requested", async () => {
+    await getStateUpdateWorkflow(query({ search: "test" }));
+    expect(entityRecordFindMany.mock.calls[0][0]?.where).toHaveProperty("OR");
+  });
+});

@@ -30,6 +30,7 @@ export async function GET(
     date: searchParams.get("date"),
     personRecordId: searchParams.get("personRecordId"),
     search: searchParams.get("search"),
+    ...(searchParams.has("searchFieldId") ? { searchFieldId: searchParams.get("searchFieldId") } : {}),
     userId: access.context.user.id,
   });
   timing.mark("workflow_completed");

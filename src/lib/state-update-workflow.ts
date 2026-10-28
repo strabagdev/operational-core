@@ -1,3 +1,4 @@
+import { requestedCodeSearchField, codeSearchRecordWhere, literalCodeSearchText, WorkflowCodeSearchError } from "./workflow-code-search";
 import { applySchedule, parseScheduleReference, resolveSchedule, scheduleConsumer, ScheduleError, type ScheduleConsumer, type ScheduleApplication, type ScheduleReference } from "./state-update-schedules";
 import { serializeApiEntityField } from "./api-entity-serializer";
 import { claimReport, identityContextKey, canonicalReportKey, type CompositeIdentity, type CompositeDefinition } from "./state-update-identity";
@@ -131,6 +132,7 @@ const latestStateUpdatePageSize = 20;
 const latestStateUpdateMaxPageSize = 100;
 
 export function attendanceStateUpdateConfig(config: {
+  codeSearch?: { fieldId: string };
   sourceEntityTypeId: string;
   targetEntityTypeId: string;
   personFieldId: string;
@@ -148,6 +150,7 @@ export function attendanceStateUpdateConfig(config: {
   return {
     type: "WORKFLOW",
     workflowKey: "state-update",
+    ...(config.codeSearch ? { codeSearch: config.codeSearch } : {}),
     sourceEntityTypeId: config.sourceEntityTypeId,
     targetEntityTypeId: config.targetEntityTypeId,
     subjectFieldId: config.personFieldId,
@@ -166,8 +169,8 @@ export function attendanceStateUpdateConfig(config: {
 function stateUpdateTransaction<T>(context: StateUpdateContext, work: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> {
   return context.transaction ? work(context.transaction) : prisma.$transaction(work);
 }
-function compositeLatestWhere(context: StateUpdateContext, search?: string): Prisma.EntityRecordWhereInput {
-  return { entityTypeId: context.targetEntityType.id, id: { in: context.composite?.recordIds ?? [] }, ...(search ? { outgoingRelations: { some: { sourceFieldId: context.config.subjectFieldId, targetRecord: { displayName: { contains: search, mode: "insensitive" } } } } } : {}) };
+function compositeLatestWhere(context: StateUpdateContext, search?: string, searchFieldId?: string): Prisma.EntityRecordWhereInput {
+  return { entityTypeId: context.targetEntityType.id, id: { in: context.composite?.recordIds ?? [] }, ...(search ? { outgoingRelations: { some: { sourceFieldId: context.config.subjectFieldId, targetRecord: searchFieldId ? { entityTypeId: context.sourceEntityType.id, ...codeSearchRecordWhere(searchFieldId, search) } : { displayName: { contains: search, mode: "insensitive" } } } } } : {}) };
 }
 function compositeMetadata(context: StateUpdateContext) {
   return { identityDefinition: { definitionId: context.composite!.definition.id, version: 1 }, identityContext: context.composite!.identity ?? null, contextRequired: !context.composite!.identity,
@@ -238,6 +241,7 @@ export async function getStateUpdateWorkflow({
   page,
   pageSize,
   search,
+  searchFieldId,
   subjectRecordId,
   identity,
   userId,
@@ -248,6 +252,7 @@ export async function getStateUpdateWorkflow({
   page?: string | null;
   pageSize?: string | null;
   search?: string | null;
+  searchFieldId?: string | null;
   subjectRecordId?: string | null;
   identity?: unknown;
   userId: string;
@@ -257,6 +262,11 @@ export async function getStateUpdateWorkflow({
   if (!context.ok) {
     return context;
   }
+
+  let codeSearch;
+  try { codeSearch = requestedCodeSearchField(context.context.sourceEntityType.fields, context.context.config.codeSearch, searchFieldId); }
+  catch (error) { if (error instanceof WorkflowCodeSearchError) return { ok: false as const, response: badRequest(error.message, "INVALID_CODE_SEARCH_FIELD") }; throw error; }
+  if (searchFieldId && (!search?.trim() || subjectRecordId)) return { ok: false as const, response: badRequest("La búsqueda por campo requiere texto y no admite subjectRecordId.", "INVALID_CODE_SEARCH_QUERY") };
 
   const parsedDate = parseOptionalDate(date, context.context.config);
 
@@ -279,6 +289,7 @@ export async function getStateUpdateWorkflow({
   const subjects = contextRequired ? [] : await findSubjects({
     context: context.context,
     search,
+    searchFieldId: codeSearch.fieldId,
     subjectRecordId,
   });
   const current = subjects.length === 0 || context.context.config.uniqueness.mode === "none"
@@ -295,6 +306,8 @@ export async function getStateUpdateWorkflow({
     ok: true as const,
     data: {
       appView: context.context.appView,
+      ...(codeSearch.metadata ? { codeSearchField: codeSearch.metadata } : {}),
+      ...(codeSearch.fieldId ? { searchFieldId: codeSearch.fieldId } : {}),
       workflow: workflowMetadata(context.context),
       date: parsedDate.value,
       dateField: context.context.config.dateFieldId
@@ -323,6 +336,7 @@ export async function getStateUpdateWorkflow({
         page: pagination.page,
         pageSize: pagination.pageSize,
         search,
+        searchFieldId: codeSearch.fieldId,
       }),
       summary: await getStateUpdateSummary({
         context: context.context,
@@ -1852,10 +1866,12 @@ function appendExistingValues(fields: StateUpdateField[], existing: ExistingStat
 async function findSubjects({
   context,
   search,
+  searchFieldId,
   subjectRecordId,
 }: {
   context: StateUpdateContext;
   search?: string | null;
+  searchFieldId?: string;
   subjectRecordId?: string | null;
 }) {
   const normalizedSubjectRecordId = subjectRecordId?.trim();
@@ -1878,7 +1894,7 @@ async function findSubjects({
     orderBy: [{ displayName: "asc" }, { id: "asc" }],
     select: { displayName: true, id: true },
     take: subjectSearchLimit,
-    where: buildEntityRecordSearchWhere({
+    where: searchFieldId ? { entityTypeId: context.sourceEntityType.id, ...codeSearchRecordWhere(searchFieldId, normalizedSearch) } : buildEntityRecordSearchWhere({
       entityTypeId: context.sourceEntityType.id,
       fields: context.sourceEntityType.fields,
       query: normalizedSearch,
@@ -1891,11 +1907,13 @@ async function getLatestStateUpdates({
   page,
   pageSize,
   search,
+  searchFieldId,
 }: {
   context: StateUpdateContext;
   page: number;
   pageSize: number;
   search?: string | null;
+  searchFieldId?: string;
 }) {
   if (!context.config.dateFieldId) {
     return {
@@ -1915,11 +1933,13 @@ async function getLatestStateUpdates({
     countLatestStateUpdates({
       context,
       search: normalizedSearch,
+      searchFieldId,
     }),
     latestStateUpdateIds({
       context,
       pageSize,
       search: normalizedSearch,
+      searchFieldId,
       skip,
     }),
   ]);
@@ -2006,11 +2026,13 @@ async function getStateUpdateSummary({
 async function countLatestStateUpdates({
   context,
   search,
+  searchFieldId,
 }: {
   context: StateUpdateContext;
   search?: string;
+  searchFieldId?: string;
 }) {
-  if (context.composite) return prisma.entityRecord.count({ where: compositeLatestWhere(context, search) });
+  if (context.composite) return prisma.entityRecord.count({ where: compositeLatestWhere(context, search, searchFieldId) });
   if (!context.config.dateFieldId) {
     return 0;
   }
@@ -2028,7 +2050,7 @@ async function countLatestStateUpdates({
       AND order_value."entityFieldId" = ${context.config.dateFieldId}
     WHERE record."entityTypeId" = ${context.targetEntityType.id}
       AND order_value."dateValue" IS NOT NULL
-      ${latestStateUpdateSearchSql(search)}
+      ${latestStateUpdateSearchSql(search, searchFieldId)}
   `);
 
   return Number(rows[0]?.total ?? 0);
@@ -2038,18 +2060,20 @@ async function latestStateUpdateIds({
   context,
   pageSize,
   search,
+  searchFieldId,
   skip,
 }: {
   context: StateUpdateContext;
   pageSize: number;
   search?: string;
+  searchFieldId?: string;
   skip: number;
 }) {
   if (!context.config.dateFieldId) {
     return [];
   }
 
-  if (context.composite) return (await prisma.entityRecord.findMany({ where: compositeLatestWhere(context, search), orderBy: { id: "asc" }, skip, take: pageSize, select: { id: true } })).map(row => row.id);
+  if (context.composite) return (await prisma.entityRecord.findMany({ where: compositeLatestWhere(context, search, searchFieldId), orderBy: { id: "asc" }, skip, take: pageSize, select: { id: true } })).map(row => row.id);
   const rows = await prisma.$queryRaw<Array<{ id: string }>>(Prisma.sql`
     SELECT record."id"
     FROM "EntityRecord" record
@@ -2063,7 +2087,7 @@ async function latestStateUpdateIds({
       AND order_value."entityFieldId" = ${context.config.dateFieldId}
     WHERE record."entityTypeId" = ${context.targetEntityType.id}
       AND order_value."dateValue" IS NOT NULL
-      ${latestStateUpdateSearchSql(search)}
+      ${latestStateUpdateSearchSql(search, searchFieldId)}
     ORDER BY order_value."dateValue" DESC, record."id" ASC
     OFFSET ${skip}
     LIMIT ${pageSize}
@@ -2072,7 +2096,8 @@ async function latestStateUpdateIds({
   return rows.map((row) => row.id);
 }
 
-function latestStateUpdateSearchSql(search?: string) {
+function latestStateUpdateSearchSql(search?: string, searchFieldId?: string) {
+  if (search && searchFieldId) return Prisma.sql`AND EXISTS (SELECT 1 FROM "EntityValue" search_value WHERE search_value."entityRecordId" = subject_record."id" AND search_value."entityFieldId" = ${searchFieldId} AND search_value."textValue" ILIKE ${`%${literalCodeSearchText(search)}%`})`;
   return search
     ? Prisma.sql`AND subject_record."displayName" ILIKE ${`%${search}%`}`
     : Prisma.empty;
