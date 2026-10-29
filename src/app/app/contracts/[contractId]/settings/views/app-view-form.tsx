@@ -1,5 +1,7 @@
 "use client";
 
+import {SubjectPresentationEditor} from "./subject-presentation-editor";
+
 import { useActionState, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type { AppViewType } from "@prisma/client";
@@ -221,6 +223,7 @@ export function AppViewForm({
       : entityTypes[0]?.id ?? ""),
   );
   const targetEntityType = entityTypes.find((entityType) => entityType.id === targetEntityTypeId);
+  const [subjectPresentation,setSubjectPresentation]=useState<unknown>(()=>{const restored=valueFromState(state,"subjectPresentation");if(state.values && Object.prototype.hasOwnProperty.call(state.values,"subjectPresentation")){if(!restored)return undefined;try{return JSON.parse(restored);}catch{return restored;}}return initialValues?.config.type==="WORKFLOW"?initialValues.config.subjectPresentation:undefined;});
   const [codeSearchFieldId, setCodeSearchFieldId] = useState(valueFromState(state, "codeSearchFieldId") || (initialValues?.config.type === "WORKFLOW" ? initialValues.config.codeSearch?.fieldId ?? "" : ""));
   const [workflowKey, setWorkflowKey] = useState(
     valueFromState(state, "workflowKey") ||
@@ -823,6 +826,8 @@ export function AppViewForm({
           setTargetEntityTypeId={setTargetEntityTypeId}
           setUniquenessMode={setUniquenessMode}
           setWorkflowKey={setWorkflowKey}
+          subjectPresentation={subjectPresentation}
+          setSubjectPresentation={setSubjectPresentation}
           codeSearchFieldId={codeSearchFieldId}
           setCodeSearchFieldId={setCodeSearchFieldId}
           sourceEntityTypeId={sourceEntityTypeId}
@@ -3714,6 +3719,8 @@ function ConfigFields({
   setTargetEntityTypeId,
   setUniquenessMode,
   setWorkflowKey,
+  subjectPresentation,
+  setSubjectPresentation,
   codeSearchFieldId,
   setCodeSearchFieldId,
   sourceEntityTypeId,
@@ -3797,6 +3804,8 @@ function ConfigFields({
   setTargetEntityTypeId: (value: string) => void;
   setUniquenessMode: (value: string) => void;
   setWorkflowKey: (value: string) => void;
+  subjectPresentation: unknown;
+  setSubjectPresentation: (value:unknown)=>void;
   codeSearchFieldId: string;
   setCodeSearchFieldId: (value: string) => void;
   sourceEntityTypeId: string;
@@ -3832,6 +3841,7 @@ function ConfigFields({
           value={sourceEntityTypeId}
           errors={fieldErrors?.sourceEntityTypeId}
         />
+        <SubjectPresentationEditor value={subjectPresentation} onChange={setSubjectPresentation} fields={entityTypes.find(entity=>entity.id===sourceEntityTypeId)?.fields??[]} errors={fieldErrors?.subjectPresentation}/>
         <label className="grid gap-2 text-sm font-medium">
           Campo de búsqueda del lector (opcional)
           <select name="codeSearchFieldId" value={codeSearchFieldId} onChange={event => setCodeSearchFieldId(event.target.value)}

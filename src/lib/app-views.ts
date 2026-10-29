@@ -1,3 +1,5 @@
+import {buildSubjectPresentationDefinition} from "./subject-presentation-core";
+import {parseSubjectPresentation,type SubjectPresentationConfig} from "./subject-presentation";
 import { codeSearchField } from "./workflow-code-search";
 import { registerCompositeDefinition } from "./state-update-identity";
 import { Prisma, type AppView, type AppViewType } from "@prisma/client";
@@ -348,7 +350,8 @@ const defaultReportTimeFilter = {
 export type AttendanceWorkflowConfig = {
       type: "WORKFLOW";
       workflowKey: "attendance";
-      codeSearch?: { fieldId: string };
+      subjectPresentation?: SubjectPresentationConfig;
+  codeSearch?: { fieldId: string };
       sourceEntityTypeId: string;
       targetEntityTypeId: string;
       personFieldId: string;
@@ -362,6 +365,7 @@ export type AttendanceWorkflowConfig = {
 export type StateUpdateWorkflowConfig = {
   type: "WORKFLOW";
   workflowKey: "state-update";
+  subjectPresentation?: SubjectPresentationConfig;
   codeSearch?: { fieldId: string };
   sourceEntityTypeId: string;
   targetEntityTypeId: string;
@@ -414,6 +418,8 @@ export function getAppViewInput(formData: FormData) {
       defaultSortFieldId: formData.get("defaultSortFieldId"),
       defaultCheckInOptionId: formData.get("defaultCheckInOptionId") ?? formData.get("presentOptionId"),
       contextFieldIds: formData.getAll("contextFieldIds"),
+      subjectPresentation: formData.has("subjectPresentation") && formData.get("subjectPresentation") ? JSON.parse(String(formData.get("subjectPresentation"))) : undefined,
+      subjectPresentationSpecified: formData.has("subjectPresentation"),
       codeSearch: formData.get("codeSearchFieldId") ? { fieldId: formData.get("codeSearchFieldId") } : undefined,
       codeSearchSpecified: formData.has("codeSearchFieldId"),
       extraFieldIds: formData.getAll("extraFieldIds"),
@@ -589,9 +595,10 @@ export async function updateAppView(
 
   const config = await validateAppViewConfig({
     contractId: authorized.contract.id,
-    rawConfig: !input.rawConfig.codeSearchSpecified && input.common.type === "WORKFLOW"
-      ? { ...input.rawConfig, codeSearch: (authorized.appView.config as {codeSearch?:{fieldId:string}})?.codeSearch }
-      : input.rawConfig,
+    rawConfig: input.common.type === "WORKFLOW" ? { ...input.rawConfig,
+      ...(!input.rawConfig.codeSearchSpecified ? {codeSearch:(authorized.appView.config as {codeSearch?:{fieldId:string}})?.codeSearch}:{}),
+      ...(!input.rawConfig.subjectPresentationSpecified ? {subjectPresentation:(authorized.appView.config as {subjectPresentation?:SubjectPresentationConfig})?.subjectPresentation}:{})
+    } : input.rawConfig,
     type: input.common.type,
   });
 
@@ -1024,6 +1031,8 @@ async function validateAppViewConfig({
     const sourceEntityType = await requireEntityType(client, contractId, config.sourceEntityTypeId);
     const targetEntityType = await requireEntityType(client, contractId, config.targetEntityTypeId);
 
+    try { buildSubjectPresentationDefinition(config.subjectPresentation, sourceEntityType); }
+    catch { throw new AppViewConfigError("Selecciona campos activos y compatibles del origen para la presentación.", "subjectPresentation"); }
     try { codeSearchField(sourceEntityType.fields, config.codeSearch); }
     catch { throw new AppViewConfigError("Selecciona un campo de texto activo y buscable de la fuente para el lector.", "codeSearchFieldId"); }
 
@@ -1045,6 +1054,7 @@ async function validateAppViewConfig({
         type,
         workflowKey: config.workflowKey,
         ...(config.codeSearch ? { codeSearch: config.codeSearch } : {}),
+      ...(config.subjectPresentation ? {subjectPresentation:config.subjectPresentation}:{}),
         sourceEntityTypeId: config.sourceEntityTypeId,
         targetEntityTypeId: config.targetEntityTypeId,
         personFieldId: config.personFieldId,
@@ -1075,6 +1085,7 @@ async function validateAppViewConfig({
       type,
       workflowKey: config.workflowKey,
       ...(config.codeSearch ? { codeSearch: config.codeSearch } : {}),
+      ...(config.subjectPresentation ? {subjectPresentation:config.subjectPresentation}:{}),
       sourceEntityTypeId: config.sourceEntityTypeId,
       targetEntityTypeId: config.targetEntityTypeId,
       subjectFieldId: config.subjectFieldId,
@@ -1349,6 +1360,7 @@ const reportConfigInputSchema = z.union([
 ]);
 
 const workflowBaseConfigInputSchema = z.object({
+  subjectPresentation: z.custom<SubjectPresentationConfig>(value=>{try{return !!parseSubjectPresentation(value);}catch{return false;}}).optional(),
   codeSearch: z.object({ fieldId: z.string().trim().min(1) }).strict().optional(),
   workflowKey: z.enum(workflowKeys),
   sourceEntityTypeId: z.string().trim().min(1, "Selecciona una entidad fuente."),

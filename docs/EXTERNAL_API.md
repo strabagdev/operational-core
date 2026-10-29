@@ -1700,3 +1700,25 @@ pueden provocar error de lectura hasta renovar metadata/reintentar; conservar Co
 lecturas en vuelo o retroceder Client primero. No migración/configuración/activación nueva; Client nuevo
 elige lotes automáticamente donde ya se preparaba current y existe capability. No cambia cuándo Inicio
 prepara todas las experiencias. No altera horarios, pendientes ni contratos de escritura.
+
+
+## Lectura opcional de sujetos por experiencia — subjectPresentation v1 (LOCAL, NO ACTIVADO)
+
+Las respuestas GET Attendance/STATE_UPDATE pueden incluir subjectPresentation: descriptor v1 con
+sourceEntityTypeId, config {version:1,titleFieldIds,secondaryFieldIds}, fields y fingerprint. Cada person/
+subject seleccionado puede incluir presentation {version:1,subjectId,fingerprint,sourceUpdatedAt?,
+capturedAt?,cells:[{fieldId,status,value?}]}. status distingue value/empty/unavailable/inaccessible.
+Valores SELECT son canónicos con labels en descriptor; RELATION contiene etiquetas autorizadas, nunca
+se solicita otra API por fila. La proyección es de lectura, no un registro ni permiso/identidad nueva.
+subjectPresentationIssue comunica degradación visual segura. Sin config no se enriquece la respuesta.
+
+Los comandos, query params, búsqueda/paginación y guardado existentes no cambian. Datos visuales
+jamás se agregan a clientRequestId/overwrite/baseUpdatedAt ni snapshots de intención. No supone
+cobertura completa/frescura y no sustituye displayName durable. Compatibilidad/validación y límites en
+STATE_UPDATE, «subjectPresentation v1». Sin migración, activación o configuración productiva.
+
+
+Cierre de convivencia29-10: el endpoint current por lotes también aplica withSubjectPresentation sobre
+los sujetos resueltos autorizados. Descriptor/proyección idénticos al camino individual (salvo instante
+de captura), preservando evento/null y recibo del lote. No altera búsquedas, escrituras ni permisos;
+regresión PostgreSQL real local RED→GREEN. Detalle en STATE_UPDATE,cierre de convivencia29-10.

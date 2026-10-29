@@ -379,3 +379,33 @@ Lectores antiguos offline no conocen reglas: no basta actualizar service worker.
 de outbox. Attendance/STATE_UPDATE solamente; RECORDS/RELATION/REPORT/PANEL continúan pendientes.
 Inventario/parches/checks/tiempos: backups/workflow-search-comparison-close/2026-10-28/.402 exclusiones,
 prefijos documentales y demás pendientes preservados. Sin migración/commit/push/deploy; V11 pausado.
+
+
+## subjectPresentation — candidato local — 2026-10-28
+
+Core/editor + Client permiten título y secundarios por IDs ordenados del origen en Attendance y
+STATE_UPDATE; enriquecimiento autorizado por lote, caché visual scoped en Client y fallback explícito.
+No modifica displayName, campos globales, búsqueda, registros ni payloads/intenciones existentes.
+257 pruebas focalizadas y 2 PostgreSQL locales aprobadas; typecheck/lint afectados registrados.
+Componente editor Chromium aislado y renderers Client con API sintética, sin acreditación Safari físico
+ni Core+navegador integrados. Documentación: STATE_UPDATE y EXTERNAL_API. Respaldo verificable:
+backups/subject-presentation/2026-10-28/. Publicación futura Core → Client, sin activar ahora; no usar
+editor anterior para guardar la nueva clave tras rollback. Sin esquema/dependencias/migración/producción,
+commit, push o deploy. Pendientes previos preservados; V11 pausado.
+
+
+## subjectPresentation — cierre local sobre current por lotes, SIN PUBLICAR — 2026-10-29
+
+Reconstruido sobre Core293d591 y Client6fdff90, conservando confirmación/borradores Attendance,
+optimización de Inicio y current por lotes. Ajuste acotado:el lector Core por lotes agrega la misma
+proyección visual que el individual. PostgreSQL RED→GREEN;86regresiones Core+2PostgreSQL locales,
+135casos Client únicos+4compatibilidad, SQLite con reapertura individual/batch y conflictos intactos.
+Typecheck/lint afectados y builds habituales PASS; artefacto local API pública,epoch2,index/sw y
+lector precacheado verificados. Editor/componentes visuales sin cambios reutilizan evidencia28-10;
+sin suites completas,navegador,cámara,OPFS/Safari nuevos ni acceso productivo. Los4fallos preexistentes
+de comparación siguen documentados. Detalle y límites en STATE_UPDATE,cierre de convivencia29-10.
+Core→Client; configurar después con autorización. Rollback pierde enriquecimiento; no editar una
+AppView configurada con editor antiguo. Sin migraciones,namespace o payloads nuevos.
+Inventario/parches/checks verificables:backups/subject-presentation-close/2026-10-29/.
+402exclusiones y pendientes ajenos preservados. Continúan separados la interrupción11/13 sin causa
+y la preparación de todas las experiencias al volver a Inicio. Sin publicación/activación. V11 pausado.

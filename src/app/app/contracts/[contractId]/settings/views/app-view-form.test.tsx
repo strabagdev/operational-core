@@ -2213,3 +2213,7 @@ it("keeps the configured reader field in the submitted select when metadata is u
  const select=html.match(/<select[^>]*name="codeSearchFieldId"[^>]*>[\s\S]*?<\/select>/)![0];
  const option=select.match(/<option[^>]*value="old-search-id"[^>]*>/)![0];expect(option).toContain('selected=""');expect(option).not.toContain("disabled");
 });
+it("preserves an explicit presentation clear when restoring editor validation errors",()=>{
+ const html=renderToStaticMarkup(<AppViewForm action={async()=>({success:true})} submitLabel="Guardar" entityTypes={entityTypes} initialActionState={{success:false,message:"Corrige otro campo",values:{subjectPresentation:""}}} initialValues={{active:true,name:"Sintética",slug:"synthetic",sortOrder:0,type:"WORKFLOW",config:{type:"WORKFLOW",workflowKey:"attendance",sourceEntityTypeId:"people",targetEntityTypeId:"attendance",personFieldId:"person_field",dateFieldId:"date_field",statusFieldId:"status_field",defaultCheckInOptionId:"present_option",contextFieldIds:[],subjectPresentation:{version:1,titleFieldIds:["previous"],secondaryFieldIds:[]}}}}/>);
+ expect(hiddenInputValue(html,"subjectPresentation")).toBe("");expect(html).not.toContain('value="{&quot;version&quot;:1,&quot;titleFieldIds&quot;:[&quot;previous&quot;]');
+});

@@ -1,3 +1,4 @@
+import {withSubjectPresentation} from "./subject-presentation-core";
 import { workflowSearchMetadata, usesWorkflowSearchComparison, workflowSearchPredicate, workflowSubjectsSql } from "./workflow-search-comparison";
 import { SearchComparisonError } from "./search-comparison";
 import { requestedCodeSearchField, codeSearchRecordWhere, literalCodeSearchText, WorkflowCodeSearchError } from "./workflow-code-search";
@@ -314,7 +315,7 @@ export async function getStateUpdateWorkflow({
 
   return {
     ok: true as const,
-    data: {
+    data: await withSubjectPresentation({
       appView: context.context.appView,
       searchComparison,
       ...(codeSearch.metadata ? { codeSearchField: codeSearch.metadata } : {}),
@@ -354,7 +355,7 @@ export async function getStateUpdateWorkflow({
         context: context.context,
         date: parsedDate.date,
       }),
-    },
+    }, context.context, contractId),
   };
 }
 
@@ -416,7 +417,7 @@ export async function getStateUpdateCurrentBatch(input: {
   }
   const policy = context.schedulePolicy;
   const scheduleResolution = policy ? await resolveSchedule(prisma,input.contractId,policy,date.value ?? undefined,context.composite?.identity?.values[policy.sourceFieldId]) : undefined;
-  return { ok: true as const, data: {
+  return { ok: true as const, data: await withSubjectPresentation({
     appView: context.appView, contractId: input.contractId, currentBatchCapabilities: capabilities,
     currentBatch: { version: 1, requestedSubjectIds: input.subjectRecordIds, results },
     workflow: workflowMetadata(context), date: date.value,
@@ -425,7 +426,7 @@ export async function getStateUpdateCurrentBatch(input: {
     subjectEntityType: {id:context.sourceEntityType.id,name:context.sourceEntityType.name},
     targetEntityType: {id:context.targetEntityType.id,name:context.targetEntityType.name},
     ...(context.composite ? compositeMetadata(context) : {}), ...(policy ? {schedulePolicy:policy,scheduleResolution} : {}), subjects: items,
-  } };
+  }, context, input.contractId) };
 }
 
 export async function saveStateUpdateWorkflow({

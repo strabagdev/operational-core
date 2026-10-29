@@ -1,3 +1,4 @@
+import {withSubjectPresentation} from "./subject-presentation-core";
 import { workflowSearchMetadata, usesWorkflowSearchComparison, workflowSubjectsSql } from "./workflow-search-comparison";
 import { SearchComparisonError } from "./search-comparison";
 import { requestedCodeSearchField, codeSearchRecordWhere, WorkflowCodeSearchError } from "./workflow-code-search";
@@ -161,7 +162,7 @@ export async function getAttendanceWorkflowDay({
 
   return {
     ok: true as const,
-    data: {
+    data: await withSubjectPresentation({
       appView: context.context.appView,
       searchComparison,
       ...(codeSearch.metadata ? { codeSearchField: codeSearch.metadata } : {}),
@@ -214,7 +215,7 @@ export async function getAttendanceWorkflowDay({
         id: context.context.targetEntityType.id,
         name: context.context.targetEntityType.name,
       },
-    },
+    }, context.context, contractId),
   };
 }
 

@@ -703,3 +703,84 @@ pueden provocar error de lectura hasta renovar metadata/reintentar; conservar Co
 lecturas en vuelo o retroceder Client primero. No migración/configuración/activación nueva; Client nuevo
 elige lotes automáticamente donde ya se preparaba current y existe capability. No cambia cuándo Inicio
 prepara todas las experiencias. No altera horarios, pendientes ni contratos de escritura.
+
+
+## subjectPresentation v1 — IMPLEMENTADO LOCALMENTE, SIN ACTIVAR — 2026-10-28
+
+Attendance y STATE_UPDATE admiten AppView.config.subjectPresentation opcional v1, con titleFieldIds
+(1–8) y secondaryFieldIds (0–12), orden explícito e IDs estables del origen. El editor compartido añade,
+ordena y retira campos compatibles activos; el parser conserva la clave si el formulario no la incluye,
+y sólo la elimina ante retirada explícita. El guardado no reescribe registros, displayName ni permisos.
+«Mostrar en Cliente» es preferencia visual, no ACL; se permite seleccionar explícitamente un campo
+activo sin modificar esa preferencia. Se mantienen autorizaciones reales de AppView/contrato/origen.
+
+subject-presentation-core.ts agrega sólo lectura después del buscador/paginación existentes. Consulta
+por lote los sujetos y relaciones, y verifica entidades relacionadas activas del mismo contrato/tipo.
+Serializa valores tipados y etiquetas autorizadas, sin consultas por fila. Relaciones simples/múltiples,
+SELECT y MULTISELECT conservan valores/IDs; una relación inaccesible no filtra su etiqueta. Fallo visual
+no elimina datos ni bloquea la operación legacy: devuelve limitación segura. Descriptor/proyección v1
+con fingerprint, sourceUpdatedAt/capturedAt; no contienen autorización ni forman parte del comando.
+Ninguna ruta POST ni contrato de identidad/intención/sincronización se modifica. Sin migraciones.
+
+257 pruebas focalizadas + 2 integraciones PostgreSQL reales locales: editor guardar/reabrir, omisión/
+retirada, valores tipados y relaciones simples/múltiples, búsquedas manual/dirigida, acceso denegado y
+registros/configuración del origen intactos. Fixtures propios eliminados. Componente editor real en
+Chromium aislado (selección/orden/serialización), transporte API del Client sintético, no navegador
+Core autenticado. Typecheck y lint afectados registrados. Sin suite completa ni build de cierre Core.
+
+Publicación futura Core → Client. Core nuevo mantiene Client publicado; los datos aditivos se ignoran.
+Client nuevo admite metadata vieja con fallback visual explícito; no hay nuevo formato de intención.
+No guardar AppViews configuradas con editor anterior tras rollback: no conserva la clave nueva.
+Configuración no activada, producción/Misceláneos intactos. Evidencia e inventario reconstruible:
+backups/subject-presentation/2026-10-28/. V11 pausado.
+
+
+## subjectPresentation — cierre de convivencia sobre HEAD actuales, SIN PUBLICAR — 2026-10-29
+
+Candidato reconstruido sobre Core293d59117c61d5d7c087c95110276a7581904310 y
+Client6fdff907992029cff0f0abff929a00c118d2b0aa. Preserva confirmación/comando completo y borradores
+Attendance, agrupación de preparación/lecturas de Inicio y current por lotes. No cambia displayName,
+búsquedas, selección de current, identidad, permisos ni contratos de escritura/intención.
+
+Único ajuste funcional de integración: getStateUpdateCurrentBatch reutiliza withSubjectPresentation,
+igual que la lectura individual; enriquece sólo los sujetos autorizados del lote. Sin configuración
+retorna el mismo objeto sin consultas visuales. Con configuración resuelve sujetos/relaciones por
+conjuntos; no introduce peticiones por fila ni modifica evento/null, resultados o fingerprint del lote.
+La regresión PostgreSQL local fue RED por descriptor/proyección ausentes y GREEN tras ese enlace.
+
+Validación nueva:86 regresiones Core +2 PostgreSQL locales;135 casos Client únicos de integración y
+convivencia (incluyen14 del archivo SQLite final),4 de compatibilidad con adaptador publicado6fdff90.
+Dos caminos current, individual y batch: título/orden/SELECT/RELATION después de reapertura SQLite,
+current=null confirmado, conflicto/outbox/autorización/requestId intactos e integrity_check=ok.
+Es sqlite3 real en disco con transporte sintético, no reapertura Chrome/OPFS o Safari nueva. Los2casos
+PostgreSQL usan lectores reales y sólo fixtures propios; URL y destino real validados como locales,
+limpieza acreditada. Preparación completa y disponibilidad visual se comprueban separadamente.
+Typecheck/lint afectados PASS; builds habituales Core/Turbopack32.494s y Client/Metro9.740s PASS,
+solapados. API efectiva del artefacto local https://web.opco.cl; index/sw coinciden con
+entry-5f71059bd29ab64b75ec452473a5fbed.js, epoch2 y lector JS/WASM locales precacheados conservados.
+Build no es despliegue ni validación de dispositivos. Variables Core ficticias, sin base real en build.
+
+Se reutilizan editor/serializador/proyector y evidencia Chromium1440/1024/390 de las mismas piezas
+visuales del respaldo28-10; no se repiten suites, cámara ni navegador. Nuevos controles de convivencia
+cubren handlers/borradores actuales; no se afirma una nueva revisión visual integrada con Core.
+Los4fallos preexistentes de state-update-prewarm-current-investigation.test.ts siguen identificados
+(mocks sin searchComparison, mismo archivo/hashes de HEAD), sin corregirlos/ocultarlos ni declarar
+suite completa PASS. Dos intentos iniciales del fixture nuevo usaron scope/definición inconsistentes;
+se corrigió sólo el fixture, manteniendo sus aserciones y timeouts. El primer intento PostgreSQL no
+pudo iniciar en sandbox; la ejecución local autorizada obtuvo el RED funcional y luego2/2GREEN.
+
+Publicar Core→Client; configuración en etapa posterior expresamente autorizada. Core nuevo/Client
+publicado conserva operaciones y presentación legacy. Client nuevo con metadata vieja/incompatible
+usa fallback visual explícito; no inventa labels ni completa cobertura por una fila o ACK. Viejos
+runtimes pueden degradar la metadata visual al refrescar: no alteran el formato de intenciones, pero
+no se promete reemplazarlos mediante SW. Rollback pierde presentación; no guardar AppViews ya
+configuradas con un editor antiguo que no conserva subjectPresentation. Capacidades current por
+lotes y su política de rollback publicada permanecen; no revertirlas incidentalmente. Sin migración,
+configuración, activación, namespace o dependencias nuevas. SQLitev10/epoch2 conservados.
+
+Respaldo final:backups/subject-presentation-close/2026-10-29/ (inventario/parches/hashes/checks/CLOSE).
+Mantener separados:interrupción11/13,runId prewarm-1793283039040-2,sin causa confirmada; reentrada a
+Inicio sigue preparando todas las experiencias. No se corrigen aquí.402exclusiones y pendientes
+ajenos preservados; respaldo original intacto. Sin producción,Railway,commit,push,deploy o activación.
+Safari físico,offline frío de navegador/sync de esta proyección y auditoría general siguen pendientes.
+V11 pausado.

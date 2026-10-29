@@ -1,0 +1,52 @@
+import {beforeAll,afterAll,it,expect,describe} from "vitest";
+import {randomUUID} from "node:crypto";
+import {prisma} from "./prisma";
+import {createAppView,updateAppView,getAppViewInput,getAppViewAdminData,parseAppViewConfig} from "./app-views";
+import {getStateUpdateWorkflow,getStateUpdateCurrentBatch} from "./state-update-workflow";
+import {getAttendanceWorkflowDay} from "./attendance-workflow";
+import {renderToStaticMarkup} from "react-dom/server";
+import {createElement} from "react";
+import {AppViewForm} from "../app/app/contracts/[contractId]/settings/views/app-view-form";
+const suite=process.env.SUBJECT_PRESENTATION_PG_INTEGRATION==="1"?describe.sequential:describe.skip;
+const prefix="presentation_"+randomUUID().slice(0,8),id=(s:string)=>prefix+"_"+s;
+let connected=false;let attendance="",state="";
+const presentation={version:1 as const,titleFieldIds:[id("given"),id("family")],secondaryFieldIds:[id("code"),id("choice"),id("role"),id("single-role")]};
+function viewForm(kind:"attendance"|"state-update",include=true){const fd=new FormData();for(const[k,v]of Object.entries({name:"Experiencia sintética "+kind,slug:kind+"-"+prefix.replaceAll("_","-"),type:"WORKFLOW",workflowKey:kind,sourceEntityTypeId:id("source"),targetEntityTypeId:id("events"),personFieldId:id("subject"),subjectFieldId:id("subject"),dateFieldId:id("date"),statusFieldId:id("status"),defaultCheckInOptionId:id("ok"),historyMode:"update-current",uniquenessMode:"subject-date",active:"true",codeSearchFieldId:id("code")}))fd.set(k,v);fd.append("stateFieldIds",id("status"));if(include)fd.set("subjectPresentation",JSON.stringify(presentation));return fd;}
+suite("subject presentation real local PostgreSQL",()=>{
+ beforeAll(async()=>{
+  const u=new URL(process.env.DATABASE_URL??"");if(u.hostname!=="127.0.0.1"||u.port!=="5432"||u.pathname!=="/opco_development"||decodeURIComponent(u.username)!=="opco_dev")throw Error("LOCAL_DATABASE_REQUIRED");const [dest]=await prisma.$queryRaw<{database:string;role:string;address:string}[]>`SELECT current_database() AS database,current_user AS role,inet_server_addr()::text AS address`;expect(dest).toEqual({database:"opco_development",role:"opco_dev",address:"127.0.0.1/32"});connected=true;
+  await prisma.organization.create({data:{id:id("org"),name:"Organización sintética",slug:id("org")}});await prisma.user.create({data:{id:id("user"),email:id("user")+"@example.invalid",passwordHash:"no-login-synthetic"}});await prisma.membership.create({data:{organizationId:id("org"),userId:id("user"),role:"ADMIN"}});await prisma.contract.create({data:{id:id("contract"),organizationId:id("org"),name:"Contrato de prueba local equivalente a Andes Norte C2",slug:id("contract"),code:id("contract")}});
+  await prisma.entityType.createMany({data:[{id:id("source"),contractId:id("contract"),name:"Sujetos sintéticos",slug:id("source")},{id:id("events"),contractId:id("contract"),name:"Eventos sintéticos",slug:id("events"),nature:"TRANSACTION"},{id:id("roles"),contractId:id("contract"),name:"Relaciones sintéticas",slug:id("roles")} ]});
+  for(const [key,type,entity,config,multiple]of [["given","TEXT","source",{},false],["family","TEXT","source",{},false],["code","TEXT","source",{display:{primary:true,showInClient:false}},false],["choice","SELECT","source",{},false],["role","RELATION","source",{targetEntityTypeId:id("roles"),relationKind:"MANY"},true],["single-role","RELATION","source",{targetEntityTypeId:id("roles"),relationKind:"ONE"},false],["subject","RELATION","events",{targetEntityTypeId:id("source"),relationKind:"ONE"},false],["date","DATE","events",{},false],["status","SELECT","events",{},false]] as const)await prisma.entityField.create({data:{id:id(key),entityTypeId:id(entity),key,name:"Campo "+key,type,searchable:["given","family","code"].includes(key),multiple,config}});
+  await prisma.fieldOption.createMany({data:[{id:id("choice-option"),entityFieldId:id("choice"),label:"Etiqueta de opción",value:"canonical"},{id:id("ok"),entityFieldId:id("status"),label:"Estado válido",value:"ok"}]});
+  await prisma.entityRecord.createMany({data:[{id:id("person"),entityTypeId:id("source"),displayName:"LEGACY-001"},{id:id("role-a"),entityTypeId:id("roles"),displayName:"Cargo Alfa"},{id:id("role-b"),entityTypeId:id("roles"),displayName:"Cargo Beta"}]});
+  await prisma.entityValue.createMany({data:[{entityRecordId:id("person"),entityFieldId:id("given"),textValue:"Nombre sintético"},{entityRecordId:id("person"),entityFieldId:id("family"),textValue:"Apellido sintético"},{entityRecordId:id("person"),entityFieldId:id("code"),textValue:"0001-K"},{entityRecordId:id("person"),entityFieldId:id("choice"),textValue:"canonical"}]});await prisma.entityRelation.createMany({data:["role-a","role-b"].map(x=>({sourceRecordId:id("person"),sourceFieldId:id("role"),targetRecordId:id(x)}))});await prisma.entityRelation.create({data:{sourceRecordId:id("person"),sourceFieldId:id("single-role"),targetRecordId:id("role-a")}});
+ });
+ afterAll(async()=>{try{if(connected){await prisma.entityRelation.deleteMany({where:{sourceRecord:{entityType:{contractId:id("contract")}}}});await prisma.auditEvent.deleteMany({where:{contractId:id("contract")}});await prisma.organization.deleteMany({where:{id:id("org")}});await prisma.user.deleteMany({where:{id:id("user")}});expect(await prisma.organization.count({where:{id:id("org")}})).toBe(0);}}finally{await prisma.$disconnect();}});
+ it("editor→validation→database→reopen preserves ordered IDs, omitted key and explicit clear without changing subjects",async()=>{
+  const rows=await prisma.entityRecord.findMany({where:{entityTypeId:id("source")},include:{values:true}});const fields=await prisma.entityField.findMany({where:{entityTypeId:id("source")}});
+  attendance=(await createAppView(id("contract"),id("user"),getAppViewInput(viewForm("attendance"))))!.id;state=(await createAppView(id("contract"),id("user"),getAppViewInput(viewForm("state-update"))))!.id;
+  for(const appViewId of [attendance,state])await prisma.userAppViewAccess.create({data:{appViewId,contractId:id("contract"),userId:id("user")}});
+  await updateAppView(id("contract"),attendance,id("user"),getAppViewInput(viewForm("attendance",false)));const stored=await prisma.appView.findUniqueOrThrow({where:{id:attendance}});expect(stored.config).toMatchObject({subjectPresentation:presentation,codeSearch:{fieldId:id("code")}});
+  const admin=await getAppViewAdminData(id("contract"),id("user"));const html=renderToStaticMarkup(createElement(AppViewForm,{action:async()=>({success:true}),entityTypes:admin!.entityTypes,submitLabel:"Guardar",initialValues:{...stored,config:parseAppViewConfig(stored)}}));expect(html).toContain("Presentación del sujeto");expect(html.indexOf('Campo given')).toBeLessThan(html.indexOf('Campo family'));expect(html).toContain('name="subjectPresentation"');
+  const fd=viewForm("attendance");fd.set("subjectPresentation","");await updateAppView(id("contract"),attendance,id("user"),getAppViewInput(fd));expect((await prisma.appView.findUniqueOrThrow({where:{id:attendance}})).config).not.toHaveProperty("subjectPresentation");await updateAppView(id("contract"),attendance,id("user"),getAppViewInput(viewForm("attendance")));
+  expect(await prisma.entityRecord.findMany({where:{entityTypeId:id("source")},include:{values:true}})).toEqual(rows);expect(await prisma.entityField.findMany({where:{entityTypeId:id("source")}})).toEqual(fields);
+ });
+ it("real workflow readers return typed projection and multiple labels while denied user cannot read",async()=>{
+  const date="2026-10-28";for(const [kind,view]of [["attendance",attendance],["state-update",state]]){
+   const result=kind==="attendance"?await getAttendanceWorkflowDay({contractId:id("contract"),appViewId:view,userId:id("user"),date,search:"0001",searchFieldId:id("code")}):await getStateUpdateWorkflow({contractId:id("contract"),appViewId:view,userId:id("user"),date,search:"0001",searchFieldId:id("code")});expect(result.ok).toBe(true);if(!result.ok)throw Error("Synthetic read failed");expect(result.data.subjectPresentation?.config).toEqual(presentation);expect(JSON.stringify(result.data)).toContain('"type":"RELATION"');expect(JSON.stringify(result.data)).toContain('Cargo Alfa');expect(JSON.stringify(result.data)).toContain('Cargo Beta');expect(JSON.stringify(result.data)).toContain('Etiqueta de opción');
+   const manual=kind==="attendance"?await getAttendanceWorkflowDay({contractId:id("contract"),appViewId:view,userId:id("user"),date,search:"Nombre sintético"}):await getStateUpdateWorkflow({contractId:id("contract"),appViewId:view,userId:id("user"),date,search:"Nombre sintético"});expect(manual.ok).toBe(true);if(!manual.ok)throw Error();expect(JSON.stringify(manual.data)).toContain("Cargo Beta");expect(JSON.stringify(manual.data)).toContain('"fieldId":"'+id("single-role")+'"');
+  }
+  const individual=await getStateUpdateWorkflow({contractId:id("contract"),appViewId:state,userId:id("user"),date,subjectRecordId:id("person"),pageSize:"1"});
+  expect(individual.ok).toBe(true);if(!individual.ok)throw Error("Individual read failed");
+  const capability=individual.data.currentBatchCapabilities;expect(capability).toBeDefined();
+  const batch=await getStateUpdateCurrentBatch({contractId:id("contract"),appViewId:state,userId:id("user"),date,subjectRecordIds:[id("person")],version:"1",configurationFingerprint:capability!.configurationFingerprint});
+  expect(batch.ok).toBe(true);if(!batch.ok)throw Error("Batch read failed");
+  expect(batch.data).toMatchObject({subjectPresentation:individual.data.subjectPresentation,currentBatch:{results:[{subjectRecordId:id("person"),status:"resolved"}]}});
+  const projected=(data:unknown)=>JSON.parse(JSON.stringify(data)) as {subjects:{subject:{id:string;displayName:string;presentation:{cells:unknown[];fingerprint:string}};current:unknown}[]};
+  const one=projected(individual.data).subjects[0],many=projected(batch.data).subjects[0];
+  expect(many.subject.presentation).toBeDefined();expect(many.subject.presentation.cells).toEqual(one.subject.presentation.cells);
+  expect(many.subject.presentation.fingerprint).toBe(one.subject.presentation.fingerprint);expect(many.subject.displayName).toBe(one.subject.displayName);expect(many.current).toEqual(one.current);
+  const denied=await getStateUpdateWorkflow({contractId:id("contract"),appViewId:state,userId:id("unassigned-user"),date,search:"0001"});expect(denied.ok).toBe(false);if(!denied.ok)expect(denied.response.status).toBe(403);
+ });
+});
