@@ -3,6 +3,7 @@ import { applyApiDiagnosticsHeaders, createApiServerTiming } from "@/lib/api-dia
 import { badRequest, success } from "@/lib/api-response";
 import {
   getStateUpdateWorkflow,
+  getStateUpdateCurrentBatch,
   saveStateUpdateWorkflow,
 } from "@/lib/state-update-workflow";
 
@@ -24,7 +25,16 @@ export async function GET(
   }
 
   const searchParams = new URL(request.url).searchParams;
-  const result = await getStateUpdateWorkflow({
+  const batch = searchParams.has("currentBatchVersion") || searchParams.has("subjectRecordIds");
+  if (batch && ["search", "searchFieldId", "subjectRecordId", "page", "pageSize"].some(key => searchParams.has(key))) {
+    const response = badRequest("El lote current no admite búsqueda ni paginación.", "INVALID_CURRENT_BATCH");
+    return applyApiDiagnosticsHeaders(response,request,timing.finish("invalid_batch_query",response.status));
+  }
+  const result = batch ? await getStateUpdateCurrentBatch({ appViewId, contractId: access.context.contract.id,
+    userId: access.context.user.id, date: searchParams.get("date"), identity: parseIdentityQuery(searchParams.get("identity")),
+    version: searchParams.get("currentBatchVersion"), configurationFingerprint: searchParams.get("currentBatchFingerprint"),
+    subjectRecordIds: searchParams.getAll("subjectRecordIds"),
+  }) : await getStateUpdateWorkflow({
     appViewId,
     contractId: access.context.contract.id,
     date: searchParams.get("date"),

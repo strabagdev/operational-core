@@ -178,7 +178,7 @@ function compositeMetadata(context: StateUpdateContext) {
   return { identityDefinition: { definitionId: context.composite!.definition.id, version: 1 }, identityContext: context.composite!.identity ?? null, contextRequired: !context.composite!.identity,
     identityFields: context.composite!.definition.fieldIds.map(id => { const field = requireField(context, id); return { fieldId: id, label: field.name, type: "SELECT", required: true, options: field.options.map(o => ({ optionId: o.id, value: o.value, label: o.label, active: o.isActive })) }; }) };
 }
-async function prepareCompositeRead(context: StateUpdateContext, raw: unknown, date?: string) {
+async function prepareCompositeRead(context: StateUpdateContext, raw: unknown, date?: string, subjectRecordIds?: string[]) {
   const d = await prisma.stateUpdateIdentityDefinition.findUnique({ where: { targetEntityTypeId: context.targetEntityType.id } });
   if (!d || d.version !== 1 || context.config.historyMode !== "update-current" || context.config.uniqueness.identityVersion !== 1 || d.id !== context.config.uniqueness.definitionId || d.subjectFieldId !== context.config.subjectFieldId || d.dateFieldId !== context.config.dateFieldId || JSON.stringify(d.fieldIds) !== JSON.stringify([...(context.config.uniqueness.fieldIds ?? [])].sort())) return writeError("INVALID_COMPOSITE_DEFINITION", "La definición de identidad no es compatible.");
   const definition = { ...d, fieldIds: d.fieldIds as string[] };
@@ -190,7 +190,7 @@ async function prepareCompositeRead(context: StateUpdateContext, raw: unknown, d
     canonicalReportKey(definition, "validation-subject", date ?? "", identity);
     for (const [id, option] of Object.entries(identity.values)) if (!requireField(context, id).options.some(o => o.id === option)) throw new Error("invalid option");
     context.composite.identity = identity;
-    const slots = await prisma.stateUpdateIdentitySlot.findMany({ where: { definitionId: d.id, date: new Date(date+"T00:00:00.000Z"), contextKey: identityContextKey(identity.values), recordId: { not: null } }, select: { recordId: true } });
+    const slots = await prisma.stateUpdateIdentitySlot.findMany({ where: { ...(subjectRecordIds ? { subjectRecordId: { in: subjectRecordIds } } : {}), definitionId: d.id, date: new Date(date+"T00:00:00.000Z"), contextKey: identityContextKey(identity.values), recordId: { not: null } }, select: { recordId: true } });
     context.composite.recordIds = slots.flatMap(s => s.recordId ? [s.recordId] : []);
     return { ok: true as const };
   } catch { return writeError("INVALID_COMPOSITE_IDENTITY", "La fecha o los campos de identidad están incompletos o son inválidos."); }
@@ -319,6 +319,7 @@ export async function getStateUpdateWorkflow({
       searchComparison,
       ...(codeSearch.metadata ? { codeSearchField: codeSearch.metadata } : {}),
       ...(codeSearch.fieldId ? { searchFieldId: codeSearch.fieldId } : {}),
+      ...(context.context.config.uniqueness.mode !== "none" ? { currentBatchCapabilities: currentBatchCapabilities(context.context) } : {}),
       workflow: workflowMetadata(context.context),
       date: parsedDate.value,
       dateField: context.context.config.dateFieldId
@@ -355,6 +356,76 @@ export async function getStateUpdateWorkflow({
       }),
     },
   };
+}
+
+export const STATE_UPDATE_CURRENT_BATCH_MAX = 100;
+function currentBatchCapabilities(context: StateUpdateContext) {
+  return { version: 1 as const, maxSubjects: STATE_UPDATE_CURRENT_BATCH_MAX,
+    configurationFingerprint: stableRecordRequestHash({ config: context.config,
+      source: context.sourceEntityType.id, target: context.targetEntityType.id,
+      fields: [...context.sourceEntityType.fields, ...context.targetEntityType.fields].map(field => ({
+        id: field.id, type: field.type, config: field.config, multiple: field.multiple, required: field.required,
+        active: field.isActive, options: field.options,
+      })),
+    }) };
+}
+
+/** Read-only, bounded set lookup. No latest/history/summary query and no null for an unavailable subject. */
+export async function getStateUpdateCurrentBatch(input: {
+  appViewId: string; contractId: string; userId: string; date?: string | null; identity?: unknown;
+  subjectRecordIds: string[]; version: string | null; configurationFingerprint: string | null;
+}) {
+  if (input.version !== "1" || input.subjectRecordIds.length === 0 || input.subjectRecordIds.length > STATE_UPDATE_CURRENT_BATCH_MAX ||
+    input.subjectRecordIds.some(id => !id || id !== id.trim() || id.length > 200) || new Set(input.subjectRecordIds).size !== input.subjectRecordIds.length) {
+    return { ok: false as const, response: badRequest("El lote current debe contener de 1 a 100 IDs distintos y versión 1.", "INVALID_CURRENT_BATCH") };
+  }
+  const loaded = await getStateUpdateWorkflowContext(input);
+  if (!loaded.ok) return loaded;
+  const context = loaded.context;
+  if (context.config.uniqueness.mode === "none") return { ok: false as const, response: badRequest("Este workflow no define current por sujeto.", "CURRENT_BATCH_UNSUPPORTED") };
+  const capabilities = currentBatchCapabilities(context);
+  if (input.configurationFingerprint !== capabilities.configurationFingerprint) return { ok: false as const,
+    response: conflict("La configuración cambió. Actualiza la experiencia antes de preparar.", "CURRENT_BATCH_CONFIGURATION_CHANGED") };
+  const date = parseOptionalDate(input.date, context.config);
+  if (!date.ok) return date;
+  if (context.config.uniqueness.mode === "subject-date-fields") {
+    const prepared = await prepareCompositeRead(context, input.identity, input.date ?? undefined, input.subjectRecordIds);
+    if (!prepared.ok) return prepared;
+    if (!context.composite?.identity) return { ok: false as const, response: badRequest("El contexto completo es obligatorio.", "CURRENT_BATCH_CONTEXT_REQUIRED") };
+  }
+  const subjects = await prisma.entityRecord.findMany({
+    where: { entityTypeId: context.sourceEntityType.id, id: { in: input.subjectRecordIds } },
+    select: { id: true, displayName: true },
+  });
+  const current = await findExistingStateUpdates({ context, date: date.date,
+    subjectRecordIds: subjects.map(subject => subject.id), selection: "workflow-current" });
+  const bySubject = new Map(current.map(item => [item.subjectRecordId, item]));
+  const available = new Map(subjects.map(subject => [subject.id, subject]));
+  const results: Array<{ subjectRecordId: string; status: "resolved" | "error"; code?: string }> = [];
+  const items: Array<{ subject: { id: string; displayName: string }; current: ReturnType<typeof serializeExisting> }> = [];
+  for (const id of input.subjectRecordIds) {
+    const subject = available.get(id);
+    if (!subject) { results.push({subjectRecordId:id,status:"error",code:"SUBJECT_UNAVAILABLE"}); continue; }
+    try {
+      const current = serializeExisting(bySubject.get(id), context);
+      items.push({ subject, current });
+      results.push({ subjectRecordId:id, status:"resolved" });
+    } catch {
+      results.push({ subjectRecordId:id, status:"error", code:"CURRENT_UNAVAILABLE" });
+    }
+  }
+  const policy = context.schedulePolicy;
+  const scheduleResolution = policy ? await resolveSchedule(prisma,input.contractId,policy,date.value ?? undefined,context.composite?.identity?.values[policy.sourceFieldId]) : undefined;
+  return { ok: true as const, data: {
+    appView: context.appView, contractId: input.contractId, currentBatchCapabilities: capabilities,
+    currentBatch: { version: 1, requestedSubjectIds: input.subjectRecordIds, results },
+    workflow: workflowMetadata(context), date: date.value,
+    dateField: context.config.dateFieldId ? serializeField(requireField(context,context.config.dateFieldId)) : null,
+    stateFields: serializeStateFields(context), extraFields: serializeExtraFields(context.targetEntityType.fields.filter(field => context.config.extraFieldIds.includes(field.id))),
+    subjectEntityType: {id:context.sourceEntityType.id,name:context.sourceEntityType.name},
+    targetEntityType: {id:context.targetEntityType.id,name:context.targetEntityType.name},
+    ...(context.composite ? compositeMetadata(context) : {}), ...(policy ? {schedulePolicy:policy,scheduleResolution} : {}), subjects: items,
+  } };
 }
 
 export async function saveStateUpdateWorkflow({

@@ -671,3 +671,35 @@ metadata antes de permitir lectores anteriores. Nunca borrar pendientes ni cambi
 lograrlo. RECORDS/RELATION/REPORT/PANEL y los límites Unicode/legacy/cobertura del apartado anterior siguen
 fuera. Candidato listo para la siguiente etapa autorizada; publicación/activación no ejecutadas.
 Inventario/parches/checks de cierre: backups/workflow-search-comparison-close/2026-10-28/.
+
+
+## STATE_UPDATE current por lotes v1 — IMPLEMENTADO LOCALMENTE, NO PUBLICADO — 2026-10-29
+
+GET individual se conserva. Añade `currentBatchCapabilities: {version:1,maxSubjects:100,
+configurationFingerprint:<sha256 de configuración/metadata>}` cuando el workflow define current.
+GET del mismo endpoint con `currentBatchVersion=1`, `currentBatchFingerprint` anunciado y parámetros
+`subjectRecordIds` repetidos pide de1a100IDs distintos (máximo200caracteres por ID). Conserva `date` e
+`identity`; rechaza search/searchFieldId/subjectRecordId/page/pageSize combinados con lote. No consulta
+latest ni summary. No modifica registros ni utiliza idempotencia de escrituras.
+
+La respuesta incluye contrato/AppView, definición/configuración efectiva, fecha/contexto, capability y
+`currentBatch:{version:1,requestedSubjectIds:[...],results:[{subjectRecordId,status:"resolved"|"error",code?}]}`.
+`subjects` contiene sólo los resueltos, cada uno con propiedad current explícita: evento o null confirmado.
+ID inexistente/fuera del origen autorizado: error SUBJECT_UNAVAILABLE sin datos; nunca current=null.
+Error de serialización por sujeto: CURRENT_UNAVAILABLE. Fallo DB rechaza la petición, no acredita ausencias.
+403 conserva asignación/permisos;409 CURRENT_BATCH_CONFIGURATION_CHANGED exige renovar metadata/reintentar;
+400 rechaza contexto incompleto, versión, tamaño o combinación de parámetros. Contexto compuesto acota
+slots por IDs de sujeto y fecha/combinación. No se devuelve producto cartesiano ni se consulta por sujeto.
+
+Se reutiliza getStateUpdateWorkflowContext/findExistingStateUpdates(selection:workflow-current) y sus
+serializadores. Criterio de fecha/ID/ausentes y modos existentes intacto; ninguna consulta de contenido
+por fila. Core conserva las validaciones de contrato y asignación de AppView. El hash de configuración
+no es autorización; el servidor relee y valida el contexto en cada lote.
+
+Orden futuro Core→Client. Core nuevo/Client publicado sigue individual. Client nuevo/Core anterior sin
+capability utiliza el contrato individual explícitamente negociado; respuesta de lote sin ACK/version/
+fingerprint/resultados completos se rechaza, sin fallback masivo. Capabilities viejas tras rollback de Core
+pueden provocar error de lectura hasta renovar metadata/reintentar; conservar Core compatible hasta vaciar
+lecturas en vuelo o retroceder Client primero. No migración/configuración/activación nueva; Client nuevo
+elige lotes automáticamente donde ya se preparaba current y existe capability. No cambia cuándo Inicio
+prepara todas las experiencias. No altera horarios, pendientes ni contratos de escritura.
