@@ -2217,3 +2217,18 @@ it("preserves an explicit presentation clear when restoring editor validation er
  const html=renderToStaticMarkup(<AppViewForm action={async()=>({success:true})} submitLabel="Guardar" entityTypes={entityTypes} initialActionState={{success:false,message:"Corrige otro campo",values:{subjectPresentation:""}}} initialValues={{active:true,name:"Sintética",slug:"synthetic",sortOrder:0,type:"WORKFLOW",config:{type:"WORKFLOW",workflowKey:"attendance",sourceEntityTypeId:"people",targetEntityTypeId:"attendance",personFieldId:"person_field",dateFieldId:"date_field",statusFieldId:"status_field",defaultCheckInOptionId:"present_option",contextFieldIds:[],subjectPresentation:{version:1,titleFieldIds:["previous"],secondaryFieldIds:[]}}}}/>);
  expect(hiddenInputValue(html,"subjectPresentation")).toBe("");expect(html).not.toContain('value="{&quot;version&quot;:1,&quot;titleFieldIds&quot;:[&quot;previous&quot;]');
 });
+
+it("Attendance editor offers SELECT/simple RELATION context, preserving existing choices and rejecting MANY", () => {
+ const fields = [
+  { id: "subject", key: "subject", name: "Subject", type: "RELATION", config: { targetEntityTypeId: "source", relationKind: "ONE" }, isActive: true, options: [] },
+  { id: "day", key: "day", name: "Day", type: "DATE", isActive: true, options: [] },
+  { id: "status", key: "status", name: "Status", type: "SELECT", isActive: true, options: [{ id: "a", label: "A", value: "a", isActive: true }] },
+  { id: "choice", key: "choice", name: "Choice", type: "SELECT", isActive: true, options: [] },
+  { id: "related", key: "related", name: "Related context", type: "RELATION", isActive: true, options: [], config: { targetEntityTypeId: "catalog", relationKind: "ONE" } },
+  { id: "many", key: "many", name: "Multiple relation", type: "RELATION", isActive: true, options: [], config: { targetEntityTypeId: "catalog", relationKind: "MANY" } },
+ ];
+ const html = renderToStaticMarkup(<AppViewForm action={async () => ({ success: true })} submitLabel="Save" entityTypes={[{ id: "source", name: "Source", fields: [] }, { id: "target", name: "Target", fields }, { id: "catalog", name: "Catalog", fields: [] }]} initialValues={{ name: "Synthetic", slug: "synthetic", active: true, sortOrder: 0, type: "WORKFLOW", config: { type: "WORKFLOW", workflowKey: "attendance", sourceEntityTypeId: "source", targetEntityTypeId: "target", personFieldId: "subject", dateFieldId: "day", statusFieldId: "status", defaultCheckInOptionId: "a", contextFieldIds: ["choice", "related"] } }} />);
+ const context = html.slice(html.indexOf("Campos de contexto"));
+ expect(context).toMatch(/name="contextFieldIds"[^>]*value="related"/); expect(context).toMatch(/name="contextFieldIds"[^>]*value="choice"/);
+ expect(context).not.toMatch(/name="contextFieldIds"[^>]*value="many"/); expect(context).not.toMatch(/name="contextFieldIds"[^>]*value="subject"/);
+});

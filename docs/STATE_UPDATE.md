@@ -784,3 +784,203 @@ Inicio sigue preparando todas las experiencias. No se corrigen aquí.402exclusio
 ajenos preservados; respaldo original intacto. Sin producción,Railway,commit,push,deploy o activación.
 Safari físico,offline frío de navegador/sync de esta proyección y auditoría general siguen pendientes.
 V11 pausado.
+
+
+### Attendance — contexto RELATION ONE adicional — implementación local 03-11-2026
+
+El editor y validateAttendanceAppViewFields/validateAttendanceRuntimeConfig aceptan SELECT simple
+como antes y RELATION simple con destino configurado. Se mantiene contextFieldIds ordenado, sin
+repetir Persona/Fecha/Estado/Observación; no admite múltiples. Metadata nueva conserva config.relation.
+SELECT mantiene optionId y valor canónico; RELATION usa ID remoto y lee {id,displayName} por relación.
+Las lecturas incluyen Persona/contextos juntos y distinguen sourceFieldId, sin consultas por fila.
+
+El adaptador pasa los contextos a extraValues existentes. validateRelationValues/syncEntityRelations,
+auditoría, autorización e idempotencia siguen en STATE_UPDATE; no hay persistencia paralela. Identidad
+persona+fecha/update-current intacta: Lote u otro contexto es contenido, no una nueva identidad.
+Sin migraciones. Core→Client; configuraciones SELECT existentes no cambian. Habilitar RELATION exige
+Client compatible; un runtime anterior no se vuelve compatible al conservar SQLite. No activación.
+Pruebas y límites: backups/attendance-relation-context/2026-11-03/. Pendientes previos preservados.
+
+
+### Attendance RELATION — validación HTTP/OPFS y concurrencia previa — 03-11-2026
+
+Client candidato + rutas HTTP Core y PostgreSQL local verifican contexto RELATION, persistencia,
+registros consecutivos, edición y sincronización de un alta offline tras reapertura OPFS. SELECT
+anterior continúa funcionando con ambos Clients; RELATION exige Client compatible. Core anterior
+rechaza su GET Attendance con INVALID_WORKFLOW_CONFIG. Sin migraciones ni activación productiva.
+
+Límite demostrado, NO CORREGIDO: lookup de persona+fecha y creación no excluyen otra petición con un
+clientRequestId distinto. Dos HTTP simultáneos crearon dos registros; misma reproducción con Core HEAD
+y SELECT (state-update-workflow.ts byte idéntico). Replay de la misma key no añade otro efecto. La
+repetición secuencial idéntica es UNCHANGED; contenido distinto requiere overwrite/base y actualiza la
+misma fila. NO-GO para garantizar un retiro diario. Recomendación única: serializar/claimar la identidad
+declarada del destino + persona + fecha durante lookup/creación, con las demás puertas respetando esa
+regla; no convertir lote o turno en identidad. Informe: backups/attendance-relation-validation/2026-11-03/.
+
+## Identidad y unicidad — corrección legacy y propuesta genérica — local 03-11-2026
+
+Implementación acotada: `saveStateUpdateEntry` conserva su contrato y ejecuta el lookup, comparación,
+contenido, relaciones, auditoría y resultado idempotente dentro de una transacción para los modos
+legacy `subject`/`subject-date` + `update-current`. `state-update-write-identity.ts` obtiene un bloqueo
+PostgreSQL `pg_advisory_xact_lock` sobre una tupla versionada de contrato, destino y campos/valores de
+identidad. Los callers públicos usan READ COMMITTED explícito: tras esperar, la lectura ve el commit
+anterior. Callers internos que aporten su transacción deben usar también READ COMMITTED. No hay timeout
+nuevo, polling, reintento de escritura ni lock de sesión. Commit/rollback libera el bloqueo.
+
+AppView, usuario, ExternalApp, clientRequestId, estados, observación y contextos extra no integran esa
+identidad. Dos AppViews con los mismos roles/destino comparten exclusión; Attendance es consumidor
+mediante su adaptador `subject-date`, también en el POST legacy. DATE usa el valor lógico ya validado;
+`subject` no incorpora ni exige fecha. SELECT/RELATION de contexto permanecen contenido. No cambia
+`none`, `append`, ni el camino compuesto v1 Definition/Slot. No nueva tabla, configuración o migración.
+
+Se mantienen UNCHANGED para un comando igual, CONFLICT para diferencias y overwrite explícito con
+la versión base original. Dos correcciones independientes con la misma base se serializan y sólo
+una actualiza. Se conserva la reserva idempotente previa y sus reglas de replay/incompletitud; un fallo
+transaccional no autoriza a ejecutar silenciosamente otra vez una key sin resultado verificable.
+
+Si el lookup de una mutación `subject-date/update-current` encuentra varias filas, devuelve el resultado
+funcional ERROR `DUPLICATE_STATE_UPDATE_IDENTITY`, persistido para replay, sin editar, fusionar, borrar
+ni escoger una fila para sobrescribir. GET mantiene su selección anterior; este guard no certifica ni
+repara históricos. La evaluación productiva de duplicados queda pendiente de lectura autorizada.
+
+**Alcance de garantía:** los escritores Attendance/STATE_UPDATE que adquieren este lock. No es una
+restricción universal por entidad: RECORDS, editor web e importaciones legacy no participan. Un ensayo
+PostgreSQL mediante `createEntityRecord` autorizado creó una segunda fila y el workflow la detectó sin
+mutarla. No se bloquean esas puertas ni se cambia su contrato en este lote. Tampoco se garantiza
+coexistencia con una instancia antigua de Core que siga escribiendo sin el bloqueo durante el relevo.
+Una prueba controlada requiere Core nuevo en todos los escritores, target sin duplicados ambiguos y
+captura mediante el workflow, sin escrituras genéricas concurrentes. La promesa universal sigue NO-GO.
+
+### Modelo operacional basado en fecha: diagnóstico, sin introducir DAILY
+
+No existen modelo Prisma, AppViewType, workflowKey o renderer DAILY en los repositorios inspeccionados.
+El catálogo Core contiene attendance/state-update; Client resuelve los mismos. Una entidad/AppView
+configurada podría llevar ese nombre; no se inspeccionaron configuraciones ni registros productivos.
+
+| Pregunta | Comportamiento demostrado / archivo |
+| --- | --- |
+| Identidad | EntityRecord.id es técnico; EntityType/EntityField definen contenido. Una etiqueta o naturaleza TRANSACTION no define una tupla de negocio. schema.prisma; entity-records.ts. |
+| Fecha operacional | Es un DATE configurable, no createdAt/updatedAt ni inferencia de jornada. STATE_UPDATE parseOptionalDate admite fecha explícita y, si se omite, usa el día UTC del servidor; Client suele enviar su calendario local. Ese default puede diferir alrededor de medianoche y no sustituye una política operacional acordada. date-only.ts; state-update-workflow.ts; Client attendance-workflow-logic.ts. |
+| Varias filas por fecha | RECORDS permite varias; none y append crean registros independientes por comando. subject-date/update-current busca sujeto+fecha; subject-date-fields exige además SELECT configurados y Definition/Slot. AppView.config manda, no el nombre del reporte. |
+| Alta/corrección | RECORDS crea por nueva key y edita por recordId; PATCH idempotente con expectedUpdatedAt bloquea la fila y rechaza versión remota distinta. STATE_UPDATE resuelve identidad y exige overwrite/base ante diferencias. api-record-writes.ts; state-update-workflow.ts. |
+| Concurrencia | La búsqueda previa `EntityField.isUnique` no equivale a una restricción compuesta atómica (RELATION tampoco admite ese flag). El lock legacy es cooperativo; Definition/Slot v1 tiene índice único y guardas DB para su entidad opt-in. entity-records.ts; state-update-identity.ts; migration 20261018000100. |
+| Offline | RECORDS y STATE_UPDATE usan SQLite/outbox comunes. El ID local de update-current incluye AppView/sujeto y fecha/contexto según modo; append/none genera identidad de evento nueva. Core sigue siendo autoridad online; no hay sincronizador diario independiente. Client state-update-offline.ts, local-db.ts, records-sync.ts, state-update-sync.ts. |
+| Actividades/salidas | Las entidades y relaciones pueden almacenar actividades, dotación y equipos; REPORT/PANEL consultan/proyectan/agregan. No hay composición diaria automática ni identidad de reporte deducible de esa arquitectura. state-update-projection.ts, panels.ts, api-reports.ts. |
+
+Diferencias a resolver mediante especificación: qué campos distinguen el registro operacional; si se
+corrige el mismo registro o se agregan eventos; qué fecha corresponde; y qué puertas deben participar.
+No se impone persona+fecha a otros registros. No se implementan consolidaciones ni un nuevo módulo.
+
+### Propuesta única de identidad configurable v2 — NO IMPLEMENTADA / editor no aprobado
+
+Reutilizar el servicio lógico Definition/Slot, separado del renderer, con una definición inmutable por
+entidad destino y referencia compartida desde sus AppViews/escritores. Ejemplo ilustrativo, no contrato
+aceptado actualmente:
+
+```json
+{
+  "recordIdentity": {
+    "version": 2,
+    "definitionId": "<definicion-registrada>",
+    "components": [{"fieldId":"<campo-uno>"},{"fieldId":"<campo-dos>"}],
+    "valueEncoding": "typed-v1",
+    "nullPolicy": "reject",
+    "writeMode": "update-current"
+  }
+}
+```
+
+La definición admite uno o varios campos, sin un rol sujeto ni fecha obligatorio. Primera ampliación
+recomendada: RELATION simple, SELECT simple, DATE, TEXT, INTEGER/DECIMAL tras demostrar su codificación
+canónica; excluir inicialmente relaciones múltiples, MULTISELECT, DATETIME y valores calculados. Si
+un campo integra identidad, debe estar completo aunque sea opcional en la entidad. Rechazar null,
+blancos o valores inválidos; nunca inventar un identificador de negocio para una tupla incompleta.
+
+Tupla canónica: versión + definitionId + contrato/destino + componentes ordenados por fieldId y tipo.
+RELATION usa ID autorizado (no label); SELECT se resuelve a optionId estable (conservando el valor
+canónico almacenado); DATE conserva YYYY-MM-DD sin zona; texto conserva caracteres y ceros iniciales,
+sin heredar searchComparison; números usan representación decimal exacta, sin redondeo. No aplicar
+casefold, normalización Unicode o eliminación de caracteres sin una política nueva explícita y análisis
+de colisiones. Comparar la tupla completa además del hash. Un hash no convierte dos tuplas en iguales.
+
+Reservar/bloquear Slot, comprobar versión, guardar contenido/auditoría/recibo idempotente y enlazar el
+recordId en una transacción. Mantener UNIQUE(definitionId,identityHash), comprobación de colisión y
+versiones de definición. Para garantizarlo en TODAS las puertas, reutilizar las guardas opt-in que
+ya impiden mutación genérica en entidades v1 o hacerlas participar en el mismo servicio. Diseñar esa
+política antes de cambiar RECORDS/importador/editor; no basta proteger sólo el endpoint de workflow.
+
+Un recordId técnico existente no cambia al corregir contenido. Los campos de identidad se bloquean al
+editar; corregir una combinación equivocada requiere una operación explícita acordada. No trasladar,
+fusionar ni sobrescribir otra tupla. Append sigue siendo creación de eventos distintos: identidad del
+reporte/cabecera y sus versiones son conceptos separados; no borrar históricos para imponer unicidad.
+El borrado/recreación y la generación/tombstone frente a replays antiguos son otra etapa, no este lote.
+
+Compatibilidad: v1 y modos legacy conservan IDs/semántica; no reinterpretar cachés/outbox ni reescribir
+payloads, base, autorización o clientRequestId. API debe exponer definición/versión/política efectiva y
+rechazar comandos incompletos de runtimes anteriores. Client debe persistir la identidad preparada en
+su scope existente y conservar la intención incompatible para revisión, sin fallback a otra identidad.
+Una activación nueva exige destino vacío o un proceso de adopción explícito, con lectura de duplicados
+y valores incompletos; no se propone una conversión automática de entidades pobladas.
+
+**Necesidad real de esquema para v2:** las tablas v1 exigen subjectFieldId/dateFieldId y Slot exige
+subjectRecordId/date NOT NULL. No representan identidades sin sujeto/fecha. Haría falta una migración
+versionada que agregue la especificación de componentes y permita esas columnas ausentes sólo en v2,
+conservando todas las filas, índices/guardas y consumidores v1. No se crea ni aplica aquí. El fix legacy
+usa locks PostgreSQL existentes y no necesita esa migración.
+
+Etapas: (1) publicar la corrección acotada tras cierre/revisión y probar Attendance controladamente;
+(2) aprobar el contrato de definición/codificación y las puertas de escritura; (3) migración aditiva y
+servicio v2 con pruebas de carrera/rollback/adopción; (4) API/cache/outbox compatibles, después editor y
+activación opt-in. No retrasar (1) por implementar (2)-(4). Decisiones de negocio pendientes sólo para
+las futuras definiciones: campos, fecha si corresponde, update-current frente a eventos y tratamiento
+explícito de errores de identidad/históricos. No asumir esas decisiones por la palabra diario.
+
+Evidencia local y límites: backups/attendance-uniqueness-identity-review/2026-11-03/REVIEW.md. No acceso
+productivo, migración, configuración, publicación, push o deploy. V11 sigue pausado.
+
+### Política optativa de escritores por destino — implementación local 04-11-2026
+
+`workflowWritePolicy` se configura en una AppView existente y es la autoridad única para su entidad
+objetivo. JSON v1: `{version:1,mode:"workflow-only",acceptNewCommands:false,allowedAppViewIds:["<id>"]}`.
+Ausente conserva los caminos legacy. Primero se arma pausada; el editor validado exige ADMIN,
+IDs del mismo contrato, idénticos origen/destino/roles/contextos y update-current subject/subject-date.
+Esta primera política no admite none/append/composite; no cambia esos modos sin opt-in.
+
+El efecto se aplica al destino aunque la AppView propietaria esté inactiva. El guardado de un formulario
+antiguo que omite la clave la conserva. Desarmar exige pausa previa, JSON vacío y confirmación DESARMAR;
+no se retira implícitamente al cambiar renderer/destino. Las modificaciones quedan auditadas con el
+mecanismo existente VALUE_CHANGED y old/new de la política, sin crear registros operacionales ficticios.
+
+Editor/importador/API genérica y borrados rechazan mutaciones del destino protegido, incluso para
+ADMIN y aunque el body declare un workflow/capacidad. Las rutas Attendance y STATE_UPDATE validan su
+AppView asignada y después la allowlist/binding. La autoridad sólo existe en el objeto de transacción
+servidor. Se cubren relaciones, borrados entrantes/en cascada, purga contractual y recálculos que
+realmente cambien displayName. Una lectura/cálculo sin cambios no se rechaza como escritura.
+Publicación/retiro de revisiones tampoco puede usarse como escritor alternativo de un destino protegido.
+
+Todos los escritores participantes toman locks KEY SHARE del tipo dentro de su transacción; cambiar
+la política usa FOR UPDATE. Así la activación espera escrituras previas y la escritura posterior relee
+la política efectiva. El borrado bloquea tipos antes de filas/FK y verifica sus fuentes entrantes.
+Se conserva el lock de identidad persona+fecha, conflictos/base, idempotencia y auditoría anteriores.
+No hay tabla, columna, trigger ni migración nueva. Esto protege los caminos servidor inventariados;
+no es una restricción contra SQL externo privilegiado. Un escritor servidor futuro debe usar la guarda.
+
+GET devuelve `workflowWriteContract` (null confirma ausencia de política; clave ausente es Core previo).
+Contrato: versión1, huella de binding/requisitos/allowlist/AppView, capacidades requeridas
+`["relation-context-v1"]`, authorized y acceptNewCommands. Labels/descripciones y pausa no cambian la
+huella. POST captura `writeCommand={version:1,configurationFingerprint,capabilities:["relation-context-v1"]}`.
+Core comprueba la huella actual y presencia explícita de contextos obligatorios incluso al editar;
+no hereda un Lote ausente como prueba de capacidad. Luego siguen validación de IDs, valores/permisos,
+confirmación y versión base existentes. La capacidad no autentica un binario; no reemplaza autorización.
+
+Un replay completado/hash coincidente devuelve su recibo, aun después de armar/pausar la política,
+sin efecto nuevo. Un rechazo por guarda anterior a cualquier mutación libera sólo la reserva propia
+no ejecutada: el mismo comando y clave pueden reintentarse tras levantar una pausa. Nunca elimina
+recibos completados. Attendance mantiene resultados por entry: un lote de entradas parcialmente
+procesado conserva su recibo normal; sólo un batch íntegramente rechazado por guarda libera su reserva.
+Las intenciones Client se conservan, no se completan desde metadata actual ni se reescriben por servidor.
+
+Orden: Core → Client con política ausente → verificar runtimes/pendientes → armar pausada, configurar
+contexto simple/obligatorio y verificar lectura → autorizar apertura. Nunca activar automáticamente.
+Después de activar, rollback sólo a builds con guardas/contextos compatibles; pausa no abre escritores
+genéricos. No borrar pendientes ni quitar relaciones para retroceder. Calendario automático fuera.

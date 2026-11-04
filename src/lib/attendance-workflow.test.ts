@@ -1,3 +1,12 @@
+// Legacy/unprotected fixtures: opt-in guard behavior is covered in workflow-write-policy.postgres.test.ts.
+vi.mock("./workflow-write-policy", async importOriginal => ({
+  ...await importOriginal<typeof import("./workflow-write-policy")>(),
+  authorizeWorkflowWrite: vi.fn(async () => undefined),
+  workflowWriteMetadata: vi.fn(async () => ({})),
+  assertGenericEntityWritesAllowed: vi.fn(async () => undefined),
+  assertRelationMutationAllowed: vi.fn(async () => undefined),
+  validateWritePolicyChange: vi.fn(async () => undefined),
+}));
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { userCanAccessAppView } from "@/lib/app-view-access";
@@ -60,10 +69,12 @@ type EntityRecordFindManyMockArgs = {
 };
 
 const tx = {
+  $queryRaw: vi.fn(async () => []),
   auditEvent: {
     create: vi.fn(),
   },
   entityRecord: {
+    findMany: (...args: Parameters<typeof prisma.entityRecord.findMany>) => prisma.entityRecord.findMany(...args),
     create: vi.fn(),
     update: vi.fn(),
   },
@@ -164,7 +175,7 @@ describe("attendance workflow dynamic status policy", () => {
         ],
       },
     });
-    expect(transaction).not.toHaveBeenCalled();
+    expect(transaction).toHaveBeenCalledTimes(1); // Read/compare under the same identity lock; no content write.
     expect(tx.entityRecord.create).not.toHaveBeenCalled();
     expect(tx.entityRecord.update).not.toHaveBeenCalled();
   });
@@ -794,5 +805,37 @@ describe("Attendance code search field", () => {
     expect(result.data.searchFieldId).toBe("person_name");
     expect(entityRecordFindMany.mock.calls[0][0]?.where).toMatchObject({ entityTypeId: "people", values: { some: { entityFieldId: "person_name", textValue: { contains: "TEST", mode: "insensitive" } } } });
     expect(tx.entityRecord.create).not.toHaveBeenCalled(); expect(tx.entityRecord.update).not.toHaveBeenCalled();
+  });
+});
+
+describe("Attendance simple relation context", () => {
+  function setup(multiple = false, relationKind = "ONE") {
+    const current = appView();
+    appViewFindFirst.mockResolvedValue({ ...current, config: { ...current.config, contextFieldIds: ["choice", "related"] } } as never);
+    const target = attendanceEntityType();
+    target.fields.push(field("choice", "choice_key", "Choice", "SELECT", { options: [{ id: "choice_option", value: "canonical", label: "Choice label", isActive: true, sortOrder: 0 }] }),
+      field("related", "related_key", "Related", "RELATION", { multiple, config: { targetEntityTypeId: "catalog", relationKind } }));
+    entityTypeFindFirst.mockImplementation((async (args: { where?: { id?: string } }) => args.where?.id === "people" ? sourceEntityType() : target) as never);
+  }
+  it("returns relation metadata and reads labels by sourceFieldId without confusing the person", async () => {
+    setup();
+    const event = { ...existingAttendance({}), outgoingRelations: [
+      { sourceFieldId: "related", targetRecordId: "catalog_record", targetRecord: { id: "catalog_record", displayName: "Synthetic catalog label" } },
+      { sourceFieldId: "person_field", targetRecordId: "person_1", targetRecord: people()[0] },
+    ], values: [...existingAttendance({}).values, { entityFieldId: "choice", textValue: "canonical", dateValue: null }] };
+    entityRecordFindMany.mockImplementation((async (args: EntityRecordFindManyMockArgs) => args.where?.entityTypeId === "people" ? [people()[0]] : [event]) as never);
+    const result = await getAttendanceWorkflowDay({ appViewId: "view_attendance", contractId: "contract", userId: "user", date: "2026-08-22", personRecordId: "person_1" });
+    expect(result.ok).toBe(true); if (!result.ok) throw Error("Expected relation context");
+    expect(result.data.contextFields).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "related", type: "RELATION", config: { relation: { targetEntityTypeId: "catalog", relationKind: "ONE" } } }),
+      expect.objectContaining({ id: "choice", type: "SELECT", options: [expect.objectContaining({ optionId: "choice_option", value: "canonical" })] }),
+    ]));
+    expect(result.data.items[0]).toMatchObject({ person: people()[0], attendance: { contextValues: { related: { id: "catalog_record", displayName: "Synthetic catalog label" }, choice: { optionId: "choice_option", label: "Choice label" } } } });
+    expect(result.data.latest[0]).toMatchObject({ person: people()[0], contextValues: { related: { id: "catalog_record", displayName: "Synthetic catalog label" } } });
+  });
+  it.each([[true, "ONE"], [false, "MANY"]])("rejects multiple contexts (%s / %s)", async (multiple, kind) => {
+    setup(multiple, kind);
+    const result = await getAttendanceWorkflowDay({ appViewId: "view_attendance", contractId: "contract", userId: "user", date: "2026-08-22" });
+    expect(result.ok).toBe(false); expect(transaction).not.toHaveBeenCalled();
   });
 });

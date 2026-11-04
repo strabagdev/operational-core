@@ -1,3 +1,12 @@
+// Legacy/unprotected fixtures: opt-in guard behavior is covered in workflow-write-policy.postgres.test.ts.
+vi.mock("./workflow-write-policy", async importOriginal => ({
+  ...await importOriginal<typeof import("./workflow-write-policy")>(),
+  authorizeWorkflowWrite: vi.fn(async () => undefined),
+  workflowWriteMetadata: vi.fn(async () => ({})),
+  assertGenericEntityWritesAllowed: vi.fn(async () => undefined),
+  assertRelationMutationAllowed: vi.fn(async () => undefined),
+  validateWritePolicyChange: vi.fn(async () => undefined),
+}));
 import { Prisma } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 

@@ -844,6 +844,17 @@ export function AppViewForm({
         />
       )}
 
+      {type === "WORKFLOW" ? <details className="rounded-md border border-border p-4">
+        <summary className="cursor-pointer text-sm font-medium">Protección de escrituras del destino (opcional)</summary>
+        <p className="mt-2 text-sm text-muted-foreground">Sin política se conserva el comportamiento actual. Configura primero una experiencia existente. Usa version 1, mode workflow-only, acceptNewCommands y allowedAppViewIds. Pausa las capturas antes de desarmar.</p>
+        <label className="mt-3 grid gap-2 text-sm">Política JSON
+          <textarea name="workflowWritePolicy" rows={5} defaultValue={valueFromState(state,"workflowWritePolicy") || (initialValues?.config.type === "WORKFLOW" && initialValues.config.workflowWritePolicy ? JSON.stringify(initialValues.config.workflowWritePolicy,null,2) : "")} className="w-full rounded border border-input p-2 font-mono text-xs focus-visible:ring-2" />
+        </label>
+        <label className="mt-3 grid gap-2 text-sm">Sólo para retirar una política pausada: escribe DESARMAR y deja vacío el JSON
+          <input name="workflowWritePolicyDisarm" autoComplete="off" className="rounded border border-input p-2 focus-visible:ring-2" />
+        </label>
+      </details> : null}
+
       {type !== "PANEL" ? (
         <div className="grid gap-4 sm:grid-cols-2">
           <label className="grid gap-2 text-sm font-medium">
@@ -4043,7 +4054,8 @@ function ConfigFields({
             </div>
             <OrderedFieldChecklist
               fields={activeTargetFields.filter((field) =>
-                field.type === "SELECT" &&
+                (field.type === "SELECT" || (field.type === "RELATION" &&
+                  Boolean(getRelationConfig(field.config).targetEntityTypeId) && getRelationConfig(field.config).relationKind === "ONE")) &&
                 !field.multiple &&
                 !new Set([personFieldId, dateFieldId, statusFieldId, observationFieldId].filter(Boolean)).has(field.id),
               )}
@@ -4803,7 +4815,7 @@ function OrderedFieldChecklist({
     <fieldset className="grid gap-2 rounded-md border border-border p-3">
       <legend className="px-1 text-sm font-medium">{label}</legend>
       {orderedFields.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No hay campos SELECT adicionales compatibles.</p>
+        <p className="text-sm text-muted-foreground">No hay campos SELECT o RELATION simples adicionales compatibles.</p>
       ) : (
         <div className="grid gap-2">
           {orderedFields.map((field) => {

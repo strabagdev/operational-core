@@ -1,3 +1,5 @@
+// These fixtures are unprotected; actual guard behavior is verified in PostgreSQL integration.
+vi.mock("./workflow-write-policy",async importOriginal=>({...await importOriginal<typeof import("./workflow-write-policy")>(),assertGenericEntityWritesAllowed:vi.fn(async()=>undefined)}));
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {

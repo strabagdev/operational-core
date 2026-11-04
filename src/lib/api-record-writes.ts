@@ -1,3 +1,4 @@
+import { assertGenericEntityWritesAllowed, WorkflowWritePolicyError } from "./workflow-write-policy";
 import { createHash } from "node:crypto";
 import { Prisma } from "@prisma/client";
 
@@ -107,6 +108,7 @@ export async function createApiEntityRecord({
         },
       });
 
+      await assertGenericEntityWritesAllowed(tx, [entity.id]);
       const mutation = await buildCreateMutation({
         contractId,
         entity,
@@ -222,6 +224,7 @@ export async function patchApiEntityRecord({
         let response: StoredPatchResponse;
 
         try {
+          await assertGenericEntityWritesAllowed(tx, [entity.id]);
           const locked = await lockEntityRecordForUpdate(tx, recordId, entity.id);
           const existing = locked
             ? await getApiEntityRecord({ client: tx, entityType: entity, recordId })
@@ -1107,6 +1110,8 @@ function isUniqueIdempotencyConflict(error: unknown) {
 function mapApiWriteException(error: unknown) {
   if (error instanceof Error && /SCHEDULE_(CATALOG_MANAGED|WORKFLOW_REQUIRED|APPLICATION_IMMUTABLE|STRUCTURE_IMMUTABLE|CONFIG_MANAGED)/.test(error.message)) return writeError("SCHEDULE_WRITE_REQUIRES_EDITOR", "Esta entidad usa horarios protegidos. Utiliza su editor o workflow configurado.");
   if (error instanceof Error && error.message.includes("COMPOSITE_WORKFLOW_REQUIRED")) return writeError("COMPOSITE_WORKFLOW_REQUIRED", "Esta entidad requiere el workflow de identidad compuesta; la escritura genérica está deshabilitada.");
+  if (error instanceof WorkflowWritePolicyError) return writeError(error.code, error.message);
+
   if (error instanceof ApiRecordInputError) {
     return writeError(error.code, error.message);
   }

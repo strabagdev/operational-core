@@ -1,3 +1,5 @@
+import { releaseRejectedWorkflowClaim, authorizeWorkflowWrite, workflowWriteMetadata, parseWorkflowWriteCommand, WorkflowWritePolicyError, assertGenericEntityWritesAllowed, type WorkflowWriteCommand } from "./workflow-write-policy";
+import { withStateUpdateWriteIdentity } from "./state-update-write-identity";
 import {withSubjectPresentation} from "./subject-presentation-core";
 import { workflowSearchMetadata, usesWorkflowSearchComparison, workflowSearchPredicate, workflowSubjectsSql } from "./workflow-search-comparison";
 import { SearchComparisonError } from "./search-comparison";
@@ -93,6 +95,7 @@ export type StateUpdateContext = {
 };
 
 export type StateUpdateInput = {
+  writeCommand?: WorkflowWriteCommand;
   schedule?: ScheduleReference;
   identity?: CompositeIdentity;
   clientRequestId?: string;
@@ -124,7 +127,7 @@ export type StateUpdateResult = (
       result: "CONFLICT";
       subjectRecordId: string;
     }
-  | { code: string; message: string; result: "ERROR"; subjectRecordId: string }) & { scheduleApplication?: ScheduleApplication };
+  | { code: string; message: string; result: "ERROR"; subjectRecordId: string }) & { scheduleApplication?: ScheduleApplication; writeCommand?: WorkflowWriteCommand };
 
 export type StateUpdateWorkflowTiming = {
   mark(phase: string): void;
@@ -205,6 +208,7 @@ async function saveCompositeWorkflow({ appId, appViewId, contractId, userId, con
   return prisma.$transaction(async tx => {
     await tx.$executeRaw`SET LOCAL lock_timeout = '5s'`;
     await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${appId + ":" + operation + ":" + input.clientRequestId}, 0))::text`;
+    await assertGenericEntityWritesAllowed(tx,[context.targetEntityType.id]);
     await tx.$queryRaw`SELECT id FROM "EntityType" WHERE id=${context.targetEntityType.id} FOR KEY SHARE`;
     const freshType = await tx.entityType.findUniqueOrThrow({where:{id:context.targetEntityType.id},select:{scheduleConfig:true}});
     const policy = scheduleConsumer(freshType.scheduleConfig);
@@ -317,6 +321,7 @@ export async function getStateUpdateWorkflow({
     ok: true as const,
     data: await withSubjectPresentation({
       appView: context.context.appView,
+      ...(await workflowWriteMetadata(context.context.targetEntityType.id, context.context.appView.id)),
       searchComparison,
       ...(codeSearch.metadata ? { codeSearchField: codeSearch.metadata } : {}),
       ...(codeSearch.fieldId ? { searchFieldId: codeSearch.fieldId } : {}),
@@ -419,6 +424,7 @@ export async function getStateUpdateCurrentBatch(input: {
   const scheduleResolution = policy ? await resolveSchedule(prisma,input.contractId,policy,date.value ?? undefined,context.composite?.identity?.values[policy.sourceFieldId]) : undefined;
   return { ok: true as const, data: await withSubjectPresentation({
     appView: context.appView, contractId: input.contractId, currentBatchCapabilities: capabilities,
+    ...(await workflowWriteMetadata(context.targetEntityType.id, context.appView.id)),
     currentBatch: { version: 1, requestedSubjectIds: input.subjectRecordIds, results },
     workflow: workflowMetadata(context), date: date.value,
     dateField: context.config.dateFieldId ? serializeField(requireField(context,context.config.dateFieldId)) : null,
@@ -451,7 +457,7 @@ export async function saveStateUpdateWorkflow({
     return context;
   }
 
-  const parsed = parseStateUpdateBody(body, context.context.config, context.context.schedulePolicy);
+  const parsed = (() => { try { return parseStateUpdateBody(body, context.context.config, context.context.schedulePolicy); } catch (error) { if (error instanceof WorkflowWritePolicyError) return writeError(error.code,error.message); throw error; } })();
   timing?.mark("body_validation");
 
   if (!parsed.ok) {
@@ -512,7 +518,23 @@ export async function saveStateUpdateWorkflow({
   };
 }
 
-export async function saveStateUpdateEntry({
+export async function saveStateUpdateEntry(args: {
+  appId: string;
+  context: StateUpdateContext;
+  contractId: string;
+  idempotencyKey: StateUpdateIdempotencyKey | null;
+  input: StateUpdateInput;
+  timing?: StateUpdateWorkflowTiming;
+  userId: string;
+}): Promise<{ ok: true; result: StateUpdateResult }> {
+  return withStateUpdateWriteIdentity(args.context, args.input, args.contractId, async context => {
+    const response = await saveStateUpdateEntryInContext({ ...args, context });
+    if (args.input.writeCommand && response.result.result !== "ERROR") response.result.writeCommand = args.input.writeCommand;
+    return response;
+  });
+}
+
+async function saveStateUpdateEntryInContext({
   appId,
   context,
   contractId,
@@ -529,6 +551,8 @@ export async function saveStateUpdateEntry({
   timing?: StateUpdateWorkflowTiming;
   userId: string;
 }): Promise<{ ok: true; result: StateUpdateResult }> {
+  try { await authorizeWorkflowWrite(context.transaction, context.config, context.appView.id, input); }
+  catch (error) { if (!(error instanceof WorkflowWritePolicyError)) throw error; await releaseRejectedWorkflowClaim(context.transaction ?? prisma,appId,contractId,input.clientRequestId,idempotencyKey); return { ok: true, result: { result: "ERROR", code: error.code, message: error.message, subjectRecordId: input.subjectRecordId } }; }
   const subject = (await (context.transaction ?? prisma).entityRecord.findMany({
     select: { displayName: true, id: true },
     take: 1,
@@ -580,8 +604,20 @@ export async function saveStateUpdateEntry({
         context,
         date: input.date,
         subjectRecordIds: [subject.id],
+        countIdentityMatches: context.config.historyMode === "update-current" && context.config.uniqueness.mode === "subject-date",
       }))[0] ?? null;
   timing?.mark("existing_target_lookup");
+
+  if ((existing?.matchingRecordCount ?? 0) > 1) {
+    const result: StateUpdateResult = {
+      result: "ERROR",
+      code: "DUPLICATE_STATE_UPDATE_IDENTITY",
+      message: "Hay varios registros para la misma identidad. Conserva tu edición y solicita una revisión; no se modificó ninguno.",
+      subjectRecordId: input.subjectRecordId,
+    };
+    await persistStateUpdateResultIfNeeded({ appId, context, idempotencyKey, input, result, timing });
+    return { ok: true, result };
+  }
 
   if (!existing || context.config.historyMode === "append") {
     const record = await createStateUpdateRecord({
@@ -1124,6 +1160,7 @@ function parseStateUpdateBody(body: unknown, config: StateUpdateWorkflowConfig, 
       date: parsedDate.date,
       dateValue: parsedDate.value ?? undefined,
       expectedUpdatedAt: stringValue(body.expectedUpdatedAt)?.trim() || undefined,
+      ...(body.writeCommand !== undefined ? { writeCommand: parseWorkflowWriteCommand(body.writeCommand) } : {}),
       extraValues: rawExtraValues,
       overwrite: body.overwrite === true,
       states,
@@ -1220,6 +1257,7 @@ async function resolveRequestedStates({
 }
 
 export type ExistingStateUpdate = {
+  matchingRecordCount?: number;
   subjectRecordId: string;
   record: {
     scheduleApplication?: Prisma.JsonValue | null;
@@ -1244,11 +1282,13 @@ export async function findExistingStateUpdates({
   date,
   subjectRecordIds,
   selection,
+  countIdentityMatches,
 }: {
   context: StateUpdateContext;
   date?: Date;
   subjectRecordIds: string[];
   selection?: "workflow-current";
+  countIdentityMatches?: boolean;
 }): Promise<ExistingStateUpdate[]> {
   if (context.composite && !context.composite.recordIds.length) return [];
   if (subjectRecordIds.length === 0 || context.config.uniqueness.mode === "none") {
@@ -1325,11 +1365,14 @@ export async function findExistingStateUpdates({
   for (const record of selectedRecords) {
     const subjectRecordId = record.outgoingRelations.find(relation => relation.sourceFieldId === context.config.subjectFieldId)?.targetRecordId;
 
-    if (!subjectRecordId || firstBySubject.has(subjectRecordId)) {
+    if (!subjectRecordId) continue;
+    const prior = firstBySubject.get(subjectRecordId);
+    if (prior) {
+      if (countIdentityMatches) prior.matchingRecordCount = (prior.matchingRecordCount ?? 1) + 1;
       continue;
     }
 
-    firstBySubject.set(subjectRecordId, { subjectRecordId, record });
+    firstBySubject.set(subjectRecordId, { subjectRecordId, record, ...(countIdentityMatches ? { matchingRecordCount: 1 } : {}) });
   }
 
   return Array.from(firstBySubject.values());
@@ -1620,6 +1663,7 @@ async function createStateUpdateRecord({
       entityRecordId: record.id,
       entityTypeId: context.targetEntityType.id,
       metadata: {
+        ...(input.writeCommand ? {workflowWriteFingerprint:input.writeCommand.configurationFingerprint} : {}),
         apiExternalAppId: appId,
         displayName: record.displayName,
         workflowKey: "state-update",
@@ -1725,6 +1769,7 @@ async function updateStateUpdateRecord({
       entityRecordId: record.id,
       entityTypeId: context.targetEntityType.id,
       metadata: {
+        ...(input.writeCommand ? {workflowWriteFingerprint:input.writeCommand.configurationFingerprint} : {}),
         apiExternalAppId: appId,
         displayName: record.displayName,
         workflowKey: "state-update",
@@ -2475,6 +2520,7 @@ function canonicalStateUpdateRequestHash({
     appViewId,
     contractId,
     ...(body.identity ? { identity: { ...body.identity, values: JSON.parse(identityContextKey(body.identity.values)) } } : {}),
+    ...(body.writeCommand ? {writeCommand: body.writeCommand} : {}),
     ...(body.schedule ? {schedule: body.schedule} : {}),
     date: body.dateValue ?? null,
     expectedUpdatedAt: body.expectedUpdatedAt ?? null,
@@ -2617,6 +2663,7 @@ async function persistStateUpdateResultIfNeeded({
   result: StateUpdateResult;
   timing?: StateUpdateWorkflowTiming;
 }) {
+  if (input.writeCommand && result.result !== "ERROR") result.writeCommand = input.writeCommand;
   if (!input.clientRequestId || !idempotencyKey) return;
 
   timing?.mark("idempotency_finalize_start");
@@ -2655,6 +2702,7 @@ async function persistStateUpdateResultInTransaction(
     result: StateUpdateResult;
   },
 ) {
+  if (input.writeCommand && result.result !== "ERROR") result.writeCommand = input.writeCommand;
   if (!input.clientRequestId || !idempotencyKey) return;
 
   await tx.apiIdempotencyKey.update({

@@ -1,3 +1,4 @@
+import { assertContractPurgeAllowed } from "./workflow-write-policy";
 import { Prisma, type ContractStatus } from "@prisma/client";
 import { z } from "zod";
 
@@ -356,6 +357,7 @@ async function resolveAdminOrganization(userId: string, organizationId?: string)
 }
 
 async function deleteContractDependencies(tx: Prisma.TransactionClient, contractId: string) {
+  await assertContractPurgeAllowed(tx, contractId);
   await tx.auditChange.deleteMany({
     where: {
       OR: [

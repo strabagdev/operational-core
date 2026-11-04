@@ -311,3 +311,12 @@ The current Core does not implement:
 - conditional validations or a rules engine.
 
 These boundaries keep the Core focused on data integrity, isolation, dynamic structure, relations, and auditability.
+
+## Workflow writer policy — opt-in local 04-11-2026
+
+La política de escritores de una entidad se declara una sola vez en AppView.config, se valida por
+IDs/roles y se aplica en funciones servidor/transacciones, independientemente de la UI y del tipo de
+cliente. Reutiliza JSON, permisos y auditoría existentes; no agrega un sistema paralelo de colas o
+identidad. El contrato de capacidades se captura con cada intención. Detalle y límites de esta primera
+etapa: STATE_UPDATE.md, «Política optativa de escritores por destino». Ausente conserva legacy;
+ninguna política se activa al desplegar. SQL privilegiado queda fuera de esta guarda de aplicación.

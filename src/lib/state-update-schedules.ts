@@ -1,3 +1,4 @@
+import {assertGenericEntityWritesAllowed} from "./workflow-write-policy";
 import { createHash, randomUUID } from "node:crypto";
 import { Prisma, type EntityFieldType } from "@prisma/client";
 import { z } from "zod";
@@ -68,6 +69,7 @@ async function requireAdmin(contractId: string, userId: string) {
 }
 function asJson(value: unknown) { return value as Prisma.InputJsonValue; }
 async function configPermission(tx: Prisma.TransactionClient, contractId: string, catalogId: string) {
+  await assertGenericEntityWritesAllowed(tx,[catalogId]);
   await tx.$queryRaw`SELECT set_config('opco.schedule_config',${contractId},true)`;
   await tx.$queryRaw`SELECT set_config('opco.schedule_admin',${catalogId},true)`;
 }
@@ -121,6 +123,7 @@ export async function publishScheduleRevision(contractId:string,userId:string,ca
     if (latest && (values.effectiveFrom<=latest.effectiveFrom || values.effectiveFrom<=today(config.timeZone))) fail("AMBIGUOUS_SCHEDULE_EFFECTIVITY","La nueva revisión debe comenzar en una fecha futura posterior a la última revisión.");
     const id = randomUUID(), sequence = (latest?.sequence ?? 0)+1;
     const payload = {...values,timeZone:config.timeZone,sequence};
+    await assertGenericEntityWritesAllowed(tx,[config.revisionEntityTypeId]);
     await tx.entityRecord.create({data:{id,entityTypeId:config.revisionEntityTypeId,displayName:values.name+" · R"+sequence,
       values:{create:Object.entries(payload).map(([key,value])=>({entityFieldId:config.revisionFields[key as keyof typeof config.revisionFields],
         ...(key==="effectiveFrom"?{dateValue:new Date(value+"T00:00:00.000Z")}:typeof value==="number"?{integerValue:value}:{textValue:value})}))},

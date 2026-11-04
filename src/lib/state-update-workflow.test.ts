@@ -1,3 +1,12 @@
+// Legacy/unprotected fixtures: opt-in guard behavior is covered in workflow-write-policy.postgres.test.ts.
+vi.mock("./workflow-write-policy", async importOriginal => ({
+  ...await importOriginal<typeof import("./workflow-write-policy")>(),
+  authorizeWorkflowWrite: vi.fn(async () => undefined),
+  workflowWriteMetadata: vi.fn(async () => ({})),
+  assertGenericEntityWritesAllowed: vi.fn(async () => undefined),
+  assertRelationMutationAllowed: vi.fn(async () => undefined),
+  validateWritePolicyChange: vi.fn(async () => undefined),
+}));
 import { Prisma } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -45,9 +54,11 @@ const queryRaw = vi.mocked(prisma.$queryRaw);
 const transaction = vi.mocked(prisma.$transaction);
 
 const tx = {
+  $queryRaw: vi.fn(async () => []),
   apiIdempotencyKey: { update: vi.fn() },
   auditEvent: { create: vi.fn() },
   entityRecord: {
+    findMany: (...args: Parameters<typeof prisma.entityRecord.findMany>) => prisma.entityRecord.findMany(...args),
     create: vi.fn(),
     update: vi.fn(),
   },
@@ -826,7 +837,7 @@ describe("state-update workflow runtime", () => {
       data: { result: { result: "CONFLICT" } },
     });
     expect(tx.entityRecord.update).not.toHaveBeenCalled();
-    expect(prisma.apiIdempotencyKey.update).toHaveBeenCalledWith(expect.objectContaining({
+    expect(tx.apiIdempotencyKey.update).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
         responseBody: expect.objectContaining({ result: expect.objectContaining({ result: "CONFLICT" }) }),
       }),
@@ -901,19 +912,19 @@ describe("state-update workflow runtime", () => {
       states: { operational_field: "missing_option" },
     }));
 
-    expect(prisma.apiIdempotencyKey.update).toHaveBeenCalledWith(expect.objectContaining({
+    expect(tx.apiIdempotencyKey.update).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
         entityRecordId: "state_existing",
         responseBody: expect.objectContaining({ result: expect.objectContaining({ result: "UNCHANGED" }) }),
       }),
     }));
-    expect(prisma.apiIdempotencyKey.update).toHaveBeenCalledWith(expect.objectContaining({
+    expect(tx.apiIdempotencyKey.update).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
         entityRecordId: "state_existing",
         responseBody: expect.objectContaining({ result: expect.objectContaining({ result: "CONFLICT" }) }),
       }),
     }));
-    expect(prisma.apiIdempotencyKey.update).toHaveBeenCalledWith(expect.objectContaining({
+    expect(tx.apiIdempotencyKey.update).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
         entityRecordId: null,
         responseBody: expect.objectContaining({ result: expect.objectContaining({ result: "ERROR" }) }),

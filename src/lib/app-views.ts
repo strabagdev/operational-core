@@ -1,3 +1,5 @@
+import {createAuditEvent} from "./audit";
+import { parseWorkflowWritePolicy, validateWritePolicyChange, WorkflowWritePolicyError, type WorkflowWritePolicy } from "./workflow-write-policy";
 import {buildSubjectPresentationDefinition} from "./subject-presentation-core";
 import {parseSubjectPresentation,type SubjectPresentationConfig} from "./subject-presentation";
 import { codeSearchField } from "./workflow-code-search";
@@ -348,6 +350,7 @@ const defaultReportTimeFilter = {
 } as const satisfies ReportTimeFilterConfig;
 
 export type AttendanceWorkflowConfig = {
+  workflowWritePolicy?: WorkflowWritePolicy;
       type: "WORKFLOW";
       workflowKey: "attendance";
       subjectPresentation?: SubjectPresentationConfig;
@@ -363,6 +366,7 @@ export type AttendanceWorkflowConfig = {
     };
 
 export type StateUpdateWorkflowConfig = {
+  workflowWritePolicy?: WorkflowWritePolicy;
   type: "WORKFLOW";
   workflowKey: "state-update";
   subjectPresentation?: SubjectPresentationConfig;
@@ -418,6 +422,9 @@ export function getAppViewInput(formData: FormData) {
       defaultSortFieldId: formData.get("defaultSortFieldId"),
       defaultCheckInOptionId: formData.get("defaultCheckInOptionId") ?? formData.get("presentOptionId"),
       contextFieldIds: formData.getAll("contextFieldIds"),
+      workflowWritePolicySpecified: formData.has("workflowWritePolicy"),
+      workflowWritePolicyDisarm: formData.get("workflowWritePolicyDisarm") === "DESARMAR",
+      workflowWritePolicy: formData.get("workflowWritePolicy") ? parseWorkflowWritePolicy(JSON.parse(String(formData.get("workflowWritePolicy")))) : undefined,
       subjectPresentation: formData.has("subjectPresentation") && formData.get("subjectPresentation") ? JSON.parse(String(formData.get("subjectPresentation"))) : undefined,
       subjectPresentationSpecified: formData.has("subjectPresentation"),
       codeSearch: formData.get("codeSearchFieldId") ? { fieldId: formData.get("codeSearchFieldId") } : undefined,
@@ -567,6 +574,7 @@ export async function createAppView(
     type: input.common.type,
   });
 
+  if (config.type === "WORKFLOW" && config.workflowWritePolicy) throw new WorkflowWritePolicyError("WORKFLOW_POLICY_EXISTING_VIEW_REQUIRED", "Crea primero la experiencia sin política; después configura sus IDs autorizados.");
   return prisma.appView.create({
     data: {
       active: input.common.active,
@@ -596,13 +604,16 @@ export async function updateAppView(
   const config = await validateAppViewConfig({
     contractId: authorized.contract.id,
     rawConfig: input.common.type === "WORKFLOW" ? { ...input.rawConfig,
+      ...(!input.rawConfig.workflowWritePolicySpecified ? {workflowWritePolicy:(authorized.appView.config as {workflowWritePolicy?:WorkflowWritePolicy})?.workflowWritePolicy}:{}),
       ...(!input.rawConfig.codeSearchSpecified ? {codeSearch:(authorized.appView.config as {codeSearch?:{fieldId:string}})?.codeSearch}:{}),
       ...(!input.rawConfig.subjectPresentationSpecified ? {subjectPresentation:(authorized.appView.config as {subjectPresentation?:SubjectPresentationConfig})?.subjectPresentation}:{})
     } : input.rawConfig,
     type: input.common.type,
   });
 
-  return prisma.appView.update({
+  return prisma.$transaction(async tx => {
+    const previousPolicy = await validateWritePolicyChange(tx, contractId, appViewId, authorized.appView.config, config, input.rawConfig.workflowWritePolicyDisarm);
+    const updated = await tx.appView.update({
     data: {
       active: input.common.active,
       config: toJsonConfig(config),
@@ -613,6 +624,14 @@ export async function updateAppView(
       type: input.common.type,
     },
     where: { id: authorized.appView.id },
+  });
+    const nextPolicy = config.type === "WORKFLOW" ? config.workflowWritePolicy : undefined;
+    if (JSON.stringify(previousPolicy ?? null) !== JSON.stringify(nextPolicy ?? null)) await createAuditEvent(tx, {
+      contractId, actorUserId:userId, entityTypeId:config.type === "WORKFLOW" ? config.targetEntityTypeId : null,
+      action:"VALUE_CHANGED", summary:"Actualizó la política de escrituras del workflow", metadata:{appViewId},
+      changes:[{fieldName:"workflowWritePolicy",oldValue:previousPolicy ?? Prisma.JsonNull,newValue:nextPolicy ?? Prisma.JsonNull}],
+    });
+    return updated;
   });
 }
 
@@ -846,6 +865,7 @@ export function logAppViewConfigDiagnostic({
 }
 
 export function friendlyAppViewError(error: unknown) {
+  if (error instanceof WorkflowWritePolicyError) return error.message;
   if (error instanceof z.ZodError) {
     return appViewFieldErrors(error)?.form?.[0] ??
       appViewFieldErrors(error)?.panelConfig?.[0] ??
@@ -1053,6 +1073,7 @@ async function validateAppViewConfig({
       return {
         type,
         workflowKey: config.workflowKey,
+        ...(config.workflowWritePolicy ? { workflowWritePolicy: config.workflowWritePolicy } : {}),
         ...(config.codeSearch ? { codeSearch: config.codeSearch } : {}),
       ...(config.subjectPresentation ? {subjectPresentation:config.subjectPresentation}:{}),
         sourceEntityTypeId: config.sourceEntityTypeId,
@@ -1084,6 +1105,7 @@ async function validateAppViewConfig({
     return {
       type,
       workflowKey: config.workflowKey,
+      ...(config.workflowWritePolicy ? { workflowWritePolicy: config.workflowWritePolicy } : {}),
       ...(config.codeSearch ? { codeSearch: config.codeSearch } : {}),
       ...(config.subjectPresentation ? {subjectPresentation:config.subjectPresentation}:{}),
       sourceEntityTypeId: config.sourceEntityTypeId,
@@ -1360,6 +1382,7 @@ const reportConfigInputSchema = z.union([
 ]);
 
 const workflowBaseConfigInputSchema = z.object({
+  workflowWritePolicy: z.custom<WorkflowWritePolicy>(value => { try { return !!parseWorkflowWritePolicy(value); } catch { return false; } }).optional(),
   subjectPresentation: z.custom<SubjectPresentationConfig>(value=>{try{return !!parseSubjectPresentation(value);}catch{return false;}}).optional(),
   codeSearch: z.object({ fieldId: z.string().trim().min(1) }).strict().optional(),
   workflowKey: z.enum(workflowKeys),
@@ -2754,9 +2777,10 @@ function validateAttendanceAppViewFields({
 
     const contextField = requireActiveTargetField(targetFields, contextFieldId, "Contexto");
 
-    if (contextField.type !== "SELECT" || contextField.multiple) {
+    if (contextField.multiple || (contextField.type !== "SELECT" && contextField.type !== "RELATION") ||
+      (contextField.type === "RELATION" && (!getRelationConfig(contextField.config).targetEntityTypeId || getRelationConfig(contextField.config).relationKind !== "ONE"))) {
       throw new AppViewConfigError(
-        "Los campos de contexto deben ser selección simple.",
+        "Los campos de contexto deben ser selección simple o relación simple con destino configurado.",
         "contextFieldIds",
       );
     }

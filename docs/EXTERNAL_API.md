@@ -1722,3 +1722,58 @@ Cierre de convivencia29-10: el endpoint current por lotes también aplica withSu
 los sujetos resueltos autorizados. Descriptor/proyección idénticos al camino individual (salvo instante
 de captura), preservando evento/null y recibo del lote. No altera búsquedas, escrituras ni permisos;
 regresión PostgreSQL real local RED→GREEN. Detalle en STATE_UPDATE,cierre de convivencia29-10.
+
+
+### Attendance: contexto SELECT/RELATION simple — implementación local 03-11-2026
+
+Ampliación del contrato contextFieldIds: además de SELECT simple admite RELATION ONE. No cambia
+persona+fecha ni los endpoints. contextFields SELECT y contextValues {optionId,label} conservan su
+forma. RELATION entrega type=RELATION, multiple=false y config.relation con targetEntityTypeId y
+relationKind=ONE; contextValues[fieldId] devuelve {id,displayName} o null (sin inventar etiquetas).
+GET actual/latest resuelve las relaciones junto con Persona mediante sourceFieldId.
+
+POST Attendance conserva contextValues[fieldId] como cadena/null: SELECT recibe optionId; RELATION
+recibe targetRecordId. El adaptador escribe el valor SELECT canónico o el ID RELATION en extraValues.
+POST STATE_UPDATE (camino Client) usa el mismo extraValues por ID y el motor existente valida destino,
+contrato, cardinalidad y obligatorios, conserva omisión/null, revisión base, confirmación y replay.
+No se eluden permisos del endpoint de catálogo ni se certifica catálogo offline desde esta metadata.
+Sin schema/migraciones ni cambio de asignaciones. Requiere Client nuevo para configurar contextos
+RELATION; no activar con runtimes anteriores. Evidencia local y límites en el respaldo de este lote.
+
+### STATE_UPDATE — exclusión concurrente legacy (local 03-11-2026)
+
+Sin cambiar el body ni las identidades existentes, subject/subject-date + update-current serializan
+lookup/compare/escritura en PostgreSQL entre requests y AppViews con la misma identidad configurada.
+Attendance usa el mismo camino, incluido POST legacy. Repetición igual devuelve UNCHANGED; diferencias
+CONFLICT; corrección explícita valida expectedUpdatedAt. none/append y Definition/Slot v1 conservados.
+Si una mutación subject-date encuentra varias filas, el resultado funcional ERROR incluye código
+DUPLICATE_STATE_UPDATE_IDENTITY y conserva los registros. Client debe conservar la intención para
+revisión, igual que otros errores funcionales; no resolverlo sobrescribiendo una fila arbitraria.
+No cambia cobertura/frescura/preparación ni contrato SQLite/outbox. Esta garantía es cooperativa del
+workflow: las escrituras genéricas legacy no adquieren el lock y un Core anterior tampoco. La política
+universal por entidad/v2 queda propuesta en STATE_UPDATE.md, sin activar ni migrar entidades existentes.
+
+### Workflow write contract v1 — opt-in local, 04-11-2026
+
+Las lecturas Attendance y STATE_UPDATE, incluido current por lotes, añaden `workflowWriteContract`:
+null = sin política; objeto = `{version:1,configurationFingerprint,requiredCapabilities:["relation-context-v1"],authorized,acceptNewCommands}`.
+Su origen es la política validada del destino, no headers del cliente. Lecturas y búsquedas conservan
+su autorización normal; anunciar metadata no concede escritura.
+
+Para un destino protegido, el comando STATE_UPDATE añade `writeCommand` con versión1, la huella
+recibida y `capabilities:["relation-context-v1"]`; cada entry del POST Attendance lo lleva igualmente.
+Se exige ID explícito de cada contexto obligatorio en extraValues/contextValues aun con registro
+existente. Se conservan los contratos optionId de estados y valor canónico de extras SELECT/ID RELATION.
+CREATED/UPDATED/UNCHANGED devuelven el comando reconocido y el recibo idempotente lo conserva.
+
+Rechazos seguros: WORKFLOW_WRITER_REQUIRED, WORKFLOW_NOT_AUTHORIZED,
+WORKFLOW_COMMAND_INCOMPATIBLE, WORKFLOW_CONTEXT_REQUIRED y WORKFLOW_WRITES_PAUSED.
+Un resultado ERROR de workflow sigue el envelope por sujeto/entry existente; API genérica devuelve
+error HTTP400. No es fallo de red ni permiso para retry infinito. La reserva propia sin efecto se
+libera al rechazar por guarda; ningún recibo completado se elimina. Replay completado mantiene hash,
+autorización y scope previos. Un body que simule capacidades en POST/PATCH genéricos sigue rechazado.
+
+`AppView.config.workflowWritePolicy` v1 es optativo, requiere ADMIN y se guarda por las acciones del
+editor. La configuración inicial debe estar pausada y listar la AppView propietaria y los IDs autorizados.
+Ausencia de campo en formularios anteriores conserva la política; desarme requiere pausa y confirmación
+explícita. Sin política no cambian payloads legacy. No hay nueva migración ni activación por despliegue.

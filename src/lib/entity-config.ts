@@ -1,3 +1,4 @@
+import { assertGenericEntityWritesAllowed } from "./workflow-write-policy";
 import { fieldSearchComparison, parseSearchComparison, type SearchComparison } from "./search-comparison";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
@@ -1597,6 +1598,7 @@ async function recalculateEntityTypeDisplayNames(
       }))
       .filter((record) => record.displayName !== record.previousDisplayName);
 
+    if (changedRecords.length) await assertGenericEntityWritesAllowed(tx, [entityTypeId]);
     await updateRecordDisplayNames(tx, changedRecords);
     cursor = records.at(-1)?.id;
 

@@ -1,3 +1,4 @@
+import { assertGenericEntityWritesAllowed } from "./workflow-write-policy";
 import ExcelJS from "exceljs";
 import { Prisma, type EntityField, type EntityFieldType } from "@prisma/client";
 import { randomUUID } from "node:crypto";
@@ -403,6 +404,7 @@ export async function importEntityRecords({
     return null;
   }
 
+  await assertGenericEntityWritesAllowed(prisma, [context.entityType.id]);
   const rows = await parseExcelRows({ fields: context.importableFields, file });
   const existingRecords = await getExistingImportRecords(context.entityType.id, rows);
   const validation = await validateImportRows({
@@ -429,6 +431,7 @@ export async function importEntityRecords({
   });
 
   return prisma.$transaction(async (tx) => {
+    await assertGenericEntityWritesAllowed(tx, [context.entityType.id]);
     if (plan.updatedRecords.length > 0) {
       await updateRecordDisplayNames(tx, plan.updatedRecords);
     }

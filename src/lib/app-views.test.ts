@@ -1,3 +1,12 @@
+// Legacy/unprotected fixtures: opt-in guard behavior is covered in workflow-write-policy.postgres.test.ts.
+vi.mock("./workflow-write-policy", async importOriginal => ({
+  ...await importOriginal<typeof import("./workflow-write-policy")>(),
+  authorizeWorkflowWrite: vi.fn(async () => undefined),
+  workflowWriteMetadata: vi.fn(async () => ({})),
+  assertGenericEntityWritesAllowed: vi.fn(async () => undefined),
+  assertRelationMutationAllowed: vi.fn(async () => undefined),
+  validateWritePolicyChange: vi.fn(async () => undefined),
+}));
 import { Prisma } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -37,6 +46,7 @@ vi.mock("./contracts", () => ({
 
 vi.mock("./prisma", () => ({
   prisma: {
+    $transaction: vi.fn(async (work: (client: unknown) => unknown) => work(prisma)),
     appView: {
       create: vi.fn(),
       findFirst: vi.fn(),
@@ -3214,5 +3224,16 @@ describe("optional code reader configuration", () => {
       .mockResolvedValueOnce(attendanceEntityType() as never);
     await expect(createAppView("contract_1", "user_1", getAppViewInput(formData({ type: "WORKFLOW", workflowKey: "attendance", sourceEntityTypeId: "people", targetEntityTypeId: "attendance", personFieldId: "person_field", dateFieldId: "date_field", statusFieldId: "status_field", defaultCheckInOptionId: "present_option", codeSearchFieldId: "search-id" })))).rejects.toThrow("texto activo y buscable");
     expect(appViewCreate).not.toHaveBeenCalled();
+  });
+});
+
+describe("Attendance RELATION context configuration", () => {
+  it.each([false, true])("accepts only simple context relations (multiple=%s)", async (multiple) => {
+    const target = attendanceEntityType();
+    target.fields.push({ id: "related_context", key: "related_context", name: "Related context", type: "RELATION", isActive: true, multiple, config: { targetEntityTypeId: "catalog", relationKind: "ONE" }, options: [] } as never);
+    entityTypeFindFirst.mockResolvedValueOnce(entityType({ id: "people" }) as never).mockResolvedValueOnce(target as never);
+    const request = () => createAppView("contract_1", "user_1", getAppViewInput(formData({ type: "WORKFLOW", workflowKey: "attendance", sourceEntityTypeId: "people", targetEntityTypeId: "attendance", personFieldId: "person_field", dateFieldId: "date_field", statusFieldId: "status_field", defaultCheckInOptionId: "present_option", contextFieldIds: ["related_context"] })));
+    if (multiple) await expect(request()).rejects.toThrow("Los campos de contexto deben ser selección simple o relación simple");
+    else { await request(); expect(appViewCreate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ config: expect.objectContaining({ contextFieldIds: ["related_context"] }) }) })); }
   });
 });

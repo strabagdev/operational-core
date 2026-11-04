@@ -1,3 +1,4 @@
+import { assertGenericEntityWritesAllowed, assertRecordDeletionAllowed, assertRelationMutationAllowed } from "./workflow-write-policy";
 import { formatConfiguredDecimal } from "./decimal-precision";
 import { Prisma, type EntityField, type EntityFieldType } from "@prisma/client";
 
@@ -954,6 +955,7 @@ export async function createEntityRecord(
   });
 
   return prisma.$transaction(async (tx) => {
+    await assertGenericEntityWritesAllowed(tx, [authorized.entityType.id]);
     const record = await tx.entityRecord.create({
       data: {
         entityTypeId: authorized.entityType.id,
@@ -1009,6 +1011,7 @@ export async function updateEntityRecord(
   }
 
   return prisma.$transaction(async (tx) => {
+    await assertGenericEntityWritesAllowed(tx, [entityTypeId]);
     await lockEntityRecordForUpdate(tx, recordId, entityTypeId);
     const authorized = await getAuthorizedEntityRecord(
       contractId,
@@ -1167,6 +1170,7 @@ export async function deleteEntityRecordsPermanently(
   }
 
   return prisma.$transaction(async (tx) => {
+    await assertRecordDeletionAllowed(tx, authorized.entityType.id, ids);
     const records = await tx.entityRecord.findMany({
       where: {
         id: { in: ids },
@@ -1485,6 +1489,7 @@ export async function syncEntityRelations(
   sourceRecordId: string,
   relations: RelationInput[],
 ) {
+  await assertRelationMutationAllowed(tx, sourceRecordId);
   for (const relation of relations) {
     const targetIds = new Set(relation.targetRecordIds);
 

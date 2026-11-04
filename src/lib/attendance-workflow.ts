@@ -1,3 +1,4 @@
+import { releaseRejectedWorkflowClaim, isWorkflowWriteRejectionCode, workflowWriteMetadata, parseWorkflowWriteCommand, WorkflowWritePolicyError, type WorkflowWriteCommand } from "./workflow-write-policy";
 import {withSubjectPresentation} from "./subject-presentation-core";
 import { workflowSearchMetadata, usesWorkflowSearchComparison, workflowSubjectsSql } from "./workflow-search-comparison";
 import { SearchComparisonError } from "./search-comparison";
@@ -20,6 +21,7 @@ import {
 } from "@/lib/state-update-workflow";
 
 export type AttendanceEntryInput = {
+  writeCommand?: WorkflowWriteCommand;
   contextValues?: Record<string, string | null>;
   expectedUpdatedAt?: string;
   observation?: string | null;
@@ -27,7 +29,7 @@ export type AttendanceEntryInput = {
   personRecordId: string;
   statusOptionId: string;
 };
-export type AttendanceEntryResult =
+export type AttendanceEntryResult = (
   | {
       personRecordId: string;
       recordId: string;
@@ -52,7 +54,7 @@ export type AttendanceEntryResult =
       message: string;
       personRecordId: string;
       result: "ERROR";
-    };
+    }) & {writeCommand?:WorkflowWriteCommand};
 
 type AttendanceConfig = Extract<AppViewConfig, { type: "WORKFLOW"; workflowKey: "attendance" }>;
 type AttendanceField = {
@@ -164,6 +166,7 @@ export async function getAttendanceWorkflowDay({
     ok: true as const,
     data: await withSubjectPresentation({
       appView: context.context.appView,
+      ...(await workflowWriteMetadata(context.context.targetEntityType.id, context.context.appView.id)),
       searchComparison,
       ...(codeSearch.metadata ? { codeSearchField: codeSearch.metadata } : {}),
       ...(codeSearch.fieldId ? { searchFieldId: codeSearch.fieldId } : {}),
@@ -238,7 +241,7 @@ export async function saveAttendanceWorkflowDay({
     return context;
   }
 
-  const parsed = parseAttendanceSaveBody(body);
+  const parsed = (() => { try { return parseAttendanceSaveBody(body); } catch (error) { if (error instanceof WorkflowWritePolicyError) return {ok:false as const,response:badRequest(error.message,error.code)}; throw error; } })();
 
   if (!parsed.ok) {
     return parsed;
@@ -305,6 +308,7 @@ export async function saveAttendanceWorkflowDay({
       contractId,
       idempotencyKey: null,
       input: {
+        ...(entry.writeCommand ? {writeCommand: entry.writeCommand} : {}),
         date: parsed.body.date,
         dateValue: parsed.body.dateValue,
         expectedUpdatedAt: entry.expectedUpdatedAt,
@@ -339,7 +343,9 @@ export async function saveAttendanceWorkflowDay({
     results,
   };
 
-  if (idempotency.key) {
+  if (idempotency.key && results.length > 0 && results.every(result => result.result === "ERROR" && isWorkflowWriteRejectionCode(result.code))) {
+    await releaseRejectedWorkflowClaim(prisma,appId,contractId,parsed.body.clientRequestId,idempotency.key);
+  } else if (idempotency.key) {
     await persistAttendanceIdempotencyResult({
       appId,
       clientRequestId: parsed.body.clientRequestId,
@@ -366,6 +372,7 @@ function mapStateUpdateResultToAttendance({
 }): AttendanceEntryResult {
   if (result.result === "CREATED" || result.result === "UNCHANGED" || result.result === "UPDATED") {
     return {
+      ...(result.writeCommand ? {writeCommand:result.writeCommand} : {}),
       personRecordId,
       recordId: result.recordId,
       result: result.result,
@@ -402,7 +409,10 @@ function mapStateUpdateResultToAttendance({
 }
 
 function serializeAttendanceContextFields(fields: AttendanceField[]) {
-  return fields.map((field) => ({
+  return fields.map((field) => field.type === "RELATION" ? ({
+    id: field.id, key: field.key, name: field.name, required: field.required, type: "RELATION" as const,
+    multiple: false, config: { relation: getRelationConfig(field.config) },
+  }) : ({
     id: field.id,
     key: field.key,
     name: field.name,
@@ -442,6 +452,10 @@ function attendanceEntryExtraValues({
       continue;
     }
 
+    if (field.type === "RELATION") {
+      extraValues[field.id] = optionId;
+      continue;
+    }
     const option = field.options.find((item) => item.id === optionId && item.isActive);
     extraValues[field.id] = option?.value ?? optionId;
   }
@@ -456,8 +470,13 @@ function attendanceEntryExtraValues({
 function attendanceContextValuesFromRecord(
   values: Array<{ entityFieldId: string; textValue: string | null }>,
   contextFields: AttendanceField[],
+  relations: Array<{ sourceFieldId: string; targetRecordId: string; targetRecord?: { id: string; displayName: string } | null }> = [],
 ) {
   return Object.fromEntries(contextFields.map((field) => {
+    if (field.type === "RELATION") {
+      const relation = relations.find(item => item.sourceFieldId === field.id);
+      return [field.id, relation ? { id: relation.targetRecordId, ...(relation.targetRecord ? { displayName: relation.targetRecord.displayName } : {}) } : null];
+    }
     const value = values.find((item) => item.entityFieldId === field.id)?.textValue ?? null;
     const option = value
       ? field.options.find((item) => item.value === value && item.isActive)
@@ -468,7 +487,7 @@ function attendanceContextValuesFromRecord(
 }
 
 type ExistingAttendance = {
-  contextValues: Record<string, { label: string; optionId: string } | null>;
+  contextValues: Record<string, { label: string; optionId: string } | { id: string; displayName?: string } | null>;
   observation: string | null;
   personRecordId: string;
   record: {
@@ -507,11 +526,12 @@ async function findExistingAttendances({
     include: {
       outgoingRelations: {
         select: {
+          sourceFieldId: true,
           targetRecordId: true,
+          targetRecord: { select: { id: true, displayName: true } },
         },
         where: {
-          sourceFieldId: config.personFieldId,
-          targetRecordId: { in: personRecordIds },
+          sourceFieldId: { in: [config.personFieldId, ...contextFields.filter(field => field.type === "RELATION").map(field => field.id)] },
         },
       },
       values: {
@@ -552,7 +572,7 @@ async function findExistingAttendances({
   const firstByPerson = new Map<string, ExistingAttendance>();
 
   for (const record of records) {
-    const personRecordId = record.outgoingRelations[0]?.targetRecordId;
+    const personRecordId = record.outgoingRelations.find(relation => relation.sourceFieldId === config.personFieldId)?.targetRecordId;
 
     if (!personRecordId || firstByPerson.has(personRecordId)) {
       continue;
@@ -564,7 +584,7 @@ async function findExistingAttendances({
       observation: config.observationFieldId
         ? record.values.find((value) => value.entityFieldId === config.observationFieldId)?.textValue ?? null
         : null,
-      contextValues: attendanceContextValuesFromRecord(record.values, contextFields),
+      contextValues: attendanceContextValuesFromRecord(record.values, contextFields, record.outgoingRelations),
       personRecordId,
       record,
       statusOption: statusValue ? statusOptionsByValue.get(statusValue) ?? null : null,
@@ -727,6 +747,7 @@ async function getLatestAttendanceRecords({
     include: {
       outgoingRelations: {
         select: {
+          sourceFieldId: true,
           targetRecord: {
             select: {
               displayName: true,
@@ -736,7 +757,7 @@ async function getLatestAttendanceRecords({
           targetRecordId: true,
         },
         where: {
-          sourceFieldId: config.personFieldId,
+          sourceFieldId: { in: [config.personFieldId, ...contextFields.filter(field => field.type === "RELATION").map(field => field.id)] },
         },
       },
       values: {
@@ -770,7 +791,7 @@ async function getLatestAttendanceRecords({
   return records.map((record) => {
     const statusValue = record.values.find((value) => value.entityFieldId === config.statusFieldId)?.textValue;
     const statusOption = statusValue ? statusOptionsByValue.get(statusValue) ?? null : null;
-    const person = record.outgoingRelations[0]?.targetRecord ?? null;
+    const person = record.outgoingRelations.find(relation => relation.sourceFieldId === config.personFieldId)?.targetRecord ?? null;
 
     return {
       attendanceRecordId: record.id,
@@ -782,7 +803,7 @@ async function getLatestAttendanceRecords({
         : null,
       statusLabel: statusOption?.label ?? null,
       statusOptionId: statusOption?.id ?? null,
-      contextValues: attendanceContextValuesFromRecord(record.values, contextFields),
+      contextValues: attendanceContextValuesFromRecord(record.values, contextFields, record.outgoingRelations),
       updatedAt: record.updatedAt.toISOString(),
     };
   });
@@ -1028,8 +1049,9 @@ function validateAttendanceRuntimeConfig({
     if (
       semanticFieldIds.has(contextFieldId) ||
       !contextField ||
-      contextField.type !== "SELECT" ||
-      contextField.multiple
+      contextField.multiple ||
+      (contextField.type !== "SELECT" && contextField.type !== "RELATION") ||
+      (contextField.type === "RELATION" && (!getRelationConfig(contextField.config).targetEntityTypeId || getRelationConfig(contextField.config).relationKind !== "ONE"))
     ) {
       return {
         ok: false as const,
@@ -1121,6 +1143,7 @@ function parseAttendanceSaveBody(body: unknown) {
     }
 
     entries.push({
+      ...(entry.writeCommand !== undefined ? { writeCommand: parseWorkflowWriteCommand(entry.writeCommand) } : {}),
       contextValues: parseAttendanceContextValues(entry.contextValues),
       expectedUpdatedAt: typeof entry.expectedUpdatedAt === "string" ? entry.expectedUpdatedAt : undefined,
       observation: typeof entry.observation === "string"
