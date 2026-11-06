@@ -984,3 +984,23 @@ Orden: Core → Client con política ausente → verificar runtimes/pendientes �
 contexto simple/obligatorio y verificar lectura → autorizar apertura. Nunca activar automáticamente.
 Después de activar, rollback sólo a builds con guardas/contextos compatibles; pausa no abre escritores
 genéricos. No borrar pendientes ni quitar relaciones para retroceder. Calendario automático fuera.
+
+
+### Cardinalidad RELATION coherente — implementación local 05-11-2026
+
+`relationKind` (ONE/MANY, plano o histórico `config.relation`) determina la cardinalidad. Para nuevas definiciones y ediciones explícitas, `multiple` es un espejo obligatorio: ONE=false/MANY=true. El editor bloquea el checkbox y envía su valor derivado mediante hidden. No cambia SELECT ni otros tipos. Crear/actualizar por las cuatro funciones de persistencia rechaza contradicciones, incluso si un caller evita el parser de FormData.
+
+No se reparan definiciones existentes al leerlas. Editar una definición histórica contradictoria requiere confirmación expresa en el editor; el JSON desconocido se conserva y la representación anidada existente se mantiene coherente sólo al guardar ese cambio autorizado. Las escrituras históricas de un único vínculo siguen siendo válidas cuando el kind es ONE aunque su espejo antiguo sea true. Attendance contextos reconoce ONE; el espejo genérico no redefine su cardinalidad. Los formatos de lectura legacy permanecen compatibles con Client anterior; un ONE con varios vínculos almacenados devuelve todos, nunca se trunca al primero.
+
+Reducir a ONE toma el bloqueo exclusivo existente del destino, relee el campo y rechaza si hay un origen con más de un vínculo. Los escritores conservan el bloqueo compartido y revalidan los kinds actuales en una consulta por conjunto antes de alterar relaciones; el importador valida igualmente su plan. Se probaron ambos órdenes concurrentes, rollback, autorización e idempotencia. No hay esquema, migración, namespace ni reglas específicas de dominio.
+
+Inventario productivo READ ONLY 05-11 19:43:35Z: 20 campos RELATION, 10 con ONE/multiple=true; máximo de un vínculo por origen en esos diez. Incluye sujetos de Attendance y STATE_UPDATE. Ningún campo fue modificado. Detalle e IDs: backups/relation-cardinality-fix/2026-11-05/production-inventory.json. La reparación/activación productiva requiere autorización separada.
+
+Evidencia: 450 pruebas Core focalizadas, incluidas 14 PostgreSQL locales; typecheck, lint y build Next/Turbopack con secretos ficticios y DB loopback:1. Client: 130 pruebas, SQLite real/reapertura y transporte de sync simulado; sin nuevo navegador/OPFS ni Safari físico. Informe e inventario reconstruible: backups/relation-cardinality-fix/2026-11-05/REVIEW.md. No suite completa ni estabilidad general acreditada; V11 y pendientes independientes conservados.
+
+
+### Restauración Attendance de RELATION ONE histórico — candidato local 06-11-2026
+
+La corrección Client incorpora metadata del campo al adaptar current/SQLite y al editar: ONE con arreglo unitario conserva ID/etiqueta; MANY no se aplana. Un ONE sobrecargado o ambiguo permanece conservado y requiere revisión. No se cambia ninguna definición ni intención al leer. Core mantiene deliberadamente el formato legacy de extras para clientes publicados; el GET Attendance continúa entregando objeto simple. No se modifica código funcional Core en este incremento: una integración PostgreSQL adicional acredita esa diferencia de formato, metadata, current individual/por lotes y replay UNCHANGED, además de los controles normales de edición/conflicto/permisos.
+
+Orden previsto del lote combinado: Core → Client, sin regularizar campos durante despliegue. Los diez históricos inventariados el 06-11 siguen intactos; no se relee producción. El bloqueo técnico de restauración se corrige localmente, pero el respaldo productivo actualizado que pedía el preflight continúa pendiente de autorización separada. Sin migraciones, activación, commit/push/deploy. Evidencia, parches incrementales/combinados y límites: backups/attendance-relation-context-restoration/2026-11-06/REVIEW.md.

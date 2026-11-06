@@ -1,3 +1,4 @@
+import { assertRelationMutationCardinality } from "./relation-cardinality-write";
 import { createHash } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
@@ -89,12 +90,13 @@ export async function assertGenericEntityWritesAllowed(tx: Client, ids: string[]
   await lockWritePolicyTargets(tx, ids);
   for (const id of [...new Set(ids)]) if (await policyFor(tx, id)) throw new WorkflowWritePolicyError("WORKFLOW_WRITER_REQUIRED", "Este destino sólo admite sus workflows autorizados; editor, importador, API genérica y borrado están bloqueados.");
 }
-export async function assertRelationMutationAllowed(tx: Client, sourceRecordId: string) {
+export async function assertRelationMutationAllowed(tx: Client, sourceRecordId: string, relations: {fieldId:string;targetRecordIds:string[]}[] = []) {
   const record = await tx.entityRecord.findUnique({ where: { id: sourceRecordId }, select: { entityTypeId: true } }); if (!record) return;
   await lockWritePolicyTargets(tx, [record.entityTypeId]);
   if (await policyFor(tx, record.entityTypeId)) {
     if (!authorized.get(tx)?.has(record.entityTypeId)) throw new WorkflowWritePolicyError("WORKFLOW_WRITER_REQUIRED");
   }
+  await assertRelationMutationCardinality(tx, relations);
 }
 export async function assertRecordDeletionAllowed(tx: Client, entityTypeId: string, recordIds: string[]) {
   // Take policy locks before record/FK locks, including potential incoming sources.

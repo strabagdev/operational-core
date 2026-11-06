@@ -1777,3 +1777,8 @@ autorización y scope previos. Un body que simule capacidades en POST/PATCH gen�
 editor. La configuración inicial debe estar pausada y listar la AppView propietaria y los IDs autorizados.
 Ausencia de campo en formularios anteriores conserva la política; desarme requiere pausa y confirmación
 explícita. Sin política no cambian payloads legacy. No hay nueva migración ni activación por despliegue.
+
+
+### Compatibilidad de cardinalidad RELATION — 05-11-2026
+
+La semántica proviene de `config.relation.relationKind` (ONE/MANY), no de combinarlo con el booleano genérico `multiple`. Las nuevas definiciones editadas en Core exigen espejos coherentes. El formato histórico de metadata/valores existentes se conserva para clientes anteriores: no se reescriben campos ni registros al leerlos. Un único ID o un arreglo antiguo con un solo ID continúa siendo válido para ONE; dos IDs son rechazados sin mutación. Si un ONE ya contiene múltiples vínculos históricos, la lectura conserva todos para revisión explícita. No se elige uno ni se pierden relaciones al serializar. La revalidación dentro de la transacción impide que un comando validado con metadata antigua eluda una reducción posterior. Idempotencia, permisos, auditoría y contratos de estados/SELECT se conservan.

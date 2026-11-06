@@ -833,9 +833,16 @@ describe("Attendance simple relation context", () => {
     expect(result.data.items[0]).toMatchObject({ person: people()[0], attendance: { contextValues: { related: { id: "catalog_record", displayName: "Synthetic catalog label" }, choice: { optionId: "choice_option", label: "Choice label" } } } });
     expect(result.data.latest[0]).toMatchObject({ person: people()[0], contextValues: { related: { id: "catalog_record", displayName: "Synthetic catalog label" } } });
   });
-  it.each([[true, "ONE"], [false, "MANY"]])("rejects multiple contexts (%s / %s)", async (multiple, kind) => {
+  it.each([[true, "MANY"], [false, "MANY"]])("rejects MANY contexts regardless of the stale mirror (%s / %s)", async (multiple, kind) => {
     setup(multiple, kind);
     const result = await getAttendanceWorkflowDay({ appViewId: "view_attendance", contractId: "contract", userId: "user", date: "2026-08-22" });
     expect(result.ok).toBe(false); expect(transaction).not.toHaveBeenCalled();
+  });
+
+  it("accepts ONE context despite a historical stale multiple mirror without repairing the field", async () => {
+    setup(true, "ONE");
+    const result = await getAttendanceWorkflowDay({appViewId:"view_attendance",contractId:"contract",userId:"user",date:"2026-08-22"});
+    expect(result.ok).toBe(true); expect(transaction).not.toHaveBeenCalled();
+    if (result.ok) expect(result.data.contextFields).toEqual(expect.arrayContaining([expect.objectContaining({id:"related",type:"RELATION",multiple:false})]));
   });
 });

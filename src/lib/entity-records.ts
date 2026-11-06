@@ -1489,7 +1489,7 @@ export async function syncEntityRelations(
   sourceRecordId: string,
   relations: RelationInput[],
 ) {
-  await assertRelationMutationAllowed(tx, sourceRecordId);
+  await assertRelationMutationAllowed(tx, sourceRecordId, relations);
   for (const relation of relations) {
     const targetIds = new Set(relation.targetRecordIds);
 

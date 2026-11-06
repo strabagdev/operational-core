@@ -222,7 +222,7 @@ function serializeApiFieldValue({
     }));
     const relationConfig = getRelationConfig(field.config);
 
-    return field.multiple || relationConfig.relationKind === "MANY"
+    return relationConfig.relationKind === "MANY" || field.multiple || serialized.length > 1
       ? serialized
       : serialized[0] ?? null;
   }

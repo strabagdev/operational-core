@@ -1049,7 +1049,7 @@ function validateAttendanceRuntimeConfig({
     if (
       semanticFieldIds.has(contextFieldId) ||
       !contextField ||
-      contextField.multiple ||
+      (contextField.type === "SELECT" && contextField.multiple) ||
       (contextField.type !== "SELECT" && contextField.type !== "RELATION") ||
       (contextField.type === "RELATION" && (!getRelationConfig(contextField.config).targetEntityTypeId || getRelationConfig(contextField.config).relationKind !== "ONE"))
     ) {

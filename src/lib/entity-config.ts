@@ -1,3 +1,4 @@
+import { assertRelationFieldEdit } from "./relation-cardinality-write";
 import { assertGenericEntityWritesAllowed } from "./workflow-write-policy";
 import { fieldSearchComparison, parseSearchComparison, type SearchComparison } from "./search-comparison";
 import { Prisma } from "@prisma/client";
@@ -80,6 +81,7 @@ export const entityFieldSchema = z
     isActive: z.boolean(),
     targetEntityTypeId: z.string().trim().optional(),
     relationKind: z.enum(relationKinds).optional(),
+    confirmRelationCardinality: z.boolean().optional(),
     validation: z.object({
       required: z.boolean().optional(),
       minLength: z.number().int().min(0).optional(),
@@ -115,6 +117,9 @@ export const entityFieldSchema = z
       });
     }
 
+    if (value.type === "RELATION" && value.multiple !== ((value.relationKind ?? "ONE") === "MANY")) {
+      ctx.addIssue({code: "custom", message: "Tipo de relación y valores múltiples deben tener la misma cardinalidad.", path: ["multiple"]});
+    }
     if (value.type === "RELATION" && !value.targetEntityTypeId) {
       ctx.addIssue({
         code: "custom",
@@ -212,6 +217,7 @@ export function getEntityFieldInput(formData: FormData) {
     isActive: parseFormBoolean(formData, "isActive"),
     targetEntityTypeId: formData.get("targetEntityTypeId") || undefined,
     relationKind: formData.get("relationKind") || undefined,
+    confirmRelationCardinality: parseFormBoolean(formData, "confirmRelationCardinality") || undefined,
     validation,
     defaultValue: getDefaultValueInput(formData, type),
     display,
@@ -629,6 +635,7 @@ export async function createEntityField(
   userId: string,
   input: z.infer<typeof entityFieldSchema>,
 ) {
+  assertSubmittedRelationCardinality(input);
   const authorized = await getAuthorizedEntityType(contractId, entityTypeId, userId);
 
   if (!authorized) {
@@ -684,6 +691,7 @@ export async function createEntityFieldWithOptions(
   input: z.infer<typeof entityFieldSchema>,
   options: FieldOptionDraft[],
 ) {
+  assertSubmittedRelationCardinality(input);
   const authorized = await getAuthorizedEntityType(contractId, entityTypeId, userId);
 
   if (!authorized) {
@@ -764,6 +772,7 @@ export async function updateEntityField(
   userId: string,
   input: z.infer<typeof entityFieldSchema>,
 ) {
+  assertSubmittedRelationCardinality(input);
   const authorized = await getAuthorizedEntityType(contractId, entityTypeId, userId);
 
   if (!authorized) {
@@ -783,6 +792,7 @@ export async function updateEntityField(
   const comparisonOnly = isComparisonOnlyEdit(field, input);
 
   return prisma.$transaction(async (tx) => {
+    await assertRelationFieldEdit(tx, authorized.entityType.id, field.id, input);
     if (input.display.primary && !comparisonOnly) {
       await unsetPrimaryFields(
         tx,
@@ -830,6 +840,7 @@ export async function updateEntityFieldWithOptions(
   input: z.infer<typeof entityFieldSchema>,
   options: FieldOptionDraft[],
 ) {
+  assertSubmittedRelationCardinality(input);
   const authorized = await getAuthorizedEntityType(contractId, entityTypeId, userId);
 
   if (!authorized) {
@@ -850,6 +861,7 @@ export async function updateEntityFieldWithOptions(
   const comparisonOnly = isComparisonOnlyEdit(field, input);
 
   return prisma.$transaction(async (tx) => {
+    await assertRelationFieldEdit(tx, authorized.entityType.id, field.id, input);
     if (input.display.primary && !comparisonOnly) {
       await unsetPrimaryFields(
         tx,
@@ -1390,6 +1402,12 @@ function buildFieldConfig(
     optionValues,
     searchComparison: input.searchComparison,
   });
+}
+
+function assertSubmittedRelationCardinality(input: z.infer<typeof entityFieldSchema>) {
+  if (input.type === "RELATION" && input.multiple !== ((input.relationKind ?? "ONE") === "MANY")) {
+    throw userError("Tipo de relación y valores múltiples deben tener la misma cardinalidad.");
+  }
 }
 
 function validatePrimaryInput(input: z.infer<typeof entityFieldSchema>) {

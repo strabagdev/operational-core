@@ -4056,7 +4056,7 @@ function ConfigFields({
               fields={activeTargetFields.filter((field) =>
                 (field.type === "SELECT" || (field.type === "RELATION" &&
                   Boolean(getRelationConfig(field.config).targetEntityTypeId) && getRelationConfig(field.config).relationKind === "ONE")) &&
-                !field.multiple &&
+                (field.type === "RELATION" || !field.multiple) &&
                 !new Set([personFieldId, dateFieldId, statusFieldId, observationFieldId].filter(Boolean)).has(field.id),
               )}
               label="Campos de contexto"

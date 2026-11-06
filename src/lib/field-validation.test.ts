@@ -710,3 +710,19 @@ it("admits scale only for DECIMAL in range 0–6", () => {
   expect(() => buildMergedFieldConfig({ type: "INTEGER", validation: { decimalPlaces: 1 } })).toThrow();
   expect(buildMergedFieldConfig({ type: "DECIMAL", validation: { decimalPlaces: 1 } })).toMatchObject({ validation: { decimalPlaces: 1 } });
 });
+
+
+describe("RELATION cardinality validation",()=>{
+ it("accepts nested MANY and rejects two targets for ONE, regardless of the historical mirror",()=>{
+  const form=new FormData();form.append("field_field_1","a");form.append("field_field_1","b");
+  const many={...field({type:"RELATION",config:{relation:{relationKind:"MANY",targetEntityTypeId:"catalog"}}}),multiple:false};
+  expect(validateRelationInputs({fields:[many],formData:form})[0].targetRecordIds).toEqual(["a","b"]);
+  expect(()=>validateRelationInputs({fields:[{...many,multiple:true,config:{relationKind:"ONE"}}],formData:form})).toThrow();
+  form.delete("field_field_1");form.set("field_field_1","a");
+  expect(validateRelationInputs({fields:[{...many,multiple:true,config:{relationKind:"ONE"}}],formData:form})[0].targetRecordIds).toEqual(["a"]);
+ });
+ it("retains unknown configuration and keeps historical nested metadata coherent on an explicit edit",()=>{
+  const next=buildMergedFieldConfig({type:"RELATION",existingConfig:{unknown:{keep:true},relation:{relationKind:"MANY",targetEntityTypeId:"catalog",extension:true}},relation:{relationKind:"ONE",targetEntityTypeId:"catalog"},validation:{},display:{}});
+  expect(next).toMatchObject({unknown:{keep:true},relationKind:"ONE",relation:{relationKind:"ONE",extension:true}});
+ });
+});

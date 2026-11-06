@@ -2777,7 +2777,7 @@ function validateAttendanceAppViewFields({
 
     const contextField = requireActiveTargetField(targetFields, contextFieldId, "Contexto");
 
-    if (contextField.multiple || (contextField.type !== "SELECT" && contextField.type !== "RELATION") ||
+    if ((contextField.type === "SELECT" && contextField.multiple) || (contextField.type !== "SELECT" && contextField.type !== "RELATION") ||
       (contextField.type === "RELATION" && (!getRelationConfig(contextField.config).targetEntityTypeId || getRelationConfig(contextField.config).relationKind !== "ONE"))) {
       throw new AppViewConfigError(
         "Los campos de contexto deben ser selección simple o relación simple con destino configurado.",

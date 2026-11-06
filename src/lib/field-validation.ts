@@ -1,3 +1,4 @@
+import { relationKind, relationKindIsAmbiguous } from "./relation-cardinality";
 import { fieldSearchComparison, parseSearchComparison, type SearchComparison } from "./search-comparison";
 import { Prisma, type EntityFieldType } from "@prisma/client";
 import { z } from "zod";
@@ -32,6 +33,7 @@ export type DynamicField = {
   required: boolean;
   config: Prisma.JsonValue | null;
   options: FieldOptionLike[];
+  multiple?: boolean;
 };
 
 export type DisplayField = Pick<
@@ -307,7 +309,7 @@ export function getRelationConfig(config: unknown): RelationConfig {
 
   return {
     targetEntityTypeId: parsed.targetEntityTypeId ?? nestedRelation.targetEntityTypeId,
-    relationKind: parsed.relationKind ?? nestedRelation.relationKind ?? "ONE",
+    relationKind: relationKind(config),
   };
 }
 
@@ -379,6 +381,10 @@ export function buildMergedFieldConfig({
   if (relation?.targetEntityTypeId) {
     nextConfig.targetEntityTypeId = relation.targetEntityTypeId;
     nextConfig.relationKind = relation.relationKind ?? "ONE";
+    const legacy = nextConfig.relation;
+    if (legacy && typeof legacy === "object" && !Array.isArray(legacy)) {
+      nextConfig.relation = {...legacy, targetEntityTypeId: relation.targetEntityTypeId, relationKind: relation.relationKind ?? "ONE"};
+    }
   } else {
     delete nextConfig.targetEntityTypeId;
     delete nextConfig.relationKind;
@@ -666,7 +672,8 @@ export function validateRelationInputs({
       addFieldError(fieldErrors, field, "Este campo es obligatorio.");
     }
 
-    if (config.relationKind !== "MANY" && targetRecordIds.length > 1) {
+    if (relationKindIsAmbiguous(field.config)) addFieldError(fieldErrors, field, "La definición de cardinalidad es ambigua. Revisa el campo sin descartar sus vínculos.");
+    if (getRelationConfig(field.config).relationKind !== "MANY" && targetRecordIds.length > 1) {
       addFieldError(fieldErrors, field, "Este campo admite solo una relación.");
     }
 

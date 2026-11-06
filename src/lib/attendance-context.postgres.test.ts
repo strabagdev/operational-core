@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { prisma } from "./prisma";
 import { createAppView, getAppViewInput } from "./app-views";
 import { getAttendanceWorkflowDay, saveAttendanceWorkflowDay } from "./attendance-workflow";
-import { getStateUpdateWorkflow, saveStateUpdateWorkflow } from "./state-update-workflow";
+import { getStateUpdateCurrentBatch, getStateUpdateWorkflow, saveStateUpdateWorkflow } from "./state-update-workflow";
 
 const suite = process.env.ATTENDANCE_CONTEXT_PG === "1" ? describe.sequential : describe.skip;
 const prefix = "attctx_" + randomUUID().replaceAll("-", "").slice(0, 12), id = (key: string) => prefix + "_" + key;
@@ -67,6 +67,31 @@ suite("Attendance relation context on validated local PostgreSQL", () => {
   expect(r.data.items[0]).toMatchObject({ person: { id: f.p1 }, attendance: { contextValues: { [f.relation]: { id: f.c1, displayName: "Catalog one" }, [f.choice]: { optionId: f.one, label: "One" } } } });
   expect(r.data.latest).toHaveLength(2); for (const row of r.data.latest) expect(row).toMatchObject({ contextValues: { [f.relation]: { id: f.c1, displayName: "Catalog one" } } });
   expect((await current()).extraValues?.[f.relation]).toEqual({ id: f.c1, displayName: "Catalog one" });
+ });
+ it("historical ONE/true keeps the legacy wire array and typed metadata across individual/batch reads and replay", async () => {
+  const before = await current();
+  await prisma.entityField.update({ where: { id: f.relation }, data: { multiple: true } });
+  try {
+   const legacy = await getAttendanceWorkflowDay({ appViewId: f.view, contractId: f.contract, userId: f.user, date: f.day, personRecordId: f.p1 });
+   if (!legacy.ok) throw Error("Synthetic Attendance read rejected");
+   expect(legacy.data.contextFields[1]).toMatchObject({ id: f.relation, type: "RELATION", multiple: false, config: { relation: { relationKind: "ONE" } } });
+   expect(legacy.data.items[0].attendance?.contextValues?.[f.relation]).toEqual({ id: f.c1, displayName: "Catalog one" });
+   const read = await getStateUpdateWorkflow({ appViewId: f.view, contractId: f.contract, userId: f.user, date: f.day, subjectRecordId: f.p1 });
+   if (!read.ok || !read.data.currentBatchCapabilities) throw Error("Synthetic current metadata unavailable");
+   expect(read.data.extraFields.find(field => field.id === f.relation)).toMatchObject({ type: "RELATION", multiple: true, config: { relation: { relationKind: "ONE" } } });
+   expect(read.data.subjects[0].current?.extraValues?.[f.relation]).toEqual([{ id: f.c1, displayName: "Catalog one" }]);
+   const batch = await getStateUpdateCurrentBatch({ appViewId: f.view, contractId: f.contract, userId: f.user, date: f.day, subjectRecordIds: [f.p1, f.p2], version: "1", configurationFingerprint: read.data.currentBatchCapabilities.configurationFingerprint });
+   if (!batch.ok) throw Error("Synthetic batch rejected");
+   expect(batch.data.subjects[0].current?.extraValues?.[f.relation]).toEqual([{ id: f.c1, displayName: "Catalog one" }]);
+   const body = request("historical-array", f.p1, f.c1, { extraValues: { [f.choice]: "canonical-one", [f.relation]: [f.c1] } });
+   const first = result(await save(body)); expect(first).toMatchObject({ result: "UNCHANGED", recordId: before.recordId });
+   expect(result(await save(body))).toEqual(first);
+   expect((await prisma.entityField.findUniqueOrThrow({ where: { id: f.relation } })).multiple).toBe(true);
+   expect(await prisma.entityRecord.count({ where: { entityTypeId: f.target } })).toBe(2);
+  } finally {
+   // Only the synthetic fixture is restored for the unchanged normal-cardinality controls below.
+   await prisma.entityField.update({ where: { id: f.relation }, data: { multiple: false } });
+  }
  });
  it("the actual Client write path edits one existing row, retains relation and replays once", async () => {
   const base = await current(); const body = request("edit", f.p1, f.c2, { overwrite: true, expectedUpdatedAt: base.updatedAt, states: { [f.status]: f.b } });

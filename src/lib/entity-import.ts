@@ -1,3 +1,4 @@
+import { assertRelationMutationCardinality } from "./relation-cardinality-write";
 import { assertGenericEntityWritesAllowed } from "./workflow-write-policy";
 import ExcelJS from "exceljs";
 import { Prisma, type EntityField, type EntityFieldType } from "@prisma/client";
@@ -432,6 +433,13 @@ export async function importEntityRecords({
 
   return prisma.$transaction(async (tx) => {
     await assertGenericEntityWritesAllowed(tx, [context.entityType.id]);
+    const groupedRelations = new Map<string, {fieldId:string;targetRecordIds:string[]}>();
+    for (const relation of plan.relations) {
+      const key = JSON.stringify([relation.sourceRecordId, relation.sourceFieldId]);
+      const item = groupedRelations.get(key) ?? {fieldId:relation.sourceFieldId,targetRecordIds:[]};
+      item.targetRecordIds.push(relation.targetRecordId); groupedRelations.set(key,item);
+    }
+    await assertRelationMutationCardinality(tx, [...groupedRelations.values()]);
     if (plan.updatedRecords.length > 0) {
       await updateRecordDisplayNames(tx, plan.updatedRecords);
     }

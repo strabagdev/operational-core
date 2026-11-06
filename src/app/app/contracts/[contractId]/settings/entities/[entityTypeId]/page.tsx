@@ -1,3 +1,4 @@
+import { relationCardinalityIssue } from "@/lib/relation-cardinality";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { type EntityFieldType } from "@prisma/client";
@@ -17,7 +18,7 @@ import {
   getFieldOptionUsage,
 } from "@/lib/entity-config";
 import { getEntityNatureLabel } from "@/lib/entity-nature";
-import { parseFieldConfig } from "@/lib/field-validation";
+import { getRelationConfig, parseFieldConfig } from "@/lib/field-validation";
 import {
   buildFieldEditorHref,
   getFieldEditorMode,
@@ -413,8 +414,9 @@ async function FieldEditorOverlay({
         searchComparison: fieldConfig.searchComparison,
         multiple: field.multiple,
         isActive: field.isActive,
-        targetEntityTypeId: fieldConfig.targetEntityTypeId,
-        relationKind: fieldConfig.relationKind,
+        targetEntityTypeId: getRelationConfig(field.config).targetEntityTypeId,
+        relationKind: getRelationConfig(field.config).relationKind,
+        cardinalityIssue: relationCardinalityIssue(field),
         validation: fieldConfig.validation,
         defaultValue: fieldConfig.defaultValue,
         display: fieldConfig.display,

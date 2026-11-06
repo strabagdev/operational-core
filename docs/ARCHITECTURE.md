@@ -320,3 +320,8 @@ cliente. Reutiliza JSON, permisos y auditoría existentes; no agrega un sistema 
 identidad. El contrato de capacidades se captura con cada intención. Detalle y límites de esta primera
 etapa: STATE_UPDATE.md, «Política optativa de escritores por destino». Ausente conserva legacy;
 ninguna política se activa al desplegar. SQL privilegiado queda fuera de esta guarda de aplicación.
+
+
+### RELATION: cardinalidad canónica y compatibilidad — 05-11-2026
+
+Para RELATION, `relationKind` es la fuente de cardinalidad; `multiple` es un espejo derivado para nuevas definiciones (ONE=false, MANY=true). Las representaciones plana/anidada históricas se leen sin migrarlas. La incoherencia de un espejo histórico se inventaría y requiere revisión explícita al editar su definición, sin impedir comandos válidos bajo su kind. Ninguna corrección automática de datos/definiciones ni cambio del esquema. Los bloqueos de destino existentes coordinan ediciones de cardinalidad y escrituras, con revalidación de las relaciones por conjunto en la transacción. Véase STATE_UPDATE, sección Cardinalidad RELATION coherente.

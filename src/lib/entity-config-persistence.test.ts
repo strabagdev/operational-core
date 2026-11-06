@@ -88,6 +88,10 @@ function input(required: boolean, overrides: Record<string, unknown> = {}) {
 function tx() {
   return {
     entityField: {
+      findUnique: vi.fn(async ({where}) => {
+        const authorized = await entityTypeFindFirst.mock.results.at(-1)?.value;
+        return authorized?.fields.find((item: {id:string}) => item.id === where.id) ?? field();
+      }),
       create: vi.fn(async ({ data }) => ({ ...field(), id: "field_created", ...data })),
       update: vi.fn(async ({ where, data }) => ({ ...field({ id: where.id }), ...data })),
     },
@@ -102,6 +106,7 @@ function tx() {
       delete: vi.fn(),
     },
     $executeRaw: vi.fn(async () => 1),
+    $queryRaw: vi.fn(async () => []),
   };
 }
 
@@ -504,6 +509,7 @@ describe("entity field type persistence", () => {
           field({
             type,
             multiple: type === "MULTISELECT" || type === "RELATION",
+            config: type === "RELATION" ? {relationKind:"MANY",targetEntityTypeId:"entity_target"} : undefined,
             options: type === "SELECT" || type === "MULTISELECT"
               ? [{ id: "opt_activo", label: "Activo", value: "activo", sortOrder: 1, isActive: true }]
               : [],

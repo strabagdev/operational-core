@@ -409,3 +409,13 @@ AppView configurada con editor antiguo. Sin migraciones,namespace o payloads nue
 Inventario/parches/checks verificables:backups/subject-presentation-close/2026-10-29/.
 402exclusiones y pendientes ajenos preservados. Continúan separados la interrupción11/13 sin causa
 y la preparación de todas las experiencias al volver a Inicio. Sin publicación/activación. V11 pausado.
+
+
+## Cardinalidad RELATION — candidato local 05-11-2026
+
+Editor y Core exigen ONE=false/MANY=true en nuevas definiciones; revisiones históricas son explícitas. Reducción a ONE protegida contra múltiples vínculos y escritores concurrentes, con permisos e idempotencia intactos. Client usa kind, conserva arrays históricos y pendientes, y muestra límites de configuración sin elegir relaciones automáticamente. Sin reparaciones ni configuración productiva. Core→Client; revisión productiva y cualquier reducción quedan separadas. Evidencia, compatibilidad y límites: STATE_UPDATE y backups/relation-cardinality-fix/2026-11-05/REVIEW.md. V11 pausado; 402 exclusiones y pendientes conservados.
+
+
+### Restauración Attendance / ONE histórico — candidato local 06-11-2026
+
+Corrección incremental sobre relation-cardinality-fix: interpretación de arreglos unitarios por metadata, ID/etiqueta conservados y revisión explícita para valores incompatibles. No se regularizaron los diez campos ni se reescribió outbox; MANY, SELECT, guardas y comandos existentes conservados. Evidencia/parches combinados y límites: backups/attendance-relation-context-restoration/2026-11-06/REVIEW.md. Ver STATE_UPDATE, Restauración. Publicación/activación no autorizadas en esta ejecución; respaldo operativo actualizado pendiente. 402 exclusiones, pendientes ajenos y V11 preservados.

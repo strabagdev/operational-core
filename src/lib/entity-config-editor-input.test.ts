@@ -246,6 +246,7 @@ describe("entity field editor input", () => {
     const formData = baseFieldForm("RELATION");
     formData.set("targetEntityTypeId", "entity_target");
     formData.set("relationKind", "MANY");
+    formData.set("multiple", "true");
 
     expect(getEntityFieldEditorInput(formData).field).toMatchObject({
       type: "RELATION",
@@ -301,4 +302,13 @@ it("distinguishes old forms, explicit removal and a valid literal comparison rou
  expect(getEntityFieldEditorInput(body).field.searchComparison).toEqual({version:1,ignoreCase:true,ignoreWhitespace:true,ignoreCharacters:["-","."],match:"exact"});
  old.set("searchComparisonIgnoreCharacters",'[".*"]');expect(()=>getEntityFieldEditorInput(old)).toThrow(FieldEditorInputError);
  old.set("searchComparisonIgnoreCharacters",'[]');old.set("type","SELECT");expect(()=>getEntityFieldEditorInput(old)).toThrow();
+});
+
+
+describe("RELATION cardinality input", () => {
+  it.each([["ONE", true], ["MANY", false]])("rejects contradictory %s / %s input", (kind, multiple) => {
+    const form = baseFieldForm("RELATION");
+    form.set("targetEntityTypeId", "entity_target"); form.set("relationKind", String(kind)); form.set("multiple", String(multiple));
+    expect(() => getEntityFieldEditorInput(form)).toThrow();
+  });
 });

@@ -1,5 +1,6 @@
 "use client";
 
+import { relationCardinalityIssue } from "@/lib/relation-cardinality";
 import type { SearchComparison } from "@/lib/search-comparison";
 
 import * as React from "react";
@@ -65,6 +66,7 @@ type FieldEditorFormValues = {
   isActive?: boolean;
   targetEntityTypeId?: string;
   relationKind?: "ONE" | "MANY";
+  cardinalityIssue?: string | null;
   validation?: {
     required?: boolean;
     minLength?: number;
@@ -357,6 +359,8 @@ export function FieldEditorControls({
     targetEntityTypeId,
   });
   const supportsMultiple = multipleFieldTypes.has(type);
+  const relationMultiple = relationKind === "MANY";
+  const historicalCardinalityIssue = type === "RELATION" && mode === "edit" && defaultValues?.type === "RELATION" ? defaultValues.cardinalityIssue ?? relationCardinalityIssue({type: "RELATION", multiple: defaultValues.multiple, config: {relationKind: defaultValues.relationKind ?? "ONE"}}) : null;
   const validationControls = fieldValidationControls[type];
   const relationTarget = entityTypes.find((entityType) => entityType.id === targetEntityTypeId);
 
@@ -559,12 +563,18 @@ export function FieldEditorControls({
           />
           {supportsMultiple ? (
             <CheckboxControl
-              checked={multiple}
+              checked={type === "RELATION" ? relationMultiple : multiple}
+              disabled={type === "RELATION"}
               label="Permitir varios valores"
               name="multiple"
               onChange={setMultiple}
+              derivedValue={type === "RELATION" ? relationMultiple : undefined}
             />
           ) : null}
+          {historicalCardinalityIssue ? <div role="alert" className="grid gap-2 text-sm text-destructive">
+            <p>Revisar cardinalidad: {historicalCardinalityIssue}</p>
+            <label><input type="checkbox" name="confirmRelationCardinality" value="true" required /> Confirmo explícitamente la cardinalidad elegida antes de guardar.</label>
+          </div> : null}
           <CheckboxControl checked={isActive} label="Activo" name="isActive" onChange={setIsActive} />
         </section>
 
@@ -688,7 +698,9 @@ function CheckboxControl({
   label,
   name,
   onChange,
+  derivedValue,
 }: {
+  derivedValue?: boolean;
   checked?: boolean;
   disabled?: boolean;
   label: string;
@@ -700,7 +712,7 @@ function CheckboxControl({
 
   return (
     <label className="flex items-center gap-2 text-sm">
-      <input name={name} type="hidden" value="false" />
+      <input name={name} type="hidden" value={String(derivedValue ?? false)} />
       <input
         checked={value}
         className="h-4 w-4"

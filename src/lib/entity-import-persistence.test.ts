@@ -20,6 +20,7 @@ vi.mock("./entity-records", async (importOriginal) => ({
 vi.mock("./prisma", () => ({
   prisma: {
     $transaction: vi.fn(),
+    appView: {findMany:vi.fn(async()=>[])},
     entityValue: {
       findMany: vi.fn(async () => []),
     },
@@ -93,6 +94,8 @@ async function workbookFile(rowCount: number, headers = ["Nombre"], rows?: unkno
 
 function tx() {
   return {
+    appView: {findMany:vi.fn(async()=>[])},
+    $queryRaw:vi.fn(async()=>[]),
     entityRecord: {
       create: vi.fn(),
       createMany: vi.fn(async ({ data }) => ({ count: data.length })),
@@ -113,6 +116,10 @@ function tx() {
       createMany: vi.fn(async ({ data }) => ({ count: data.length })),
     },
     entityField: {
+      findMany: vi.fn(async ({where}) => {
+        const context = await mocks.getAuthorizedRecordEntityType.mock.results.at(-1)?.value;
+        return context?.entityType.fields.filter((field: {id:string}) => where.id.in.includes(field.id)) ?? [];
+      }),
       update: vi.fn(),
       updateMany: vi.fn(),
       upsert: vi.fn(),

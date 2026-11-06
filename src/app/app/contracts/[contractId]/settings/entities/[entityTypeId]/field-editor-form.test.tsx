@@ -234,3 +234,14 @@ describe("field editor controls", () => {
     expect(validateClientForm(formData)).toEqual({});
   });
 });
+
+
+describe("RELATION cardinality controls", () => {
+  it.each([["ONE", false], ["MANY", true]] as const)("derives a disabled switch and successful hidden value for %s", (kind, multiple) => {
+    const html = renderControls({ defaultValues: { type: "RELATION", relationKind: kind, targetEntityTypeId: "empresas", multiple: !multiple }, mode: "edit" });
+    const controls = html.match(/<input\b[^>]*name="multiple"[^>]*>/g) ?? [];
+    expect(controls.some(input => input.includes('type="checkbox"') && input.includes('disabled=""'))).toBe(true);
+    expect(controls.filter(input => input.includes('type="hidden"')).map(input => input.match(/value="([^"]*)"/)?.[1])).toEqual([String(multiple)]);
+    expect(html).toContain("Revisar cardinalidad");
+  });
+});
