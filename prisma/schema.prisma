@@ -433,3 +433,29 @@ model StateUpdateIdentitySlot {
   @@unique([definitionId, identityHash])
   @@index([definitionId, date, contextKey])
 }
+
+
+// Shadow diagnostics only. No FK: deletion tombstones must remain observable.
+model OfflineRevisionEpoch {
+  id String @id
+  version Int
+  epoch String
+  coverageSignature String
+  createdAt DateTime @default(now())
+}
+model OfflineEntityRevision {
+  contractId String
+  entityTypeId String
+  dataRevision BigInt @default(0)
+  @@id([contractId, entityTypeId])
+  @@index([entityTypeId])
+}
+
+// Empty after commit: atomic transaction-private work, not an offline/business queue.
+model OfflineRevisionPending {
+  transactionId BigInt
+  contractId String
+  entityTypeId String
+  increments BigInt @default(1)
+  @@id([transactionId, contractId, entityTypeId])
+}

@@ -388,3 +388,34 @@ git diff --check
 ```
 
 Si un bloque cambia contrato externo bajo `/api/v1`, actualizar `docs/EXTERNAL_API.md` en el mismo cambio.
+
+
+## Offline revisions — local shadow stage, 11-11-2026
+
+[Contract and gates](OFFLINE_REVISION_SHADOW.md). Durable entity revisions use atomic statement
+tracking plus deferred commit flush, including bulk SQL, relationships, deletions and identity
+slots. Read-only repeatable-read manifest revalidates current authorization and metadata together.
+Missing tracking is not unchanged. ALWAYS-trigger/code attestation cannot prove absence of an
+old privileged bypass: gaps/resets/restores require a new epoch and reaccreditation.
+
+No Client reuse is enabled, no freshness policy or sync/OPFS/outbox behavior changes. Manual
+rollback SQL removes only diagnostic bookkeeping; no automatic production restore or deletion
+of pending work. New migration is validated only on a private synthetic PostgreSQL instance.
+
+
+## Revision-bound read isolation — local shadow stage 2, 11-11-2026
+
+[Read snapshot protocol](REVISION_BOUND_READS.md) scopes shared Prisma consumers using
+AsyncLocalStorage and PostgreSQL READ ONLY / REPEATABLE READ. Unrelated writes keep the root client;
+a late child keeps its closed transaction, never a root fallback. Opt-in errors/mixed revisions fail
+explicitly; old clients and all writes are unchanged. No new migration, storage change or automatic
+retry. Retain stage 1's trigger-gap/epoch/privilege limits; no receipt or Client reuse is enabled.
+
+
+## 13-11-2026 — Gate selectivo local de Attendance
+
+[Contrato y límites](SELECTIVE_OFFLINE_REUSE.md): policy2 optativa Core/Client, apagada por defecto;
+recibo mensual íntegro del mismo handle/sesión y consumo dentro de su transacción de inspección.
+Rechazo conserva descarga normal; retirada final provoca una sola pasada ordinaria localizada.
+Catálogos y otros workflows continúan descargándose. Sin nueva migración, motores offline,
+comandos o sincronización; sin producción, commit/push/deploy.

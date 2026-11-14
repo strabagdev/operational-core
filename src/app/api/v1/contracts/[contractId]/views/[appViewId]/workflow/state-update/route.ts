@@ -1,3 +1,4 @@
+import { revisionBoundRead } from "@/lib/revision-bound-read";
 import { requireApiContractAccess } from "@/lib/api-auth";
 import { applyApiDiagnosticsHeaders, createApiServerTiming } from "@/lib/api-diagnostics";
 import { badRequest, success } from "@/lib/api-response";
@@ -9,7 +10,7 @@ import {
 
 export const runtime = "nodejs";
 
-export async function GET(
+async function legacyGET(
   request: Request,
   { params }: { params: Promise<{ appViewId: string; contractId: string }> },
 ) {
@@ -124,3 +125,7 @@ async function readJsonBody(request: Request) {
 }
 
 function parseIdentityQuery(value: string | null): unknown { if (value === null) return undefined; try { return JSON.parse(value); } catch { return false; } }
+
+export async function GET(request: Request, context: { params: Promise<{ contractId: string; appViewId: string }> }) {
+  return revisionBoundRead(request, { kind: "state-update", ...await context.params }, () => legacyGET(request, context));
+}

@@ -1,10 +1,11 @@
+import { revisionBoundRead } from "@/lib/revision-bound-read";
 import { requireApiContractAccess } from "@/lib/api-auth";
 import { success } from "@/lib/api-response";
 import { getApiPanel } from "@/lib/panels";
 
 export const runtime = "nodejs";
 
-export async function GET(
+async function legacyGET(
   request: Request,
   { params }: { params: Promise<{ appViewId: string; contractId: string }> },
 ) {
@@ -34,4 +35,8 @@ export async function GET(
   }
 
   return success(panel.data);
+}
+
+export async function GET(request: Request, context: { params: Promise<{ contractId: string; appViewId: string }> }) {
+  return revisionBoundRead(request, { kind: "panel", ...await context.params }, () => legacyGET(request, context));
 }

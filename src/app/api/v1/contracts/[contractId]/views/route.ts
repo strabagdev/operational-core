@@ -1,10 +1,11 @@
+import { revisionBoundRead } from "@/lib/revision-bound-read";
 import { requireApiContractAccess } from "@/lib/api-auth";
 import { getApiContractViews, serializeApiAppViews } from "@/lib/api-app-views";
 import { success } from "@/lib/api-response";
 
 export const runtime = "nodejs";
 
-export async function GET(
+async function legacyGET(
   request: Request,
   { params }: { params: Promise<{ contractId: string }> },
 ) {
@@ -23,4 +24,8 @@ export async function GET(
   return success({
     views: serializeApiAppViews(views),
   });
+}
+
+export async function GET(request: Request, context: { params: Promise<{ contractId: string }> }) {
+  return revisionBoundRead(request, { kind: "views", ...await context.params }, () => legacyGET(request, context));
 }

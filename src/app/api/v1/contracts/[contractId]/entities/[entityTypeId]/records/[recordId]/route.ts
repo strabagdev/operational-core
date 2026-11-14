@@ -1,3 +1,4 @@
+import { revisionBoundRead } from "@/lib/revision-bound-read";
 import { requireApiContractAccess } from "@/lib/api-auth";
 import {
   apiEntityNotFoundResponse,
@@ -11,7 +12,7 @@ import { patchApiEntityRecord } from "@/lib/api-record-writes";
 
 export const runtime = "nodejs";
 
-export async function GET(
+async function legacyGET(
   request: Request,
   {
     params,
@@ -121,4 +122,8 @@ async function readJsonBody(request: Request) {
       response: badRequest("JSON inválido.", "INVALID_JSON"),
     };
   }
+}
+
+export async function GET(request: Request, context: { params: Promise<{ contractId: string; entityTypeId: string; recordId: string }> }) {
+  return revisionBoundRead(request, { kind: "record", ...await context.params }, () => legacyGET(request, context));
 }

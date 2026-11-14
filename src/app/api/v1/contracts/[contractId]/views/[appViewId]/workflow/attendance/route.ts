@@ -1,3 +1,4 @@
+import { revisionBoundRead } from "@/lib/revision-bound-read";
 import { requireApiContractAccess } from "@/lib/api-auth";
 import { applyApiDiagnosticsHeaders, createApiServerTiming } from "@/lib/api-diagnostics";
 import {
@@ -8,7 +9,7 @@ import { success } from "@/lib/api-response";
 
 export const runtime = "nodejs";
 
-export async function GET(
+async function legacyGET(
   request: Request,
   { params }: { params: Promise<{ appViewId: string; contractId: string }> },
 ) {
@@ -28,6 +29,9 @@ export async function GET(
     appViewId,
     contractId: access.context.contract.id,
     date: searchParams.get("date"),
+    ...(searchParams.has("daySnapshotVersion") ? {daySnapshotVersion:searchParams.get("daySnapshotVersion")} : {}),
+    ...(searchParams.has("page") ? {page:searchParams.get("page")} : {}),
+    ...(searchParams.has("pageSize") ? {pageSize:searchParams.get("pageSize")} : {}),
     personRecordId: searchParams.get("personRecordId"),
     search: searchParams.get("search"),
     ...(searchParams.has("searchComparisonVersion") ? {searchComparisonVersion:searchParams.get("searchComparisonVersion")} : {}),
@@ -80,4 +84,8 @@ export async function POST(
   timing.mark("response_serialization");
 
   return applyApiDiagnosticsHeaders(response, request, timing.finish("ok", response.status));
+}
+
+export async function GET(request: Request, context: { params: Promise<{ contractId: string; appViewId: string }> }) {
+  return revisionBoundRead(request, { kind: "attendance", ...await context.params }, () => legacyGET(request, context));
 }

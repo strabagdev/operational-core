@@ -1,3 +1,4 @@
+import { revisionBoundRead } from "@/lib/revision-bound-read";
 import { requireApiContractAccess } from "@/lib/api-auth";
 import {
   apiEntityNotFoundResponse,
@@ -8,7 +9,7 @@ import { serializeApiEntityDefinition } from "@/lib/api-entity-serializer";
 
 export const runtime = "nodejs";
 
-export async function GET(
+async function legacyGET(
   request: Request,
   { params }: { params: Promise<{ contractId: string; entityTypeId: string }> },
 ) {
@@ -28,4 +29,8 @@ export async function GET(
   return success({
     entity: serializeApiEntityDefinition(entity),
   });
+}
+
+export async function GET(request: Request, context: { params: Promise<{ contractId: string; entityTypeId: string }> }) {
+  return revisionBoundRead(request, { kind: "definition", ...await context.params }, () => legacyGET(request, context));
 }

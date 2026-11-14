@@ -19,6 +19,7 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     $transaction: vi.fn(),
     $queryRaw: vi.fn(),
+    appView: { findMany: vi.fn(async () => []) },
     apiIdempotencyKey: {
       create: vi.fn(),
       update: vi.fn(),
@@ -33,6 +34,7 @@ vi.mock("@/lib/prisma", () => ({
       findMany: vi.fn(),
     },
     entityRecord: {
+      findUnique: vi.fn(async ({where}: {where: {id?: string}}) => where.id === "record_1" ? {entityTypeId:"entity_1"} : null),
       count: vi.fn(),
       create: vi.fn(),
       findFirst: vi.fn(),

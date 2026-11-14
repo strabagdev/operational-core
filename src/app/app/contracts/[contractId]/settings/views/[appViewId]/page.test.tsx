@@ -1,4 +1,4 @@
-import { renderToStaticMarkup } from "react-dom/server";
+import { renderToReadableStream } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { auth } from "@/auth";
@@ -128,7 +128,7 @@ describe("AppViewDetailPage config loading", () => {
       entityTypes: [],
     } as never);
 
-    const html = renderToStaticMarkup(await AppViewDetailPage({
+    const html = await renderToStaticMarkup(await AppViewDetailPage({
       params: Promise.resolve({ appViewId: "view_invalid", contractId: "contract_1" }),
       searchParams: Promise.resolve({}),
     }));
@@ -182,7 +182,7 @@ describe("AppViewDetailPage config loading", () => {
       entityTypes: [],
     } as never);
 
-    const html = renderToStaticMarkup(await AppViewDetailPage({
+    const html = await renderToStaticMarkup(await AppViewDetailPage({
       params: Promise.resolve({ appViewId: "view_repairable", contractId: "contract_1" }),
       searchParams: Promise.resolve({}),
     }));
@@ -251,7 +251,7 @@ describe("AppViewDetailPage config loading", () => {
       entityTypes: [],
     } as never);
 
-    const html = renderToStaticMarkup(await AppViewDetailPage({
+    const html = await renderToStaticMarkup(await AppViewDetailPage({
       params: Promise.resolve({ appViewId: "view_valid", contractId: "contract_1" }),
       searchParams: Promise.resolve({}),
     }));
@@ -265,3 +265,7 @@ describe("AppViewDetailPage config loading", () => {
     }));
   });
 });
+
+async function renderToStaticMarkup(value:Parameters<typeof renderToReadableStream>[0]) {
+ return new Response(await renderToReadableStream(value)).text();
+}

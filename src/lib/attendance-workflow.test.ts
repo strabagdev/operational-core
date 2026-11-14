@@ -740,7 +740,7 @@ function mockLatestAttendances(records: Array<ReturnType<typeof existingAttendan
     }
 
     if (args?.include?.outgoingRelations) {
-      return records.slice(0, args.take).map((record) => ({
+      return records.slice((args as {skip?:number}).skip??0, ((args as {skip?:number}).skip??0)+(args.take??records.length)).map((record) => ({
         ...record,
         outgoingRelations: record.outgoingRelations.map((relation) => ({
           ...relation,
@@ -846,3 +846,54 @@ describe("Attendance simple relation context", () => {
     if (result.ok) expect(result.data.contextFields).toEqual(expect.arrayContaining([expect.objectContaining({id:"related",type:"RELATION",multiple:false})]));
   });
 });
+
+
+describe("Attendance latest observation projection", () => {
+  it.each(["Synthetic note ñ\nSecond line", "", null])("projects a configured observation without searching people: %j", async value => {
+    const record = existingAttendance({});
+    if (value !== null) record.values.push({entityFieldId:"observation_field",dateValue:null,textValue:value});
+    mockLatestAttendances([record]); entityRecordCount.mockResolvedValue(1 as never);
+    const result = await getAttendanceWorkflowDay(dayQuery());
+    expect(result).toMatchObject({ok:true,data:{items:[],observationProjection:{version:1,fieldId:"observation_field"},latest:[expect.objectContaining({observation:value})]}});
+    const call = entityRecordFindMany.mock.calls.find(([arg]) => arg?.include?.outgoingRelations);
+    expect(call?.[0]?.include?.values).toMatchObject({where:{entityFieldId:{in:expect.arrayContaining(["observation_field"])}}});
+    expect(entityRecordFindMany).not.toHaveBeenCalledWith(expect.objectContaining({where:{entityTypeId:"people"}}));
+  });
+  it("keeps an empty day distinct from a missing field", async () => {
+    mockLatestAttendances([]); entityRecordCount.mockResolvedValue(0 as never);
+    const result = await getAttendanceWorkflowDay(dayQuery());
+    expect(result).toMatchObject({ok:true,data:{items:[],latest:[],summary:{totalRegistered:0},observationProjection:{version:1,fieldId:"observation_field"}}});
+  });
+  it("does not expose unconfigured arbitrary text as observation", async () => {
+    const view=appView();appViewFindFirst.mockResolvedValue({...view,config:Object.fromEntries(Object.entries(view.config).filter(([key])=>key!=="observationFieldId"))} as never);
+    const record=existingAttendance({});record.values.push({entityFieldId:"observation_field",dateValue:null,textValue:"Not configured"});mockLatestAttendances([record]);
+    const result=await getAttendanceWorkflowDay(dayQuery());expect(result.ok).toBe(true);
+    if(result.ok){expect(result.data).not.toHaveProperty("observationProjection");expect(result.data.latest[0]).not.toHaveProperty("observation");}
+  });
+});
+
+
+describe("Attendance bounded day pages",()=>{
+  it.each([0,1,10,11,30,137])("paginates %i rows only for the new day contract",async count=>{
+    const records=Array.from({length:count},(_,i)=>existingAttendance({id:"day_"+i}));mockLatestAttendances(records);entityRecordCount.mockResolvedValue(count as never);
+    const result=await getAttendanceWorkflowDay({...dayQuery(),daySnapshotVersion:"1",page:"1",pageSize:"30"});
+    expect(result).toMatchObject({ok:true,data:{items:[],daySnapshot:{version:1,page:1,pageSize:30,total:count,totalPages:Math.max(1,Math.ceil(count/30)),hasMore:count>30}}});
+    if(result.ok)expect(result.data.latest).toHaveLength(Math.min(count,30));
+    const legacy=await getAttendanceWorkflowDay(dayQuery());if(legacy.ok){expect(legacy.data.latest).toHaveLength(Math.min(count,10));expect(legacy.data).not.toHaveProperty("daySnapshot");}
+  });
+  it("uses skip/take with the deterministic original sort",async()=>{
+    mockLatestAttendances(Array.from({length:31},(_,i)=>existingAttendance({id:"day_"+i})));entityRecordCount.mockResolvedValue(31 as never);
+    const result=await getAttendanceWorkflowDay({...dayQuery(),daySnapshotVersion:"1",page:"2",pageSize:"30"});
+    expect(entityRecordFindMany).toHaveBeenCalledWith(expect.objectContaining({skip:30,take:30,orderBy:[{updatedAt:"desc"},{id:"asc"}]}));
+    if(result.ok)expect(result.data.latest.map(e=>e.attendanceRecordId)).toEqual(["day_30"]);
+  });
+  it.each([{daySnapshotVersion:"2"},{daySnapshotVersion:"1",page:"0"},{daySnapshotVersion:"1",pageSize:"101"},{daySnapshotVersion:"1",search:"x"},{page:"2"}])("rejects incompatible paging %j",async query=>{
+    const result=await getAttendanceWorkflowDay({...dayQuery(),...query});expect(result.ok).toBe(false);
+  });
+});
+
+describe("legacy Attendance read ordering",()=>{it("keeps legacy latest before count while negotiated pages use the read snapshot",async()=>{
+ mockLatestAttendances([]);entityRecordCount.mockResolvedValue(0 as never);await getAttendanceWorkflowDay(dayQuery());
+ const index=entityRecordFindMany.mock.calls.findIndex(([arg])=>arg?.include?.outgoingRelations);expect(index).toBeGreaterThanOrEqual(0);
+ expect(entityRecordCount.mock.invocationCallOrder[0]).toBeGreaterThan(entityRecordFindMany.mock.invocationCallOrder[index]);
+});});

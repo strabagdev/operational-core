@@ -1782,3 +1782,99 @@ explícita. Sin política no cambian payloads legacy. No hay nueva migración ni
 ### Compatibilidad de cardinalidad RELATION — 05-11-2026
 
 La semántica proviene de `config.relation.relationKind` (ONE/MANY), no de combinarlo con el booleano genérico `multiple`. Las nuevas definiciones editadas en Core exigen espejos coherentes. El formato histórico de metadata/valores existentes se conserva para clientes anteriores: no se reescriben campos ni registros al leerlos. Un único ID o un arreglo antiguo con un solo ID continúa siendo válido para ONE; dos IDs son rechazados sin mutación. Si un ONE ya contiene múltiples vínculos históricos, la lectura conserva todos para revisión explícita. No se elige uno ni se pierden relaciones al serializar. La revalidación dentro de la transacción impide que un comando validado con metadata antigua eluda una reducción posterior. Idempotencia, permisos, auditoría y contratos de estados/SELECT se conservan.
+
+
+## Offline revision manifest — shadow diagnostics, 11-11-2026
+
+New authenticated GET `/api/v1/contracts/:contractId/offline/manifest`: optional `version=1`,
+`date=YYYY-MM-DD`, `month=YYYY-MM`, repeated `appViewId` (distinct, assigned). Strict query/context
+validation; 100 views/200 entity definitions maximum. Response envelope includes scope, epoch,
+authorization/views/configuration hashes, entity data revision strings, requested coverage and
+tracking status from one read-only REPEATABLE READ snapshot. Coverage is never certified here.
+
+`mode=shadow`, `reuseAllowed=false`, `clientMaySkipReads=false`, `revisionBoundBusinessReads=false`
+are unconditional. Existing business APIs and Client downloads are unchanged. No ETag/304 or
+public response caching: Cache-Control no-store. Missing migration/database gives 503
+OFFLINE_MANIFEST_UNAVAILABLE; authorization/query failures remain explicit. It never returns an
+empty manifest as a substitute for those errors. See [shadow contract](OFFLINE_REVISION_SHADOW.md).
+
+
+## Revision-bound business GETs — shadow negotiation, 11-11-2026
+
+[Protocol and endpoint coverage](REVISION_BOUND_READS.md): optional readRevisionVersion=1
+seals existing business GET data in READ ONLY / REPEATABLE READ. Top-level readRevision includes
+manifestVectorRevision linked to the shadow manifest's readBindingVector, selection/request/content
+hashes and coverageCertified=false. Pages >1 require expectedReadRevision; mismatch is explicit 409,
+never a mixed or unversioned page. Existing requests and all writers remain unchanged. No ETag/304,
+Client reuse, new report/pagination capability or download omission is enabled.
+
+
+## Attendance: cobertura de Observación en latest (12-11-2026, local)
+
+GET /api/v1/contracts/:contractId/views/:appViewId/workflow/attendance conserva búsqueda,
+filtros, permisos, fecha, orden y límite latest=10. Sin búsqueda/personRecordId, items=[]
+es intencional: no acredita ausencia de registros. La cobertura del día usa latest y summary.
+
+Cuando la AppView configura observationFieldId válido, la misma consulta selecciona ese
+EntityValue y devuelve observationProjection={version:1,fieldId:<ID configurado>} y
+latest[].observation: string|null. Una cadena vacía sigue vacía; sin EntityValue/texto se
+representa null explícito. Sin configuración ambas propiedades se omiten. No se infiere
+el campo por su nombre ni por otros textos. No cambia la proyección current de items.
+
+El sello readRevision opcional incluye este contenido en la misma transacción RepeatableRead;
+no cambia su versión ni habilita reutilización. Clientes anteriores pueden ignorar estas
+propiedades aditivas. El Client nuevo acepta latest Observación sólo con versión/fieldId
+coincidentes y propiedad string|null presente; Core anterior conserva su fallback current
+bajo demanda, pero no obtiene una acreditación mensual a partir de contenido ausente.
+
+latest no es una colección paginada completa: si summary.totalRegistered supera los eventos
+devueltos (máximo 10), el día y su recibo mensual siguen incompletos. No hay endpoint, SQL,
+esquema, migración, escritor, regla de negocio ni modificación de sincronización nuevos.
+La publicación futura requiere primero las etapas Core de revisiones y esta proyección,
+después el Client; revertir la proyección retira acreditación nueva, no datos locales.
+
+
+## Attendance: snapshot diario paginado, 12-11-2026 (local)
+
+El límite legacy de latest=10 pertenece a la vista reciente, no acredita todos los eventos.
+El mismo GET anuncia daySnapshotCapabilities={version:1,maxPageSize:100}. Sin opt-in conserva
+items/búsqueda, últimas diez filas, orden y summary. Clientes anteriores ignoran la capacidad.
+
+Opt-in: ?date=YYYY-MM-DD&daySnapshotVersion=1&page=1&pageSize=100&readRevisionVersion=1.
+Devuelve latest de esa página y daySnapshot={version:1,page,pageSize,total,totalPages,hasMore}.
+pageSize admite 1..100; page es entero positivo seguro. No se admite búsqueda/persona/filtro
+con este snapshot del día. Conserva estados, contextos SELECT/RELATION, Observación vinculada
+y presentación autorizada. Todas las consultas/predicados/count/etiquetas comparten READ ONLY
+REPEATABLE READ. El orden sigue updatedAt DESC,id ASC; skip/take se aplican en PostgreSQL.
+
+Toda página posterior exige expectedReadRevision de la primera página; selección incluye
+fecha, versión y tamaño, y excluye sólo page. Datos/relaciones/metadata/autorización cambiados
+producen HTTP409; no hay retry ni fallback sin revisión. Aun página1 requiere readRevisionVersion=1.
+El sello permanece en sombra, coverageCertified=false/reuseAllowed=false. El consumidor acredita
+completitud local, no la bandera del servidor. Una página es siempre una parte, no todo el día.
+
+No cambia escritores, unicidad, auditoría, permisos, idempotencia, calendario ni almacenamiento.
+No hay esquema ni migración nueva. Requiere las etapas previas de revisiones/Observación. Publicar
+Core antes que Client. Core anterior no anuncia la capacidad: Client conserva cobertura legacy
+limitada y no inventa un certificado completo. Revertir Core exige retirar antes el Client nuevo
+o aceptar fallos explícitos en descargas activas; preservar siempre el snapshot local anterior.
+
+
+## Offline manifest compatibility negotiation — shadow v2, 13-11-2026
+
+The authenticated manifest accepts opt-in `version=2` plus required `nonce`,
+`readRepresentationVersion`, `receiptVersion` and `storagePolicyVersion`. Optional expected scope,
+vector, epoch and definitions produce explicit match/mismatch/not-requested comparisons in the same
+read-only snapshot. See [full query/response contract](OFFLINE_MANIFEST_NEGOTIATION.md).
+V1 JSON and bound business reads remain unchanged; authentication denials now explicitly use no-store.
+Compatibility-only, shadow and all omission/reuse permissions remain false. No Client, writer,
+migration, storage or policy activation changes. Old Core rejects v2: no legacy response may certify it.
+
+
+## 13-11-2026 — Gate selectivo local de Attendance
+
+[Contrato y límites](SELECTIVE_OFFLINE_REUSE.md): policy2 optativa Core/Client, apagada por defecto;
+recibo mensual íntegro del mismo handle/sesión y consumo dentro de su transacción de inspección.
+Rechazo conserva descarga normal; retirada final provoca una sola pasada ordinaria localizada.
+Catálogos y otros workflows continúan descargándose. Sin nueva migración, motores offline,
+comandos o sincronización; sin producción, commit/push/deploy.

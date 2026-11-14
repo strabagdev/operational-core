@@ -325,3 +325,22 @@ ninguna política se activa al desplegar. SQL privilegiado queda fuera de esta g
 ### RELATION: cardinalidad canónica y compatibilidad — 05-11-2026
 
 Para RELATION, `relationKind` es la fuente de cardinalidad; `multiple` es un espejo derivado para nuevas definiciones (ONE=false, MANY=true). Las representaciones plana/anidada históricas se leen sin migrarlas. La incoherencia de un espejo histórico se inventaría y requiere revisión explícita al editar su definición, sin impedir comandos válidos bajo su kind. Ninguna corrección automática de datos/definiciones ni cambio del esquema. Los bloqueos de destino existentes coordinan ediciones de cardinalidad y escrituras, con revalidación de las relaciones por conjunto en la transacción. Véase STATE_UPDATE, sección Cardinalidad RELATION coherente.
+
+
+## Generic offline revision diagnostics — shadow, 11-11-2026
+
+[Design and limits](OFFLINE_REVISION_SHADOW.md): three additive bookkeeping tables support
+per-contract/entity revision strings, an installation epoch, and transaction-private work flushed
+in stable order at commit. It is not a workflow, business identity or synchronization queue.
+Metadata/authorization hashes and committed revisions are read in one read-only repeatable-read
+manifest. Tracking is at the SQL boundary; normal writer services remain unchanged. Reuse by
+Client is unconditionally disabled until a separately validated read/receipt protocol exists.
+
+
+## Optional revision-bound business reads — shadow stage 2, 11-11-2026
+
+[Shared read snapshots and manifest vector](REVISION_BOUND_READS.md) bind endpoint selection,
+metadata, authorization and data to one transaction. A conservative contract vector includes
+referenced AppViews and related entities; per-experience selective reuse is not certified. The
+opt-in protocol adds response metadata without changing business data/queries or legacy clients.
+Stage 1's migration is unchanged; Client receipts and read omission remain separately gated.

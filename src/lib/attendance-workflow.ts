@@ -108,6 +108,7 @@ export async function getAttendanceWorkflowDay({
   search,
   searchFieldId,
   searchComparisonVersion,
+  daySnapshotVersion, page, pageSize,
   userId,
 }: {
   appViewId: string;
@@ -117,6 +118,9 @@ export async function getAttendanceWorkflowDay({
   search?: string | null;
   searchFieldId?: string | null;
   searchComparisonVersion?: string | null;
+  daySnapshotVersion?: string | null;
+  page?: string | null;
+  pageSize?: string | null;
   userId: string;
 }) {
   const parsedDate = parseAttendanceDate(date);
@@ -125,6 +129,14 @@ export async function getAttendanceWorkflowDay({
     return parsedDate;
   }
 
+  const paged = daySnapshotVersion !== undefined && daySnapshotVersion !== null;
+  const pageNumber = Number(page ?? 1), size = Number(pageSize ?? 100);
+  if ((paged && (daySnapshotVersion !== "1" || !/^[1-9]\d*$/.test(page ?? "1") || !/^[1-9]\d*$/.test(pageSize ?? "100") ||
+      !Number.isSafeInteger(pageNumber) || !Number.isSafeInteger(size) || size > 100 || !Number.isSafeInteger((pageNumber-1)*size) ||
+      !!search?.trim() || !!personRecordId || searchFieldId != null || searchComparisonVersion != null)) ||
+      (!paged && (page != null || pageSize != null))) {
+    return {ok:false as const,response:badRequest("La selección paginada del día no es válida.","INVALID_ATTENDANCE_DAY_QUERY")};
+  }
   const context = await getAttendanceWorkflowContext({ appViewId, contractId, userId });
 
   if (!context.ok) {
@@ -162,15 +174,29 @@ export async function getAttendanceWorkflowDay({
     attendances.map((attendance) => [attendance.personRecordId, attendance]),
   );
 
+  const writeMetadata = await workflowWriteMetadata(context.context.targetEntityType.id, context.context.appView.id);
+  const latest = await getLatestAttendanceRecords({
+    config: context.context.config,
+    contextFields: context.context.contextFields,
+    date: parsedDate.date,
+    limit: paged ? size : latestAttendanceLimit,
+    ...(paged ? {offset:(pageNumber-1)*size} : {}),
+    statusOptionsByValue: context.context.statusOptionsByValue,
+    targetEntityTypeId: context.context.targetEntityType.id,
+  });
+  const totalRegistered = await countRegisteredAttendances({config:context.context.config,date:parsedDate.date,targetEntityTypeId:context.context.targetEntityType.id});
   return {
     ok: true as const,
     data: await withSubjectPresentation({
       appView: context.context.appView,
-      ...(await workflowWriteMetadata(context.context.targetEntityType.id, context.context.appView.id)),
+      ...writeMetadata,
       searchComparison,
       ...(codeSearch.metadata ? { codeSearchField: codeSearch.metadata } : {}),
       ...(codeSearch.fieldId ? { searchFieldId: codeSearch.fieldId } : {}),
       contextFields: serializeAttendanceContextFields(context.context.contextFields),
+      ...(context.context.config.observationFieldId ? {observationProjection: {version: 1 as const, fieldId: context.context.config.observationFieldId}} : {}),
+      daySnapshotCapabilities: {version:1 as const,maxPageSize:100},
+      ...(paged ? {daySnapshot:{version:1 as const,page:pageNumber,pageSize:size,total:totalRegistered,totalPages:Math.max(1,Math.ceil(totalRegistered/size)),hasMore:pageNumber*size<totalRegistered}} : {}),
       date: parsedDate.value,
       items: people.map((person) => {
         const attendance = attendanceByPersonId.get(person.id);
@@ -189,14 +215,7 @@ export async function getAttendanceWorkflowDay({
             : null,
         };
       }),
-      latest: await getLatestAttendanceRecords({
-        config: context.context.config,
-        contextFields: context.context.contextFields,
-        date: parsedDate.date,
-        limit: latestAttendanceLimit,
-        statusOptionsByValue: context.context.statusOptionsByValue,
-        targetEntityTypeId: context.context.targetEntityType.id,
-      }),
+      latest,
       sourceEntityType: {
         id: context.context.sourceEntityType.id,
         name: context.context.sourceEntityType.name,
@@ -208,11 +227,7 @@ export async function getAttendanceWorkflowDay({
       })),
       statusFieldId: context.context.config.statusFieldId,
       summary: {
-        totalRegistered: await countRegisteredAttendances({
-          config: context.context.config,
-          date: parsedDate.date,
-          targetEntityTypeId: context.context.targetEntityType.id,
-        }),
+        totalRegistered,
       },
       targetEntityType: {
         id: context.context.targetEntityType.id,
@@ -733,6 +748,7 @@ async function getLatestAttendanceRecords({
   contextFields,
   date,
   limit,
+  offset,
   statusOptionsByValue,
   targetEntityTypeId,
 }: {
@@ -740,6 +756,7 @@ async function getLatestAttendanceRecords({
   contextFields: AttendanceField[];
   date: Date;
   limit: number;
+  offset?: number;
   statusOptionsByValue: Map<string, AttendanceStatusOption>;
   targetEntityTypeId: string;
 }) {
@@ -769,6 +786,7 @@ async function getLatestAttendanceRecords({
           entityFieldId: {
             in: [
               config.statusFieldId,
+              ...(config.observationFieldId ? [config.observationFieldId] : []),
               ...contextFields.map((field) => field.id),
             ],
           },
@@ -777,6 +795,7 @@ async function getLatestAttendanceRecords({
     },
     orderBy: [{ updatedAt: "desc" }, { id: "asc" }],
     take: limit,
+    ...(offset !== undefined ? {skip:offset} : {}),
     where: {
       entityTypeId: targetEntityTypeId,
       values: {
@@ -795,6 +814,7 @@ async function getLatestAttendanceRecords({
 
     return {
       attendanceRecordId: record.id,
+      ...(config.observationFieldId ? {observation: record.values.find(value => value.entityFieldId === config.observationFieldId)?.textValue ?? null} : {}),
       person: person
         ? {
             displayName: person.displayName,

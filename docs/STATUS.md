@@ -419,3 +419,64 @@ Editor y Core exigen ONE=false/MANY=true en nuevas definiciones; revisiones hist
 ### Restauración Attendance / ONE histórico — candidato local 06-11-2026
 
 Corrección incremental sobre relation-cardinality-fix: interpretación de arreglos unitarios por metadata, ID/etiqueta conservados y revisión explícita para valores incompatibles. No se regularizaron los diez campos ni se reescribió outbox; MANY, SELECT, guardas y comandos existentes conservados. Evidencia/parches combinados y límites: backups/attendance-relation-context-restoration/2026-11-06/REVIEW.md. Ver STATE_UPDATE, Restauración. Publicación/activación no autorizadas en esta ejecución; respaldo operativo actualizado pendiente. 402 exclusiones, pendientes ajenos y V11 preservados.
+
+
+## Attendance: cobertura de Observación en latest (12-11-2026, local)
+
+GET /api/v1/contracts/:contractId/views/:appViewId/workflow/attendance conserva búsqueda,
+filtros, permisos, fecha, orden y límite latest=10. Sin búsqueda/personRecordId, items=[]
+es intencional: no acredita ausencia de registros. La cobertura del día usa latest y summary.
+
+Cuando la AppView configura observationFieldId válido, la misma consulta selecciona ese
+EntityValue y devuelve observationProjection={version:1,fieldId:<ID configurado>} y
+latest[].observation: string|null. Una cadena vacía sigue vacía; sin EntityValue/texto se
+representa null explícito. Sin configuración ambas propiedades se omiten. No se infiere
+el campo por su nombre ni por otros textos. No cambia la proyección current de items.
+
+El sello readRevision opcional incluye este contenido en la misma transacción RepeatableRead;
+no cambia su versión ni habilita reutilización. Clientes anteriores pueden ignorar estas
+propiedades aditivas. El Client nuevo acepta latest Observación sólo con versión/fieldId
+coincidentes y propiedad string|null presente; Core anterior conserva su fallback current
+bajo demanda, pero no obtiene una acreditación mensual a partir de contenido ausente.
+
+latest no es una colección paginada completa: si summary.totalRegistered supera los eventos
+devueltos (máximo 10), el día y su recibo mensual siguen incompletos. No hay endpoint, SQL,
+esquema, migración, escritor, regla de negocio ni modificación de sincronización nuevos.
+La publicación futura requiere primero las etapas Core de revisiones y esta proyección,
+después el Client; revertir la proyección retira acreditación nueva, no datos locales.
+
+
+## Attendance: snapshot diario paginado, 12-11-2026 (local)
+
+El límite legacy de latest=10 pertenece a la vista reciente, no acredita todos los eventos.
+El mismo GET anuncia daySnapshotCapabilities={version:1,maxPageSize:100}. Sin opt-in conserva
+items/búsqueda, últimas diez filas, orden y summary. Clientes anteriores ignoran la capacidad.
+
+Opt-in: ?date=YYYY-MM-DD&daySnapshotVersion=1&page=1&pageSize=100&readRevisionVersion=1.
+Devuelve latest de esa página y daySnapshot={version:1,page,pageSize,total,totalPages,hasMore}.
+pageSize admite 1..100; page es entero positivo seguro. No se admite búsqueda/persona/filtro
+con este snapshot del día. Conserva estados, contextos SELECT/RELATION, Observación vinculada
+y presentación autorizada. Todas las consultas/predicados/count/etiquetas comparten READ ONLY
+REPEATABLE READ. El orden sigue updatedAt DESC,id ASC; skip/take se aplican en PostgreSQL.
+
+Toda página posterior exige expectedReadRevision de la primera página; selección incluye
+fecha, versión y tamaño, y excluye sólo page. Datos/relaciones/metadata/autorización cambiados
+producen HTTP409; no hay retry ni fallback sin revisión. Aun página1 requiere readRevisionVersion=1.
+El sello permanece en sombra, coverageCertified=false/reuseAllowed=false. El consumidor acredita
+completitud local, no la bandera del servidor. Una página es siempre una parte, no todo el día.
+
+No cambia escritores, unicidad, auditoría, permisos, idempotencia, calendario ni almacenamiento.
+No hay esquema ni migración nueva. Requiere las etapas previas de revisiones/Observación. Publicar
+Core antes que Client. Core anterior no anuncia la capacidad: Client conserva cobertura legacy
+limitada y no inventa un certificado completo. Revertir Core exige retirar antes el Client nuevo
+o aceptar fallos explícitos en descargas activas; preservar siempre el snapshot local anterior.
+
+
+## 13-11-2026 — Negociación Core de manifiesto en sombra, local
+
+[Contrato y límites](OFFLINE_MANIFEST_NEGOTIATION.md): negociación optativa v2 autenticada, nonce y
+versiones explícitas, comparación de scope/revisión/epoch/definiciones en el snapshot existente.
+V1 conserva JSON y hashes; rechazos de autenticación llevan no-store. Sin Client, escritores ni
+migraciones nuevas. Compatibilidad no acredita cobertura local ni almacenamiento físico y todas
+las banderas de omisión siguen false. El gate Client por runtime y la activación siguen pendientes.
+Sin producción, commit, push ni deploy; índices habituales, exclusiones y pendientes preservados.

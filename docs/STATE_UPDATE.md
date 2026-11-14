@@ -1004,3 +1004,77 @@ Evidencia: 450 pruebas Core focalizadas, incluidas 14 PostgreSQL locales; typech
 La corrección Client incorpora metadata del campo al adaptar current/SQLite y al editar: ONE con arreglo unitario conserva ID/etiqueta; MANY no se aplana. Un ONE sobrecargado o ambiguo permanece conservado y requiere revisión. No se cambia ninguna definición ni intención al leer. Core mantiene deliberadamente el formato legacy de extras para clientes publicados; el GET Attendance continúa entregando objeto simple. No se modifica código funcional Core en este incremento: una integración PostgreSQL adicional acredita esa diferencia de formato, metadata, current individual/por lotes y replay UNCHANGED, además de los controles normales de edición/conflicto/permisos.
 
 Orden previsto del lote combinado: Core → Client, sin regularizar campos durante despliegue. Los diez históricos inventariados el 06-11 siguen intactos; no se relee producción. El bloqueo técnico de restauración se corrige localmente, pero el respaldo productivo actualizado que pedía el preflight continúa pendiente de autorización separada. Sin migraciones, activación, commit/push/deploy. Evidencia, parches incrementales/combinados y límites: backups/attendance-relation-context-restoration/2026-11-06/REVIEW.md.
+
+
+## Offline revision manifest — Core shadow stage, 11-11-2026
+
+Generic diagnostic [manifest and writer coverage](OFFLINE_REVISION_SHADOW.md), not a new workflow
+or identity. It tracks existing EntityRecord/Value/Relation and identity definition/slot writes
+without changing commands, versions, idempotency, audit or authorization. Attendance remains
+a STATE_UPDATE consumer with its existing SELECT/RELATION contexts.
+
+Hashes/revisions describe one read-only database snapshot and requested scopes. `reuseAllowed`
+and `clientMaySkipReads` remain false; existing current individual/batch and Attendance GETs are
+not revision-bound. No data omission, Client change, OPFS/outbox change or new coverage certificate.
+A future activation must preserve explicit event/null and partial/error outcomes, pagination,
+related labels, context/date isolation and pending/conflicts; this stage does not authorize it.
+
+
+## Revision-bound workflow reads — optional shadow protocol, 11-11-2026
+
+Attendance, STATE_UPDATE individual/current batch/latest and REPORT projections can opt into
+[one read-only snapshot and revision](REVISION_BOUND_READS.md). Existing business queries, current
+selection, commands, versions, explicit conflicts, idempotency and sync remain unchanged. A batch
+error is never converted to null or full coverage. Revisions must match across pages/batches;
+seals and manifest remain shadow-only and do not authorize Client to skip downloads.
+
+
+## Attendance: cobertura de Observación en latest (12-11-2026, local)
+
+GET /api/v1/contracts/:contractId/views/:appViewId/workflow/attendance conserva búsqueda,
+filtros, permisos, fecha, orden y límite latest=10. Sin búsqueda/personRecordId, items=[]
+es intencional: no acredita ausencia de registros. La cobertura del día usa latest y summary.
+
+Cuando la AppView configura observationFieldId válido, la misma consulta selecciona ese
+EntityValue y devuelve observationProjection={version:1,fieldId:<ID configurado>} y
+latest[].observation: string|null. Una cadena vacía sigue vacía; sin EntityValue/texto se
+representa null explícito. Sin configuración ambas propiedades se omiten. No se infiere
+el campo por su nombre ni por otros textos. No cambia la proyección current de items.
+
+El sello readRevision opcional incluye este contenido en la misma transacción RepeatableRead;
+no cambia su versión ni habilita reutilización. Clientes anteriores pueden ignorar estas
+propiedades aditivas. El Client nuevo acepta latest Observación sólo con versión/fieldId
+coincidentes y propiedad string|null presente; Core anterior conserva su fallback current
+bajo demanda, pero no obtiene una acreditación mensual a partir de contenido ausente.
+
+latest no es una colección paginada completa: si summary.totalRegistered supera los eventos
+devueltos (máximo 10), el día y su recibo mensual siguen incompletos. No hay endpoint, SQL,
+esquema, migración, escritor, regla de negocio ni modificación de sincronización nuevos.
+La publicación futura requiere primero las etapas Core de revisiones y esta proyección,
+después el Client; revertir la proyección retira acreditación nueva, no datos locales.
+
+
+## Attendance: snapshot diario paginado, 12-11-2026 (local)
+
+El límite legacy de latest=10 pertenece a la vista reciente, no acredita todos los eventos.
+El mismo GET anuncia daySnapshotCapabilities={version:1,maxPageSize:100}. Sin opt-in conserva
+items/búsqueda, últimas diez filas, orden y summary. Clientes anteriores ignoran la capacidad.
+
+Opt-in: ?date=YYYY-MM-DD&daySnapshotVersion=1&page=1&pageSize=100&readRevisionVersion=1.
+Devuelve latest de esa página y daySnapshot={version:1,page,pageSize,total,totalPages,hasMore}.
+pageSize admite 1..100; page es entero positivo seguro. No se admite búsqueda/persona/filtro
+con este snapshot del día. Conserva estados, contextos SELECT/RELATION, Observación vinculada
+y presentación autorizada. Todas las consultas/predicados/count/etiquetas comparten READ ONLY
+REPEATABLE READ. El orden sigue updatedAt DESC,id ASC; skip/take se aplican en PostgreSQL.
+
+Toda página posterior exige expectedReadRevision de la primera página; selección incluye
+fecha, versión y tamaño, y excluye sólo page. Datos/relaciones/metadata/autorización cambiados
+producen HTTP409; no hay retry ni fallback sin revisión. Aun página1 requiere readRevisionVersion=1.
+El sello permanece en sombra, coverageCertified=false/reuseAllowed=false. El consumidor acredita
+completitud local, no la bandera del servidor. Una página es siempre una parte, no todo el día.
+
+No cambia escritores, unicidad, auditoría, permisos, idempotencia, calendario ni almacenamiento.
+No hay esquema ni migración nueva. Requiere las etapas previas de revisiones/Observación. Publicar
+Core antes que Client. Core anterior no anuncia la capacidad: Client conserva cobertura legacy
+limitada y no inventa un certificado completo. Revertir Core exige retirar antes el Client nuevo
+o aceptar fallos explícitos en descargas activas; preservar siempre el snapshot local anterior.
