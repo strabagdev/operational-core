@@ -81,6 +81,20 @@ suite("offline negotiation on isolated PostgreSQL", () => {
     }finally{vi.unstubAllEnvs();await prisma.appView.delete({where:{id:pilot}});}
   });
 
+  it("negotiates policy3 independently without granting metadata-only business coverage", async () => {
+    const q=()=>parseOfflineManifestRequest(new URLSearchParams(baseQuery.replace("storagePolicyVersion=1","storagePolicyVersion=3")));
+    expect((await getOfflineManifest(scope(),q())).negotiation).toMatchObject({genericReuse:{enabled:false,views:[]}});
+    try {
+      vi.stubEnv("OPCO_OFFLINE_GENERIC_REUSE_POLICY","verified-coverage-runtime-v1");
+      const a=await getOfflineManifest(scope(),q());
+      expect(a.negotiation).toMatchObject({genericReuse:{enabled:true,views:[{appViewId:f.view,kinds:["metadata-only","field-options-and-direct-catalogs","unfiltered-collection"]}]},selectiveReuse:{enabled:false,appViewIds:[]},coverageCertified:false});
+      expect((await manifest()).negotiation?.reuseAllowed).toBe(false);
+      expect((await getOfflineManifest({...scope(),userId:f.member},q())).negotiation?.genericReuse?.enabled).toBe(false);
+      const changed=await getOfflineManifest(scope(),parseOfflineManifestRequest(new URLSearchParams(baseQuery.replace("storagePolicyVersion=1","storagePolicyVersion=3")+"&expectedEpoch=other")));
+      expect(changed.negotiation).toMatchObject({status:"incompatible",genericReuse:{enabled:false,views:[]}});
+    } finally {vi.unstubAllEnvs();}
+  });
+
   it("confirms supplied expectations without claiming local coverage or physical storage", async () => {
     const a = await manifest(), b = await manifest(expected(a));
     expect(b.negotiation).toMatchObject({ status: "compatible", issues: [], comparison: { epoch: "match", scopeFingerprint: "match", manifestVectorRevision: "match", definitionsRevision: "match" }, localReceiptVerified: false, storageIdentityVerified: false });
@@ -100,7 +114,7 @@ suite("offline negotiation on isolated PostgreSQL", () => {
   });
 
   it.each(["readRepresentationVersion", "receiptVersion", "storagePolicyVersion"])("rejects unsupported %s diagnostically", async key => {
-    const m = await getOfflineManifest(scope(), parseOfflineManifestRequest(new URLSearchParams(baseQuery.replace(key + "=1", key + "=3"))));
+    const m = await getOfflineManifest(scope(), parseOfflineManifestRequest(new URLSearchParams(baseQuery.replace(key + "=1", key + (key === "storagePolicyVersion" ? "=4" : "=3")))));
     expect(m.negotiation?.status).toBe("incompatible");
     expect(m.negotiation?.issues).toHaveLength(1);
     expect(m.reuseAllowed).toBe(false);

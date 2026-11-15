@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { Prisma } from "@prisma/client";
-import { selectiveReuseEnabled } from "./offline-selective-reuse";
+import { selectiveReuseEnabled, genericReuseEnabled, genericReuseKinds } from "./offline-selective-reuse";
 import { parseAppViewConfig } from "./app-views";
 import { getRelationConfig } from "./field-validation";
 import { prisma } from "./prisma";
@@ -53,8 +53,8 @@ export function parseOfflineManifestRequest(search:URLSearchParams):OfflineManif
 }
 
 /** Compatibility diagnostics only. Core cannot attest a Client's receipt or physical storage. */
-function negotiateOfflineManifest(request:OfflineNegotiationRequest, bindings:Required<NegotiationExpectations>, available:boolean, requestFingerprint:string, pilot: {enabled:boolean;appViewIds:string[]}) {
-  const supportedVersions={...OFFLINE_NEGOTIATION_VERSIONS,storagePolicyVersion:request.storagePolicyVersion===2?2:1};
+function negotiateOfflineManifest(request:OfflineNegotiationRequest, bindings:Required<NegotiationExpectations>, available:boolean, requestFingerprint:string, pilot: {enabled:boolean;appViewIds:string[]}, generic: {enabled:boolean;views:{appViewId:string;kinds:string[]}[]}) {
+  const supportedVersions={...OFFLINE_NEGOTIATION_VERSIONS,storagePolicyVersion:[2,3].includes(request.storagePolicyVersion)?request.storagePolicyVersion:1};
   const issues:string[]=[];
   for(const key of Object.keys(OFFLINE_NEGOTIATION_VERSIONS)as Array<keyof typeof OFFLINE_NEGOTIATION_VERSIONS>){
     if(request[key]!==supportedVersions[key])issues.push(({readRepresentationVersion:"READ_REPRESENTATION_UNSUPPORTED",receiptVersion:"RECEIPT_VERSION_UNSUPPORTED",storagePolicyVersion:"STORAGE_POLICY_UNSUPPORTED"})[key]);
@@ -65,13 +65,16 @@ function negotiateOfflineManifest(request:OfflineNegotiationRequest, bindings:Re
     if(comparison[key]==="mismatch")issues.push(({scopeFingerprint:"SCOPE_MISMATCH",manifestVectorRevision:"REVISION_MISMATCH",epoch:"EPOCH_MISMATCH",definitionsRevision:"DEFINITION_MISMATCH"})[key]);
   }
   if(!available)issues.push("REVISION_TRACKING_UNAVAILABLE");
-  const enabled=request.storagePolicyVersion===2 && pilot.enabled && available && issues.length===0 && pilot.appViewIds.length>0;
+  const attendanceEnabled=[2,3].includes(request.storagePolicyVersion) && pilot.enabled && available && issues.length===0 && pilot.appViewIds.length>0;
+  const genericEnabled=request.storagePolicyVersion===3 && generic.enabled && available && issues.length===0 && generic.views.length>0;
+  const enabled=attendanceEnabled||genericEnabled;
   return {version:1 as const,nonce:request.nonce,requestFingerprint,
     status:!available?"unavailable"as const:issues.length?"incompatible"as const:"compatible"as const,
     issues,requestedVersions:{readRepresentationVersion:request.readRepresentationVersion,receiptVersion:request.receiptVersion,storagePolicyVersion:request.storagePolicyVersion},
     supportedVersions,bindings,comparison,compatibilityOnly:!enabled,
     reuseAllowed:enabled,clientMaySkipReads:enabled,coverageCertified:false as const,localReceiptVerified:false as const,storageIdentityVerified:false as const,
-    ...(request.storagePolicyVersion===2?{selectiveReuse:{version:1 as const,policy:"attendance-runtime-v1" as const,enabled,appViewIds:enabled?pilot.appViewIds:[]}}:{})};
+    ...([2,3].includes(request.storagePolicyVersion)?{selectiveReuse:{version:1 as const,policy:"attendance-runtime-v1" as const,enabled:attendanceEnabled,appViewIds:attendanceEnabled?pilot.appViewIds:[]}}:{}),
+    ...(request.storagePolicyVersion===3?{genericReuse:{version:1 as const,policy:"verified-coverage-runtime-v1" as const,enabled:genericEnabled,views:genericEnabled?generic.views:[]}}:{})};
 }
 const entityKeys=new Set(["entityTypeId","sourceEntityTypeId","targetEntityTypeId","catalogEntityTypeId","revisionEntityTypeId","relatedEntityTypeId","catalogId"]);
 function configuredEntities(value:unknown):string[] {
@@ -164,7 +167,8 @@ export async function buildOfflineManifest(tx:Prisma.TransactionClient, scope:Of
   const negotiation=query.version===2?negotiateOfflineManifest(query.negotiation,
     {scopeFingerprint:offlineManifestHash(identity),manifestVectorRevision:readBindingVector.revision,epoch:catalog.epoch,definitionsRevision:state.readDefinitionsRevision},
     manifest.readBindingVector.available&&manifest.tracking.dependenciesResolved&&entities.every(entity=>entity.active&&entity.tracked),
-    offlineManifestHash({scope:identity,query}),{enabled:!!query.month && selectiveReuseEnabled(contract.id),appViewIds:experiences.filter(view=>view.workflowKey==="attendance"&&view.status==="diagnostic").map(view=>view.appViewId)}):undefined;
+    offlineManifestHash({scope:identity,query}),{enabled:!!query.month && selectiveReuseEnabled(contract.id),appViewIds:experiences.filter(view=>view.workflowKey==="attendance"&&view.status==="diagnostic").map(view=>view.appViewId)},
+    {enabled:genericReuseEnabled(),views:experiences.filter(view=>view.status!=="invalid-definition"&&view.status!=="dependency-unavailable").map(view=>({appViewId:view.appViewId,kinds:genericReuseKinds(view.type,view.workflowKey)})).filter(view=>view.kinds.length>0)}):undefined;
   return {...manifest,...(negotiation?{negotiation}:{})};
 }
 
