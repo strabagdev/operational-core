@@ -1078,3 +1078,12 @@ No hay esquema ni migración nueva. Requiere las etapas previas de revisiones/Ob
 Core antes que Client. Core anterior no anuncia la capacidad: Client conserva cobertura legacy
 limitada y no inventa un certificado completo. Revertir Core exige retirar antes el Client nuevo
 o aceptar fallos explícitos en descargas activas; preservar siempre el snapshot local anterior.
+
+
+## Attendance — política de repetición por experiencia (16-11-2026, local)
+
+Política opcional ONE_PER_DAY (valor predeterminado), MULTIPLE_WITH_WARNING o MULTIPLE.
+El preset reutiliza STATE_UPDATE, el lock de identidad y la cola compartida; edición por ID
+y base explícitos, altas múltiples durables y negociación compatible antes del envío.
+Sin migraciones ni activación de experiencias. Contrato, límites y operación:
+[ATTENDANCE_REPETITION.md](ATTENDANCE_REPETITION.md).

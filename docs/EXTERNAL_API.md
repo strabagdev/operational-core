@@ -1878,3 +1878,26 @@ recibo mensual íntegro del mismo handle/sesión y consumo dentro de su transacc
 Rechazo conserva descarga normal; retirada final provoca una sola pasada ordinaria localizada.
 Catálogos y otros workflows continúan descargándose. Sin nueva migración, motores offline,
 comandos o sincronización; sin producción, commit/push/deploy.
+
+
+## Attendance repetition policy (local, 2026-11-16)
+
+AppView.config.repetitionPolicy is optional: ONE_PER_DAY (including absent), MULTIPLE_WITH_WARNING,
+or MULTIPLE. Existing definitions and data are not rewritten. GET Attendance adds repetitionPolicy,
+items[].dailyRecordCount, and (multiple policies plus personRecordId) dailyRecords for the selected day.
+Multiple reads retain every recordId/version/context. eventOccurredAt is device capture time from
+creation audit, with server createdAt fallback for older events; DATE remains the configured date.
+
+New multiple captures use POST workflow/state-update with clientRequestId and matching repetitionPolicy.
+Core requires repetitionAcknowledged=true when the warning policy finds existing records. Targeted edits
+require targetRecordId, overwrite=true, expectedUpdatedAt, and matching person/date/target; unavailable
+selection never becomes a create. Version conflicts and idempotency remain explicit. eventOccurredAt,
+when provided at creation, is canonical UTC ISO text and part of the immutable request hash.
+GET STATE_UPDATE exposes workflow.repetitionPolicy for authenticated compatibility checking.
+Legacy POST Attendance remains unchanged for ONE_PER_DAY and explicitly rejects multiple policies.
+No migration or gate activation is included. Full semantics and rollout/rollback constraints:
+[ATTENDANCE_REPETITION.md](ATTENDANCE_REPETITION.md).
+
+### Attendance repetition command transport — 2026-11-17
+
+POST `/api/v1/contracts/:contractId/views/:appViewId/workflow/state-update/repetition` accepts only explicit MULTIPLE or MULTIPLE_WITH_WARNING commands and delegates to the existing authenticated STATE_UPDATE handler. Request/result, permissions, locks, audit and idempotency are shared. It has no GET or alternative persistence engine. Older Core returns 404/405; Client must never fall back to legacy POST for a repeat command, including after a successful compatibility GET. Default Attendance and other STATE_UPDATE consumers retain their existing POST path. Omitted repetition policy and ONE_PER_DAY share the legacy canonical request hash; redundant explicit default does not invalidate a retry across upgrades. Multiple policies remain part of the immutable hash.

@@ -30,14 +30,48 @@ export function parseWorkflowWriteCommand(value: unknown): WorkflowWriteCommand 
   return { version: 1, configurationFingerprint: value.configurationFingerprint, capabilities: ["relation-context-v1"] };
 }
 function binding(config: unknown) {
-  if (!object(config) || (config.type !== undefined && config.type !== "WORKFLOW") || !["attendance", "state-update"].includes(String(config.workflowKey))) throw new WorkflowWritePolicyError("WORKFLOW_NOT_AUTHORIZED");
-  const attendance = config.workflowKey === "attendance";
+  if (!object(config) || (config.type !== undefined && config.type !== "WORKFLOW") || !["attendance", "state-update"].includes(String(config.workflowKey??config.workflow))) throw new WorkflowWritePolicyError("WORKFLOW_NOT_AUTHORIZED");
+  const attendance = (config.workflowKey??config.workflow) === "attendance";
   const uniqueness = attendance ? "subject-date" : object(config.uniqueness) ? config.uniqueness.mode : undefined;
-  if (!attendance && (config.historyMode !== "update-current" || !["subject", "subject-date"].includes(String(uniqueness)))) throw new WorkflowWritePolicyError("WORKFLOW_NOT_AUTHORIZED");
+  const repeat = attendance ? config.repetitionPolicy : config.attendanceRepetitionPolicy;
+  if (!attendance && !["MULTIPLE", "MULTIPLE_WITH_WARNING"].includes(String(repeat)) && (config.historyMode !== "update-current" || !["subject", "subject-date"].includes(String(uniqueness)))) throw new WorkflowWritePolicyError("WORKFLOW_NOT_AUTHORIZED");
   return { source: config.sourceEntityTypeId, target: config.targetEntityTypeId, subject: attendance ? config.personFieldId : config.subjectFieldId,
     date: uniqueness === "subject-date" ? config.dateFieldId : null, uniqueness,
+    ...(["MULTIPLE", "MULTIPLE_WITH_WARNING"].includes(String(repeat)) ? {repetitionPolicy:repeat} : {}),
     extras: [...new Set([...strings(attendance ? config.contextFieldIds : config.extraFieldIds), ...(attendance && typeof config.observationFieldId === "string" ? [config.observationFieldId] : [])])].sort() };
 }
+/** The same physical subject/date identity cannot simultaneously promise one row and independent events. */
+export async function assertAttendanceRepetitionWriters(tx: Client, config: unknown, viewId?: string) {
+    if (!object(config))
+        return;
+    const adapted = config.workflowKey === "state-update" && config.attendanceRepetitionPolicy !== undefined;
+    if (config.workflowKey !== "attendance" && !adapted)
+        return;
+    const policy = (adapted ? config.attendanceRepetitionPolicy : config.repetitionPolicy) ?? "ONE_PER_DAY";
+    const subject = adapted ? config.subjectFieldId : config.personFieldId;
+    const views = await tx.appView.findMany({ where: { type: "WORKFLOW", active: true, config: { path: ["targetEntityTypeId"], equals: String(config.targetEntityTypeId) } }, select: { id: true, config: true } });
+    if (adapted && viewId) {
+        const live = views.find(view => view.id === viewId);
+        if (!live || !object(live.config) || (live.config.workflowKey ?? live.config.workflow) !== "attendance" || (live.config.repetitionPolicy ?? "ONE_PER_DAY") !== policy || live.config.personFieldId !== subject || live.config.dateFieldId !== config.dateFieldId || live.config.sourceEntityTypeId !== config.sourceEntityTypeId || live.config.statusFieldId !== (Array.isArray(config.stateFields) ? config.stateFields[0]?.fieldId : undefined) || JSON.stringify(binding(live.config).extras) !== JSON.stringify(binding(config).extras))
+            throw new WorkflowWritePolicyError("ATTENDANCE_POLICY_CHANGED", "La configuración cambió antes de guardar. Revisa la intención conservada; no se modificó ningún registro.");
+    }
+    for (const view of views) {
+        if (view.id === viewId || !object(view.config))
+            continue;
+        const other = view.config, attendance = (other.workflowKey ?? other.workflow) === "attendance";
+        // Preserve legacy ONE_PER_DAY coexistence; opt-in multiple activation still checks every writer.
+        if (!attendance && policy === "ONE_PER_DAY") continue;
+        if ((attendance ? other.personFieldId : other.subjectFieldId) !== subject)
+            continue;
+        const uniqueness = attendance ? "subject-date" : object(other.uniqueness) ? other.uniqueness.mode : other.uniquenessMode ?? "none";
+        if (uniqueness !== "subject" && other.dateFieldId !== config.dateFieldId)
+            continue;
+        const otherMultiple = attendance ? other.repetitionPolicy !== undefined && other.repetitionPolicy !== "ONE_PER_DAY" : (other.historyMode ?? "append") === "append" || uniqueness === "none";
+        if (otherMultiple !== (policy !== "ONE_PER_DAY"))
+            throw new WorkflowWritePolicyError("ATTENDANCE_WRITERS_INCOMPATIBLE", "Hay otra experiencia con la misma identidad y una política incompatible. Revisa los escritores antes de cambiar la política; no se modificaron registros.");
+    }
+}
+
 export async function lockWritePolicyTargets(tx: Client, ids: string[], exclusive = false) {
   const selected = [...new Set(ids)].sort(); if (!selected.length) return;
   if (exclusive) await tx.$queryRaw(Prisma.sql`SELECT id FROM "EntityType" WHERE id IN (${Prisma.join(selected)}) ORDER BY id FOR UPDATE`);
@@ -76,6 +110,7 @@ export async function authorizeWorkflowWrite(tx: Client | undefined, config: unk
   const target = object(config) && typeof config.targetEntityTypeId === "string" ? config.targetEntityTypeId : "";
   const client = tx ?? prisma;
   if (tx) await lockWritePolicyTargets(tx, [target]);
+  if(object(config)&&config.attendanceRepetitionPolicy!==undefined) await assertAttendanceRepetitionWriters(client,config,appViewId);
   const effective = await contractFor(client, target, appViewId); if (!effective) return;
   if (!tx || !effective.contract.authorized) throw new WorkflowWritePolicyError("WORKFLOW_NOT_AUTHORIZED");
   const expected = binding(effective.effective.config), actual = binding(config);

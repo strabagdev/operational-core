@@ -1244,6 +1244,7 @@ describe("state-update workflow runtime", () => {
     expect(normalizeStateUpdateCompatibleConfig(attendanceConfig())).toEqual({
       type: "WORKFLOW",
       workflowKey: "state-update",
+      attendanceRepetitionPolicy: "ONE_PER_DAY",
       sourceEntityTypeId: "people",
       targetEntityTypeId: "attendance",
       subjectFieldId: "person_field",

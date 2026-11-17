@@ -1,5 +1,6 @@
+import {attendanceRepetitionPolicies, type AttendanceRepetitionPolicy} from "./attendance-repetition";
 import {createAuditEvent} from "./audit";
-import { parseWorkflowWritePolicy, validateWritePolicyChange, WorkflowWritePolicyError, type WorkflowWritePolicy } from "./workflow-write-policy";
+import { assertAttendanceRepetitionWriters, lockWritePolicyTargets, parseWorkflowWritePolicy, validateWritePolicyChange, WorkflowWritePolicyError, type WorkflowWritePolicy } from "./workflow-write-policy";
 import {buildSubjectPresentationDefinition} from "./subject-presentation-core";
 import {parseSubjectPresentation,type SubjectPresentationConfig} from "./subject-presentation";
 import { codeSearchField } from "./workflow-code-search";
@@ -350,6 +351,7 @@ const defaultReportTimeFilter = {
 } as const satisfies ReportTimeFilterConfig;
 
 export type AttendanceWorkflowConfig = {
+  repetitionPolicy?: AttendanceRepetitionPolicy;
   workflowWritePolicy?: WorkflowWritePolicy;
       type: "WORKFLOW";
       workflowKey: "attendance";
@@ -366,6 +368,8 @@ export type AttendanceWorkflowConfig = {
     };
 
 export type StateUpdateWorkflowConfig = {
+  /** Internal Attendance adapter capability; never configurable by STATE_UPDATE. */
+  attendanceRepetitionPolicy?: AttendanceRepetitionPolicy;
   workflowWritePolicy?: WorkflowWritePolicy;
   type: "WORKFLOW";
   workflowKey: "state-update";
@@ -414,6 +418,7 @@ export function getAppViewInput(formData: FormData) {
       type: formData.get("type"),
     }),
     rawConfig: {
+      repetitionPolicy: formData.get("repetitionPolicy") || undefined,
       entityTypeId: formData.get("entityTypeId"),
       entityTypeIds: formData.getAll("entityTypeIds"),
       groupByFieldKey: formData.get("groupByFieldKey"),
@@ -575,7 +580,7 @@ export async function createAppView(
   });
 
   if (config.type === "WORKFLOW" && config.workflowWritePolicy) throw new WorkflowWritePolicyError("WORKFLOW_POLICY_EXISTING_VIEW_REQUIRED", "Crea primero la experiencia sin política; después configura sus IDs autorizados.");
-  return prisma.appView.create({
+  const create = (client: Pick<Prisma.TransactionClient,"appView">) => client.appView.create({
     data: {
       active: input.common.active,
       config: toJsonConfig(config),
@@ -587,6 +592,12 @@ export async function createAppView(
       type: input.common.type,
     },
   });
+  if(config.type==="WORKFLOW"&&config.workflowKey==="attendance"&&config.repetitionPolicy&&config.repetitionPolicy!=="ONE_PER_DAY") return prisma.$transaction(async tx=>{
+    await lockWritePolicyTargets(tx,[config.targetEntityTypeId],true);
+    await assertAttendanceRepetitionWriters(tx,config);
+    return create(tx);
+  });
+  return create(prisma);
 }
 
 export async function updateAppView(
@@ -613,6 +624,14 @@ export async function updateAppView(
 
   return prisma.$transaction(async tx => {
     const previousPolicy = await validateWritePolicyChange(tx, contractId, appViewId, authorized.appView.config, config, input.rawConfig.workflowWritePolicyDisarm);
+    if(config.type==="WORKFLOW"&&config.workflowKey==="attendance"&&config.repetitionPolicy!==undefined) await assertAttendanceRepetitionWriters(tx,config,appViewId);
+    const lockedView=config.type==="WORKFLOW"&&config.workflowKey==="attendance" ? await tx.appView.findUnique({where:{id:appViewId},select:{config:true}}) : null;
+    const previousConfig=(lockedView?.config??authorized.appView.config) as {repetitionPolicy?:string};
+    if(config.type==="WORKFLOW"&&config.workflowKey==="attendance"&&(previousConfig.repetitionPolicy??"ONE_PER_DAY")!==((authorized.appView.config as {repetitionPolicy?:string}).repetitionPolicy??"ONE_PER_DAY"))throw new AppViewConfigError("La política cambió durante el guardado. Actualiza antes de volver a guardar.","repetitionPolicy");
+    if(config.type==="WORKFLOW"&&config.workflowKey==="attendance"&&(!config.repetitionPolicy||config.repetitionPolicy==="ONE_PER_DAY")&&["MULTIPLE","MULTIPLE_WITH_WARNING"].includes(previousConfig.repetitionPolicy??"")){
+      const duplicates=await tx.$queryRaw<Array<{duplicate:boolean}>>`SELECT true AS duplicate FROM "EntityRecord" r JOIN "EntityRelation" rel ON rel."sourceRecordId"=r.id AND rel."sourceFieldId"=${config.personFieldId} JOIN "EntityValue" v ON v."entityRecordId"=r.id AND v."entityFieldId"=${config.dateFieldId} WHERE r."entityTypeId"=${config.targetEntityTypeId} AND v."dateValue" IS NOT NULL GROUP BY rel."targetRecordId",v."dateValue" HAVING count(DISTINCT r.id)>1 LIMIT 1`;
+      if(duplicates.length)throw new AppViewConfigError("Hay varios registros para una persona y fecha. No se puede volver a uno por día sin revisar esos registros; no se modificó ninguno.","repetitionPolicy");
+    }
     const updated = await tx.appView.update({
     data: {
       active: input.common.active,
@@ -1078,6 +1097,7 @@ async function validateAppViewConfig({
       ...(config.subjectPresentation ? {subjectPresentation:config.subjectPresentation}:{}),
         sourceEntityTypeId: config.sourceEntityTypeId,
         targetEntityTypeId: config.targetEntityTypeId,
+        ...(config.repetitionPolicy ? { repetitionPolicy: config.repetitionPolicy } : {}),
         personFieldId: config.personFieldId,
         dateFieldId: config.dateFieldId,
         statusFieldId: config.statusFieldId,
@@ -1391,6 +1411,7 @@ const workflowBaseConfigInputSchema = z.object({
 });
 
 const attendanceWorkflowConfigInputSchema = workflowBaseConfigInputSchema.extend({
+  repetitionPolicy: z.enum(attendanceRepetitionPolicies).optional(),
   workflowKey: z.literal("attendance"),
   personFieldId: z.string().trim().min(1, "Selecciona el campo Persona."),
   dateFieldId: z.string().trim().min(1, "Selecciona el campo Fecha."),

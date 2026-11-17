@@ -1,3 +1,4 @@
+import {allowsAttendanceRepetition, type AttendanceRepetitionPolicy} from "./attendance-repetition";
 import { releaseRejectedWorkflowClaim, authorizeWorkflowWrite, workflowWriteMetadata, parseWorkflowWriteCommand, WorkflowWritePolicyError, assertGenericEntityWritesAllowed, type WorkflowWriteCommand } from "./workflow-write-policy";
 import { withStateUpdateWriteIdentity } from "./state-update-write-identity";
 import {withSubjectPresentation} from "./subject-presentation-core";
@@ -95,6 +96,10 @@ export type StateUpdateContext = {
 };
 
 export type StateUpdateInput = {
+  repetitionPolicy?: AttendanceRepetitionPolicy;
+  eventOccurredAt?: string;
+  repetitionAcknowledged?: boolean;
+  targetRecordId?: string;
   writeCommand?: WorkflowWriteCommand;
   schedule?: ScheduleReference;
   identity?: CompositeIdentity;
@@ -138,6 +143,7 @@ const latestStateUpdatePageSize = 20;
 const latestStateUpdateMaxPageSize = 100;
 
 export function attendanceStateUpdateConfig(config: {
+  repetitionPolicy?: AttendanceRepetitionPolicy;
   codeSearch?: { fieldId: string };
   sourceEntityTypeId: string;
   targetEntityTypeId: string;
@@ -156,6 +162,7 @@ export function attendanceStateUpdateConfig(config: {
   return {
     type: "WORKFLOW",
     workflowKey: "state-update",
+    attendanceRepetitionPolicy: config.repetitionPolicy ?? "ONE_PER_DAY",
     ...(config.codeSearch ? { codeSearch: config.codeSearch } : {}),
     sourceEntityTypeId: config.sourceEntityTypeId,
     targetEntityTypeId: config.targetEntityTypeId,
@@ -168,7 +175,7 @@ export function attendanceStateUpdateConfig(config: {
     extraFieldIds: Array.from(new Set(extraFieldIds)),
     dateFieldId: config.dateFieldId,
     uniqueness: { mode: "subject-date" },
-    historyMode: "update-current",
+    historyMode: allowsAttendanceRepetition(config.repetitionPolicy) ? "append" : "update-current",
   };
 }
 
@@ -604,10 +611,21 @@ async function saveStateUpdateEntryInContext({
         context,
         date: input.date,
         subjectRecordIds: [subject.id],
+        ...(input.targetRecordId ? {recordId:input.targetRecordId} : {}),
         countIdentityMatches: context.config.historyMode === "update-current" && context.config.uniqueness.mode === "subject-date",
       }))[0] ?? null;
   timing?.mark("existing_target_lookup");
 
+  if (input.targetRecordId && !existing) {
+    const result: StateUpdateResult = {result:"ERROR",code:"ATTENDANCE_RECORD_UNAVAILABLE",message:"El registro seleccionado no pertenece a esta persona, fecha o destino; no se creó ni modificó otro.",subjectRecordId:input.subjectRecordId};
+    await persistStateUpdateResultIfNeeded({appId,context,idempotencyKey,input,result,timing});
+    return {ok:true,result};
+  }
+  if (!input.targetRecordId && context.config.attendanceRepetitionPolicy === "MULTIPLE_WITH_WARNING" && !input.repetitionAcknowledged && existing) {
+    const result: StateUpdateResult = {result:"ERROR",code:"ATTENDANCE_REPEAT_CONFIRMATION_REQUIRED",message:"Ya existen registros para esta persona y fecha. Consulta el conteo y confirma expresamente uno adicional.",subjectRecordId:input.subjectRecordId};
+    await persistStateUpdateResultIfNeeded({appId,context,idempotencyKey,input,result,timing});
+    return {ok:true,result};
+  }
   if ((existing?.matchingRecordCount ?? 0) > 1) {
     const result: StateUpdateResult = {
       result: "ERROR",
@@ -619,7 +637,7 @@ async function saveStateUpdateEntryInContext({
     return { ok: true, result };
   }
 
-  if (!existing || context.config.historyMode === "append") {
+  if (!existing || (context.config.historyMode === "append" && !input.targetRecordId)) {
     const record = await createStateUpdateRecord({
       appId,
       context,
@@ -659,6 +677,12 @@ async function saveStateUpdateEntryInContext({
     requestedStates: requested.states,
   });
   const differences = intentDiff.differences;
+
+  if (input.targetRecordId && existing.record.updatedAt.toISOString() !== input.expectedUpdatedAt) {
+    const result = conflictResult({conflictReason:"EXPECTED_UPDATED_AT_MISMATCH",differences,existing,input,context});
+    await persistStateUpdateResultIfNeeded({appId,context,idempotencyKey,input,result,timing});
+    return {ok:true,result};
+  }
 
   if (context.scheduleApplicationConflict) {
     const result=conflictResult({conflictReason:"CURRENT_VALUE_DIFFERS",differences,existing,input,context});
@@ -1126,6 +1150,15 @@ function parseStateUpdateBody(body: unknown, config: StateUpdateWorkflowConfig, 
   }
 
   if (config.uniqueness.mode === "subject-date-fields" && (!body.identity || !stringValue(body.date))) return writeError("COMPOSITE_IDENTITY_REQUIRED", "Selecciona fecha y todos los campos de identidad. Usa un Client compatible.");
+  const repeatPolicy = config.attendanceRepetitionPolicy ?? "ONE_PER_DAY";
+  const repeated = allowsAttendanceRepetition(config.attendanceRepetitionPolicy);
+  if ((repeated && (body.repetitionPolicy !== repeatPolicy || !stringValue(body.clientRequestId)?.trim())) ||
+      (body.repetitionPolicy !== undefined && body.repetitionPolicy !== repeatPolicy) ||
+      (body.targetRecordId !== undefined && (!repeated || typeof body.targetRecordId !== "string" || !body.targetRecordId.trim() || body.targetRecordId !== body.targetRecordId.trim() || body.targetRecordId.length > 200))) {
+    return writeError("ATTENDANCE_POLICY_CHANGED", "La política o el comando no son compatibles. Actualiza y revisa la intención sin reenviarla como un registro nuevo.");
+  }
+  if (body.eventOccurredAt !== undefined && (!repeated || typeof body.eventOccurredAt!=="string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(body.eventOccurredAt) || !Number.isFinite(Date.parse(body.eventOccurredAt)) || new Date(body.eventOccurredAt).toISOString()!==body.eventOccurredAt)) return writeError("INVALID_EVENT_TIME", "La fecha y hora de captura no son válidas.");
+  if (body.targetRecordId && (body.overwrite !== true || !stringValue(body.expectedUpdatedAt))) return writeError("OVERWRITE_EXPECTATION_REQUIRED", "La edición requiere el registro seleccionado y su versión base.");
   const rawStates = isRecord(body.states) ? body.states : {};
   const states: Record<string, unknown> = {};
   const allowedStateFieldIds = new Set(config.stateFields.map((field) => field.fieldId));
@@ -1156,6 +1189,10 @@ function parseStateUpdateBody(body: unknown, config: StateUpdateWorkflowConfig, 
     body: {
       ...(schedule ? {schedule} : {}),
       ...(config.uniqueness.mode === "subject-date-fields" ? { identity: body.identity as CompositeIdentity } : {}),
+      ...(body.eventOccurredAt !== undefined ? {eventOccurredAt:body.eventOccurredAt as string} : {}),
+      ...(body.repetitionPolicy !== undefined ? {repetitionPolicy: body.repetitionPolicy as AttendanceRepetitionPolicy} : {}),
+      ...(body.repetitionAcknowledged === true ? {repetitionAcknowledged:true} : {}),
+      ...(body.targetRecordId ? {targetRecordId: body.targetRecordId as string} : {}),
       clientRequestId: stringValue(body.clientRequestId)?.trim() || undefined,
       date: parsedDate.date,
       dateValue: parsedDate.value ?? undefined,
@@ -1283,12 +1320,14 @@ export async function findExistingStateUpdates({
   subjectRecordIds,
   selection,
   countIdentityMatches,
+  recordId,
 }: {
   context: StateUpdateContext;
   date?: Date;
   subjectRecordIds: string[];
   selection?: "workflow-current";
   countIdentityMatches?: boolean;
+  recordId?: string;
 }): Promise<ExistingStateUpdate[]> {
   if (context.composite && !context.composite.recordIds.length) return [];
   if (subjectRecordIds.length === 0 || context.config.uniqueness.mode === "none") {
@@ -1305,6 +1344,7 @@ export async function findExistingStateUpdates({
     },
   };
 
+  if (recordId) where.id = recordId;
   if (context.composite) where.id = { in: context.composite.recordIds };
   if (context.config.uniqueness.mode === "subject-date" || context.config.uniqueness.mode === "subject-date-fields") {
     if (!context.config.dateFieldId || !date) {
@@ -1663,6 +1703,7 @@ async function createStateUpdateRecord({
       entityRecordId: record.id,
       entityTypeId: context.targetEntityType.id,
       metadata: {
+        ...(input.eventOccurredAt ? {eventOccurredAt:input.eventOccurredAt} : {}),
         ...(input.writeCommand ? {workflowWriteFingerprint:input.writeCommand.configurationFingerprint} : {}),
         apiExternalAppId: appId,
         displayName: record.displayName,
@@ -2359,6 +2400,7 @@ function serializeField(field: StateUpdateField) {
 function workflowMetadata(context: StateUpdateContext) {
   return {
     workflowKey: "state-update",
+    ...(context.config.attendanceRepetitionPolicy ? {repetitionPolicy:context.config.attendanceRepetitionPolicy} : {}),
     historyMode: context.config.historyMode,
     uniqueness: context.config.uniqueness,
     subjectFieldId: context.config.subjectFieldId,
@@ -2522,6 +2564,10 @@ function canonicalStateUpdateRequestHash({
     ...(body.identity ? { identity: { ...body.identity, values: JSON.parse(identityContextKey(body.identity.values)) } } : {}),
     ...(body.writeCommand ? {writeCommand: body.writeCommand} : {}),
     ...(body.schedule ? {schedule: body.schedule} : {}),
+    ...(body.eventOccurredAt !== undefined ? {eventOccurredAt:body.eventOccurredAt} : {}),
+    ...(body.repetitionPolicy !== undefined && body.repetitionPolicy !== "ONE_PER_DAY" ? {repetitionPolicy:body.repetitionPolicy} : {}),
+    ...(body.repetitionAcknowledged ? {repetitionAcknowledged:true} : {}),
+    ...(body.targetRecordId ? {targetRecordId:body.targetRecordId} : {}),
     date: body.dateValue ?? null,
     expectedUpdatedAt: body.expectedUpdatedAt ?? null,
     extraValues: Object.fromEntries(Object.entries(body.extraValues).sort(([left], [right]) => left.localeCompare(right))),

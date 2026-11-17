@@ -229,6 +229,7 @@ export function AppViewForm({
     valueFromState(state, "workflowKey") ||
     (initialValues?.config.type === "WORKFLOW" ? initialValues.config.workflowKey : "attendance"),
   );
+  const [repetitionPolicy, setRepetitionPolicy] = useState(valueFromState(state, "repetitionPolicy") || (initialValues?.config.type === "WORKFLOW" && initialValues.config.workflowKey === "attendance" ? initialValues.config.repetitionPolicy : undefined) || "ONE_PER_DAY");
   const [personFieldId, setPersonFieldId] = useState(
     valueFromState(state, "personFieldId") ||
     (initialValues?.config.type === "WORKFLOW" && initialValues.config.workflowKey === "attendance"
@@ -758,6 +759,8 @@ export function AppViewForm({
       ) : (
         <ConfigFields
           activeBoardFields={activeBoardFields}
+          repetitionPolicy={repetitionPolicy}
+          setRepetitionPolicy={setRepetitionPolicy}
           contextFieldIds={contextFieldIds}
           currentStatusDateFieldId={currentStatusDateFieldId}
           currentStatusStateFieldId={currentStatusStateFieldId}
@@ -3664,6 +3667,8 @@ function PanelErrorSummary({
 function ConfigFields({
   activeBoardFields,
   appViews,
+  repetitionPolicy,
+  setRepetitionPolicy,
   contextFieldIds,
   currentStatusDateFieldId,
   currentStatusStateFieldId,
@@ -3749,6 +3754,8 @@ function ConfigFields({
 }: {
   activeBoardFields: AppViewEntityTypeOption["fields"];
   appViews: AppViewOption[];
+  repetitionPolicy: string;
+  setRepetitionPolicy: (value:string)=>void;
   contextFieldIds: string[];
   currentStatusDateFieldId: string;
   currentStatusStateFieldId: string;
@@ -4001,6 +4008,15 @@ function ConfigFields({
         ) : (
           <div className="grid gap-3">
             <div className="grid gap-3 sm:grid-cols-2">
+              <label className="grid gap-2 text-sm">Repetición de registros
+                <select name="repetitionPolicy" value={repetitionPolicy} onChange={event=>setRepetitionPolicy(event.target.value)} className="min-h-11 rounded-md border px-3">
+                  <option value="ONE_PER_DAY">Uno por día</option>
+                  <option value="MULTIPLE_WITH_WARNING">Varios por día con advertencia</option>
+                  <option value="MULTIPLE">Varios por día sin advertencia</option>
+                </select>
+                <span>Los registros adicionales son independientes. Editar modifica sólo el registro seleccionado.</span>
+                <FieldError errors={fieldErrors?.repetitionPolicy}/>
+              </label>
               <FieldSelect
                 fields={activeTargetFields}
                 label="Campo Persona"

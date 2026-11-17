@@ -11,7 +11,7 @@ export function stateUpdateWriteIdentityKey(
   input: StateUpdateInput,
 ): string | null {
   const { config } = context;
-  if (config.historyMode !== "update-current" ||
+  if ((config.historyMode !== "update-current" && !config.attendanceRepetitionPolicy) ||
       (config.uniqueness.mode !== "subject" && config.uniqueness.mode !== "subject-date")) return null;
 
   const fields: Array<[string, string]> = [[config.subjectFieldId, input.subjectRecordId]];

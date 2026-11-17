@@ -1,3 +1,4 @@
+import {attendanceRepetitionPolicy, allowsAttendanceRepetition, type AttendanceRepetitionPolicy} from "./attendance-repetition";
 import { releaseRejectedWorkflowClaim, isWorkflowWriteRejectionCode, workflowWriteMetadata, parseWorkflowWriteCommand, WorkflowWritePolicyError, type WorkflowWriteCommand } from "./workflow-write-policy";
 import {withSubjectPresentation} from "./subject-presentation-core";
 import { workflowSearchMetadata, usesWorkflowSearchComparison, workflowSubjectsSql } from "./workflow-search-comparison";
@@ -21,6 +22,9 @@ import {
 } from "@/lib/state-update-workflow";
 
 export type AttendanceEntryInput = {
+  targetRecordId?: string;
+  repetitionPolicy?: AttendanceRepetitionPolicy;
+  repetitionAcknowledged?: boolean;
   writeCommand?: WorkflowWriteCommand;
   contextValues?: Record<string, string | null>;
   expectedUpdatedAt?: string;
@@ -166,6 +170,7 @@ export async function getAttendanceWorkflowDay({
         config: context.context.config,
         contextFields: context.context.contextFields,
         date: parsedDate.date,
+        includeAll: allowsAttendanceRepetition(context.context.config.repetitionPolicy),
         personRecordIds: people.map((person) => person.id),
         statusOptionsByValue: context.context.statusOptionsByValue,
         targetEntityTypeId: context.context.targetEntityType.id,
@@ -193,6 +198,7 @@ export async function getAttendanceWorkflowDay({
       searchComparison,
       ...(codeSearch.metadata ? { codeSearchField: codeSearch.metadata } : {}),
       ...(codeSearch.fieldId ? { searchFieldId: codeSearch.fieldId } : {}),
+      repetitionPolicy: attendanceRepetitionPolicy(context.context.config.repetitionPolicy),
       contextFields: serializeAttendanceContextFields(context.context.contextFields),
       ...(context.context.config.observationFieldId ? {observationProjection: {version: 1 as const, fieldId: context.context.config.observationFieldId}} : {}),
       daySnapshotCapabilities: {version:1 as const,maxPageSize:100},
@@ -203,8 +209,10 @@ export async function getAttendanceWorkflowDay({
 
         return {
           person,
+          dailyRecordCount: attendance?.dailyRecordCount ?? 0,
           attendance: attendance
             ? {
+                ...(attendance.eventOccurredAt ? {eventOccurredAt:attendance.eventOccurredAt} : {}),
                 observation: attendance.observation,
                 contextValues: attendance.contextValues,
                 recordId: attendance.record.id,
@@ -215,6 +223,7 @@ export async function getAttendanceWorkflowDay({
             : null,
         };
       }),
+      ...(allowsAttendanceRepetition(context.context.config.repetitionPolicy) && personRecordId ? {dailyRecords:attendances.map(a=>({person:people.find(p=>p.id===a.personRecordId)!,attendance:{...(a.eventOccurredAt?{eventOccurredAt:a.eventOccurredAt}:{}),recordId:a.record.id,updatedAt:a.record.updatedAt.toISOString(),statusOptionId:a.statusOption?.id??null,statusLabel:a.statusOption?.label??null,observation:a.observation,contextValues:a.contextValues}}))} : {}),
       latest,
       sourceEntityType: {
         id: context.context.sourceEntityType.id,
@@ -256,6 +265,7 @@ export async function saveAttendanceWorkflowDay({
     return context;
   }
 
+  if (allowsAttendanceRepetition(context.context.config.repetitionPolicy)) return {ok:false as const,response:badRequest("Esta política requiere el comando individual versionado de STATE_UPDATE.","ATTENDANCE_REPETITION_COMMAND_REQUIRED")};
   const parsed = (() => { try { return parseAttendanceSaveBody(body); } catch (error) { if (error instanceof WorkflowWritePolicyError) return {ok:false as const,response:badRequest(error.message,error.code)}; throw error; } })();
 
   if (!parsed.ok) {
@@ -502,6 +512,8 @@ function attendanceContextValuesFromRecord(
 }
 
 type ExistingAttendance = {
+  eventOccurredAt?: string;
+  dailyRecordCount?: number;
   contextValues: Record<string, { label: string; optionId: string } | { id: string; displayName?: string } | null>;
   observation: string | null;
   personRecordId: string;
@@ -525,6 +537,7 @@ async function findExistingAttendances({
   personRecordIds,
   statusOptionsByValue,
   targetEntityTypeId,
+  includeAll = false,
 }: {
   config: AttendanceConfig;
   contextFields: AttendanceField[];
@@ -532,6 +545,7 @@ async function findExistingAttendances({
   personRecordIds: string[];
   statusOptionsByValue: Map<string, AttendanceStatusOption>;
   targetEntityTypeId: string;
+  includeAll?: boolean;
 }): Promise<ExistingAttendance[]> {
   if (personRecordIds.length === 0) {
     return [];
@@ -539,6 +553,7 @@ async function findExistingAttendances({
 
   const records = await prisma.entityRecord.findMany({
     include: {
+      ...(allowsAttendanceRepetition(config.repetitionPolicy)?{auditEvents:{where:{action:"RECORD_CREATED" as const},select:{metadata:true as const},orderBy:{createdAt:"asc" as const},take:1}}:{}),
       outgoingRelations: {
         select: {
           sourceFieldId: true,
@@ -584,29 +599,36 @@ async function findExistingAttendances({
       },
     },
   });
+  const counts = new Map<string,number>();
+  for (const r of records) { const p=r.outgoingRelations.find(x=>x.sourceFieldId===config.personFieldId)?.targetRecordId; if(p)counts.set(p,(counts.get(p)??0)+1); }
   const firstByPerson = new Map<string, ExistingAttendance>();
+  const all: ExistingAttendance[] = [];
 
   for (const record of records) {
     const personRecordId = record.outgoingRelations.find(relation => relation.sourceFieldId === config.personFieldId)?.targetRecordId;
 
-    if (!personRecordId || firstByPerson.has(personRecordId)) {
+    if (!personRecordId || (!includeAll && firstByPerson.has(personRecordId))) {
       continue;
     }
 
     const statusValue = record.values.find((value) => value.entityFieldId === config.statusFieldId)?.textValue;
 
-    firstByPerson.set(personRecordId, {
+    const attendance: ExistingAttendance = {
+      ...(allowsAttendanceRepetition(config.repetitionPolicy)?{eventOccurredAt:attendanceEventTime(record)}:{}),
       observation: config.observationFieldId
         ? record.values.find((value) => value.entityFieldId === config.observationFieldId)?.textValue ?? null
         : null,
       contextValues: attendanceContextValuesFromRecord(record.values, contextFields, record.outgoingRelations),
+      dailyRecordCount: counts.get(personRecordId) ?? 0,
       personRecordId,
       record,
       statusOption: statusValue ? statusOptionsByValue.get(statusValue) ?? null : null,
-    });
+    };
+    all.push(attendance);
+    if (!firstByPerson.has(personRecordId)) firstByPerson.set(personRecordId, attendance);
   }
 
-  return Array.from(firstByPerson.values());
+  return includeAll ? all : Array.from(firstByPerson.values());
 }
 
 async function findAttendancePeople({
@@ -762,6 +784,7 @@ async function getLatestAttendanceRecords({
 }) {
   const records = await prisma.entityRecord.findMany({
     include: {
+      ...(allowsAttendanceRepetition(config.repetitionPolicy)?{auditEvents:{where:{action:"RECORD_CREATED" as const},select:{metadata:true as const},orderBy:{createdAt:"asc" as const},take:1}}:{}),
       outgoingRelations: {
         select: {
           sourceFieldId: true,
@@ -814,6 +837,7 @@ async function getLatestAttendanceRecords({
 
     return {
       attendanceRecordId: record.id,
+      ...(allowsAttendanceRepetition(config.repetitionPolicy)?{eventOccurredAt:attendanceEventTime(record)}:{}),
       ...(config.observationFieldId ? {observation: record.values.find(value => value.entityFieldId === config.observationFieldId)?.textValue ?? null} : {}),
       person: person
         ? {
@@ -1431,4 +1455,10 @@ function optionMatchesSearch(
     option.label.toLocaleLowerCase().includes(normalizedQuery) ||
     option.value.toLocaleLowerCase().includes(normalizedQuery)
   );
+}
+
+function attendanceEventTime(record:{createdAt?:Date;auditEvents?:{metadata:Prisma.JsonValue|null}[]}){
+ const metadata=record.auditEvents?.[0]?.metadata;
+ const captured=metadata&&typeof metadata==="object"&&!Array.isArray(metadata)?metadata.eventOccurredAt:undefined;
+ return typeof captured==="string"&&Number.isFinite(Date.parse(captured))?captured:record.createdAt?.toISOString();
 }
