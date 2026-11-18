@@ -16,6 +16,7 @@ import { badRequest, forbidden, notFound } from "@/lib/api-response";
 import { dateOnlyToUtcDate } from "@/lib/date-only";
 import { getRelationConfig } from "@/lib/field-validation";
 import { latestByRelationRecords } from "@/lib/latest-by-relation";
+import { groupPanelRecords, panelCountFields } from "@/lib/panel-dataset-options";
 import { panelRelatedFieldId } from "@/lib/panel-related-fields";
 import { prisma } from "@/lib/prisma";
 
@@ -42,6 +43,8 @@ type PanelField = {
   }>;
   sortOrder: number;
   type: EntityFieldType;
+  emptyLabel?: string;
+  computed?: boolean;
   related?: { relationFieldId: string; targetEntityTypeId: string; targetFieldId: string; relationKind: "ONE" | "MANY" };
 };
 
@@ -49,6 +52,7 @@ type PanelRecord = {
   displayName: string;
   id: string;
   relatedValues?: Record<string, unknown[]>;
+  computedValues?: Record<string, number | null>;
   outgoingRelations: Array<{
     sourceFieldId: string;
     targetRecord: {
@@ -345,6 +349,14 @@ async function executePanelDataset({
         relationKind: getRelationConfig(relation.config).relationKind ?? "ONE" },
     });
   }
+  for (const count of dataset.relationCounts ?? []) {
+    const initial = count.difference ? fieldsById.get(count.difference.fieldId) : null;
+    if (initial && count.difference) initial.emptyLabel = count.difference.emptyLabel;
+  }
+  for (const virtual of panelCountFields(dataset)) {
+    if (fieldsById.has(virtual.id)) return { ok: false as const, response: badRequest("Un campo calculado colisiona con otro campo.", "INVALID_PANEL_CONFIG") };
+    fieldsById.set(virtual.id, { ...virtual, computed: true, config: null, isActive: true, key: virtual.id, sortOrder: 0, options: [] });
+  }
   const fieldIds = panelDatasetFieldIds(dataset);
   const fields = fieldIds
     .map((fieldId) => fieldsById.get(fieldId))
@@ -357,7 +369,8 @@ async function executePanelDataset({
     };
   }
   const datasetFields = [...fields, ...relatedSelections.map((selection) =>
-    fieldsById.get(panelRelatedFieldId(selection.relationFieldId, selection.fieldId))!)];
+    fieldsById.get(panelRelatedFieldId(selection.relationFieldId, selection.fieldId))!),
+    ...panelCountFields(dataset).map(field => fieldsById.get(field.id)!)];
 
   const requiredFilterIds = config.filters
     .filter((filter) => filter.required && dataset.filters?.some((item) => item.type === "PANEL_FILTER" && item.filterId === filter.id))
@@ -398,6 +411,8 @@ async function executePanelDataset({
   if (!enriched.ok) {
     return { ok: false as const, response: badRequest("La cardinalidad o el destino de una relación del panel no es válido.", "PANEL_RELATION_INVALID") };
   }
+  const counted = await enrichPanelRelationCounts(enriched.records, dataset, contractId, fieldsById);
+  if (!counted.ok) return counted;
   const filteredRecords = enriched.records.filter((record) => filterWhere.postFilters.every((filter) => {
     const field = fieldsById.get(filter.fieldId);
     return field && filter.type === "PANEL_FILTER"
@@ -416,8 +431,25 @@ async function executePanelDataset({
     }),
   });
 
-  const total = displayRecords.length;
-  const pagedRecords = displayRecords.slice((page - 1) * pageSize, page * pageSize);
+  let groups: ReturnType<typeof groupPanelRecords<PanelRecord>> | undefined;
+  if (dataset.groupBy) {
+    const relation = fieldsById.get(dataset.groupBy.relationFieldId);
+    if (dataset.transformation.type !== "RECORDS" || relation?.type !== "RELATION" || (getRelationConfig(relation.config).relationKind ?? "ONE") !== "ONE") {
+      return { ok: false as const, response: badRequest("La agrupación requiere una relación ONE válida.", "INVALID_PANEL_CONFIG") };
+    }
+    const expectedTarget = getRelationConfig(relation.config).targetEntityTypeId;
+    const target = expectedTarget ? await prisma.entityType.findFirst({ where: { id: expectedTarget, contractId, isActive: true }, select: { id: true } }) : null;
+    if (!target || displayRecords.some(record => record.outgoingRelations.some(link => link.sourceFieldId === relation.id && link.targetRecord.entityTypeId !== expectedTarget))) {
+      return { ok: false as const, response: badRequest("El destino de una relación de agrupación no es válido.", "PANEL_GROUP_RELATION_INVALID") };
+    }
+    try { groups = groupPanelRecords(displayRecords, relation.id); }
+    catch { return { ok: false as const, response: badRequest("Un registro tiene más de un destino para la relación de agrupación.", "PANEL_GROUP_RELATION_INVALID") }; }
+  }
+  const total = groups ? groups.length : displayRecords.length;
+  const pagedGroups = groups?.slice((page - 1) * pageSize, page * pageSize);
+  const visibleIds = new Set(pagedGroups?.flatMap(group => group.recordIds));
+  const pagedRecords = groups ? displayRecords.filter(record => visibleIds.has(record.id))
+    : displayRecords.slice((page - 1) * pageSize, page * pageSize);
 
   return {
     ok: true as const,
@@ -428,6 +460,7 @@ async function executePanelDataset({
       pageSize,
       records: pagedRecords,
       total,
+      ...(pagedGroups && dataset.groupBy ? { grouping: { ...dataset.groupBy, groups: pagedGroups, totalRecords: displayRecords.length } } : {}),
     }),
     execution: {
       dataset,
@@ -435,6 +468,49 @@ async function executePanelDataset({
       records: filteredRecords,
     },
   };
+}
+
+async function enrichPanelRelationCounts(records: PanelRecord[], dataset: DatasetDefinition, contractId: string, fieldsById: Map<string, PanelField>) {
+  for (const count of dataset.relationCounts ?? []) {
+    const source = await prisma.entityType.findFirst({ where: { id: count.sourceEntityTypeId, contractId, isActive: true },
+      include: { fields: { where: { isActive: true }, include: { options: true } } } });
+    const relation = source?.fields.find(field => field.id === count.relationFieldId && field.type === "RELATION");
+    const relationConfig = relation ? getRelationConfig(relation.config) : null;
+    const initial = count.difference ? fieldsById.get(count.difference.fieldId) : null;
+    if (!source || !relationConfig || relationConfig.targetEntityTypeId !== dataset.source.entityTypeId || (relationConfig.relationKind ?? "ONE") !== "ONE" ||
+      count.difference && (!initial || !["INTEGER", "DECIMAL", "MONEY"].includes(initial.type)) || count.filters?.some(filter => filter.type !== "FIELD_VALUE")) {
+      return { ok: false as const, response: badRequest("La configuración del conteo relacionado no es válida.", "INVALID_PANEL_CONFIG") };
+    }
+    const sourceFields = new Map(source.fields.map(field => [field.id, field as PanelField]));
+    const conditions = panelFiltersWhere({ filters: count.filters ?? [], fieldsById: sourceFields, includedPanelFilterIds: new Set(), panelFilterValues: {}, requiredFilterIds: [] });
+    if (!conditions.ok) return conditions;
+    const ids = new Set(records.map(record => record.id));
+    const events = ids.size ? await prisma.entityRecord.findMany({
+      where: { entityTypeId: source.id, AND: conditions.conditions, outgoingRelations: { some: { sourceFieldId: relation!.id, targetRecordId: { in: [...ids] } } } },
+      include: { outgoingRelations: { where: { sourceFieldId: relation!.id }, select: { targetRecordId: true, targetRecord: { select: { entityTypeId: true } } } } },
+    }) : [];
+    const counts = new Map<string, Set<string>>();
+    for (const event of events) {
+      const targets = new Set(event.outgoingRelations.map(link => link.targetRecordId));
+      if (targets.size !== 1 || event.outgoingRelations.some(link => link.targetRecord.entityTypeId !== dataset.source.entityTypeId)) {
+        return { ok: false as const, response: badRequest("La relación de un registro contado no es ONE o tiene otro destino.", "PANEL_RELATION_INVALID") };
+      }
+      const id = [...targets][0];
+      if (!ids.has(id)) continue;
+      const set = counts.get(id) ?? new Set<string>(); set.add(event.id); counts.set(id, set);
+    }
+    for (const record of records) {
+      const total = counts.get(record.id)?.size ?? 0;
+      record.computedValues ??= {};
+      record.computedValues[`count:${count.id}`] = total;
+      if (count.difference && initial) {
+        const raw = record.values.find(value => value.entityFieldId === initial.id);
+        const numeric = raw?.integerValue ?? raw?.decimalValue?.toNumber() ?? null;
+        record.computedValues[`difference:${count.id}`] = composePanelMetricValues(numeric, total, "SUBTRACT").value;
+      }
+    }
+  }
+  return { ok: true as const };
 }
 
 async function enrichPanelRelatedValues(
@@ -486,7 +562,9 @@ function missingRequiredPanelFilter(config: PanelConfig, dataset: DatasetDefinit
 function panelDatasetFieldIds(dataset: DatasetDefinition) {
   const virtualIds = new Set((dataset.relatedFields ?? []).map((item) => panelRelatedFieldId(item.relationFieldId, item.fieldId)));
   const filterFieldIds = (dataset.filters ?? []).map((filter) => filter.fieldId).filter((id) => !virtualIds.has(id));
-  const relationFieldIds = (dataset.relatedFields ?? []).map((field) => field.relationFieldId);
+  const relationFieldIds = [...(dataset.relatedFields ?? []).map((field) => field.relationFieldId),
+    ...(dataset.groupBy ? [dataset.groupBy.relationFieldId] : []),
+    ...(dataset.relationCounts ?? []).flatMap(count => count.difference ? [count.difference.fieldId] : [])];
 
   if (dataset.transformation.type === "RECORDS") {
     return Array.from(new Set([
@@ -571,7 +649,9 @@ function panelDatasetResponse({
   pageSize,
   records,
   total,
+  grouping,
 }: {
+  grouping?: NonNullable<DatasetDefinition["groupBy"]> & { groups: ReturnType<typeof groupPanelRecords<PanelRecord>>; totalRecords: number };
   dataset: DatasetDefinition;
   fields: PanelField[];
   page: number;
@@ -580,12 +660,15 @@ function panelDatasetResponse({
   total: number;
 }) {
   const responseFields = [...dataset.transformation.fieldIds,
-    ...(dataset.relatedFields ?? []).map((item) => panelRelatedFieldId(item.relationFieldId, item.fieldId))]
+    ...(dataset.relatedFields ?? []).map((item) => panelRelatedFieldId(item.relationFieldId, item.fieldId)),
+    ...panelCountFields(dataset).map(field => field.id)]
     .map((fieldId) => fields.find((field) => field.id === fieldId))
     .filter((field): field is PanelField => Boolean(field));
 
   return {
     id: dataset.id,
+    ...(grouping ? { grouping } : {}),
+    ...(dataset.groupBy || dataset.relationCounts?.length ? { coverage: { source: "SERVER" as const, includesPending: false as const } } : {}),
     schema: {
       fields: responseFields.map((field) => ({
         id: field.id,
@@ -598,6 +681,7 @@ function panelDatasetResponse({
             value: option.value,
           })),
         type: field.type,
+        ...(field.emptyLabel ? { emptyLabel: field.emptyLabel } : {}),
       })),
     },
     rows: records.map((record) => ({
@@ -615,6 +699,7 @@ function panelDatasetResponse({
       pageSize,
       total,
       hasMore: page * pageSize < total,
+      ...(grouping ? { unit: "GROUP" as const } : {}),
     },
   };
 }
@@ -973,6 +1058,7 @@ function serializePanelFieldValue({
   field: PanelField;
   record: PanelRecord;
 }) {
+  if (field.computed) return record.computedValues?.[field.id] ?? null;
   if (field.related) {
     const values = record.relatedValues?.[field.id] ?? [];
     return field.related.relationKind === "MANY" || field.type === "MULTISELECT" ? values : values[0] ?? null;
@@ -1256,6 +1342,7 @@ function aggregatePanelMetric(
 }
 
 function panelMetricValue(record: PanelRecord, field: PanelField) {
+  if (field.computed) return record.computedValues?.[field.id] ?? null;
   if (field.type === "RELATION") {
     const values = record.outgoingRelations
       .filter((relation) => relation.sourceFieldId === field.id)

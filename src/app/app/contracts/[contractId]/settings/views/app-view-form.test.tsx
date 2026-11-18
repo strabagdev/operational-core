@@ -6,6 +6,8 @@ import { describe, expect, it } from "vitest";
 import {
   AppViewForm,
   PanelDatasetEditor,
+  PanelFilterEditor,
+  PanelRelationCountEditor,
   PanelModuleEditor,
   applicablePanelMetricFilters,
   affectedPanelModules,
@@ -34,6 +36,8 @@ import type { AppViewActionState } from "./actions";
 import type { DatasetDefinition, PanelConfig, PanelModule } from "@/lib/app-views";
 import { parseAppViewConfig, parseAppViewConfigForEditor } from "@/lib/app-views";
 import { panelRelatedFieldId } from "@/lib/panel-related-fields";
+
+import { panelFixtureConfig, panelFixtureDefinitions } from "@/test/panel-local-fixture";
 
 const appViewFormSource = readFileSync(new URL("./app-view-form.tsx", import.meta.url), "utf8");
 const panelEditorChromeSource = readFileSync(new URL("./panel-editor-chrome.tsx", import.meta.url), "utf8");
@@ -2231,4 +2235,52 @@ it("Attendance editor offers SELECT/simple RELATION context, preserving existing
  const context = html.slice(html.indexOf("Campos de contexto"));
  expect(context).toMatch(/name="contextFieldIds"[^>]*value="related"/); expect(context).toMatch(/name="contextFieldIds"[^>]*value="choice"/);
  expect(context).not.toMatch(/name="contextFieldIds"[^>]*value="many"/); expect(context).not.toMatch(/name="contextFieldIds"[^>]*value="subject"/);
+});
+
+
+it("edits TODAY and serializes its relative descriptor rather than a fixed date", () => {
+  const config = panelConfigFixture();
+  const filter = { id: "day", label: "Fecha", valueType: "DATE" as const, bindings: [{ datasetId: config.datasets[0].id, fieldId: "date_field", operator: "EQ" as const }], defaultValue: { type: "TODAY" as const, timeZone: "America/Santiago" } };
+  let saved: Parameters<typeof PanelFilterEditor>[0]["filters"] = [filter];
+  const props = { datasets: config.datasets, entityTypes: panelEntityTypes(), filter, filters: [filter], index: 0, setFilters: (next: typeof saved) => { saved = next; } };
+  const editor = PanelFilterEditor(props);
+  const html = renderToStaticMarkup(editor);
+  expect(html).toContain("Valor inicial"); expect(html).toContain("Hoy"); expect(html).toContain("Zona horaria IANA"); expect(html).toContain("America/Santiago");
+  const zone = findEditorElement(editor, element => element.props.label === "Zona horaria IANA");
+  (zone?.props.onChange as (value: string) => void)("Asia/Tokyo");
+  expect(saved[0].defaultValue?.timeZone).toBe("Asia/Tokyo");
+  const rebuilt = buildPanelConfig({ columns: 12, rowHeight: 8, distribution: "AUTO", datasets: config.datasets, filters: saved, modules: config.modules, metrics: [] });
+  const wireConfig = JSON.parse(JSON.stringify(rebuilt));
+  delete wireConfig.type; // The normal panelConfig FormData omits the renderer discriminator.
+  const parsed = parseAppViewConfig({ type: "PANEL", config: wireConfig });
+  if (parsed.type !== "PANEL") throw Error("Unexpected renderer");
+  expect(parsed.filters[0].defaultValue).toEqual({ type: "TODAY", timeZone: "Asia/Tokyo" });
+  const initial = findEditorElement(editor, element => element.props.label === "Valor inicial");
+  (initial?.props.onChange as (value: string) => void)("");
+  expect(saved[0]).not.toHaveProperty("defaultValue");
+});
+
+
+it("exposes generic relation grouping and inverse counts with a numeric difference through the editor", () => {
+  const parsed = parseAppViewConfig({ type: "PANEL", config: panelFixtureConfig() });
+  if (parsed.type !== "PANEL") throw Error("Wrong renderer");
+  const entities = panelFixtureDefinitions() as unknown as Parameters<typeof PanelDatasetEditor>[0]["entityTypes"];
+  let datasets = parsed.datasets;
+  const common = { datasets, entityTypes: entities, filters: [], metrics: parsed.metrics, modules: parsed.modules, setDatasets: (next: typeof datasets) => { datasets = next; }, setFilters() {}, setMetrics() {}, setModules() {}, setNotice() {} };
+  const daily = PanelDatasetEditor({ ...common, dataset: datasets[0], index: 0 });
+  const dailyHtml = renderToStaticMarkup(daily);
+  expect(dailyHtml).toContain("Agrupar por relación"); expect(dailyHtml).toContain("Identificador principal del grupo"); expect(dailyHtml).toContain("Nombre secundario del grupo");
+  const master = datasets[1];
+  const count = master.relationCounts![0];
+  let saved = count;
+  const editor = PanelRelationCountEditor({ count, dataset: master, entityTypes: entities, onChange: next => { saved = next; }, onRemove() {} });
+  const html = renderToStaticMarkup(editor);
+  expect(html).toContain("Entidad con los movimientos"); expect(html).toContain("Relación ONE"); expect(html).toContain("Sin cantidad definida"); expect(html).toContain("Condiciones fijas");
+  const initial = findEditorElement(editor, element => element.props.label === "Valor inicial para restar el conteo, opcional");
+  (initial?.props.onChange as (value: string) => void)(""); expect(saved.difference).toBeUndefined();
+  const rebuilt = buildPanelConfig({ columns: 12, rowHeight: 8, distribution: "AUTO", datasets, filters: panelEditorFilters(parsed), modules: parsed.modules, metrics: parsed.metrics });
+  const wire = JSON.parse(JSON.stringify(rebuilt)); delete wire.type;
+  expect(parseAppViewConfig({ type: "PANEL", config: wire })).toMatchObject({ datasets: [{ groupBy: datasets[0].groupBy }, { relationCounts: datasets[1].relationCounts }] });
+  const table = PanelModuleEditor({ module: parsed.modules.at(-1)!, modules: parsed.modules, datasets, metrics: parsed.metrics, entityTypes: entities, index: parsed.modules.length - 1, setModules() {}, layoutColumns: 12, filters: panelEditorFilters(parsed), layoutDistribution: "AUTO", spatialIndex: parsed.modules.length - 1, spatialModules: parsed.modules });
+  expect(renderToStaticMarkup(table)).toContain("Entregas históricas");
 });

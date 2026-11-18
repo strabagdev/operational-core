@@ -1901,3 +1901,82 @@ No migration or gate activation is included. Full semantics and rollout/rollback
 ### Attendance repetition command transport — 2026-11-17
 
 POST `/api/v1/contracts/:contractId/views/:appViewId/workflow/state-update/repetition` accepts only explicit MULTIPLE or MULTIPLE_WITH_WARNING commands and delegates to the existing authenticated STATE_UPDATE handler. Request/result, permissions, locks, audit and idempotency are shared. It has no GET or alternative persistence engine. Older Core returns 404/405; Client must never fall back to legacy POST for a repeat command, including after a successful compatibility GET. Default Attendance and other STATE_UPDATE consumers retain their existing POST path. Omitted repetition policy and ONE_PER_DAY share the legacy canonical request hash; redundant explicit default does not invalidate a retry across upgrades. Multiple policies remain part of the immutable hash.
+
+### PANEL DATE initial value: TODAY (local additive option, 2026-11-17)
+
+A filter with `valueType: "DATE"` can optionally declare:
+
+```json
+{ "id": "date", "valueType": "DATE", "required": true,
+  "defaultValue": { "type": "TODAY", "timeZone": "America/Santiago" } }
+```
+
+This is a relative configuration descriptor, not a saved calendar date. The filter editor exposes
+"Valor inicial: Hoy" and an explicit IANA timezone. Core validates the descriptor on create/update
+and read, rejects invalid zones and non-DATE target fields (including DATETIME), and preserves
+older configurations without adding any default. The normal panelConfig FormData carries the
+object unchanged. No SQL, expression language, schema migration or business-record write is needed.
+
+Client resolves the day when opening the panel/scope, based on its device clock and Intl timezone
+rules. Its ordinary `filters` query contains the concrete `YYYY-MM-DD`; required-filter validation,
+COUNT/COUNT_DISTINCT/conditions, detail and pagination keep the current semantics. Core intentionally
+does not infer TODAY when a request omits a date, so older clients keep their manual selection and
+cannot accidentally broaden a required-date query. Exact query receipts and snapshots remain date-bound.
+
+Publish compatible Core, then Client, then configure an experience explicitly. Do not activate this
+property while relying on old Client for automatic initial selection. Before rolling Core back to a
+strict parser without this property, remove only the descriptor using compatible Core; preserve manual
+filters, configuration and all business data. This local change activates no productive configuration.
+
+### PANEL complete relation groups and inverse counts (local additive extension, 2026-11-17)
+
+`RECORDS` datasets may opt into `groupBy: { relationFieldId, primaryFieldId?, secondaryFieldId? }`.
+The relation must be ONE and selected in fieldIds; heading fields must be configured direct projections
+of that relation. Core groups by stored target ID, never display text. It keeps each source record
+independent and paginates complete groups after all configured filters. The response adds `grouping`
+with group keys/related IDs, counts and member IDs, and `pagination.unit=GROUP`. Pagination total
+counts groups; `grouping.totalRecords` counts all selected records. Every member of each visible group
+is returned in rows. Empty days return zero KPIs and no groups. KPI aggregations still operate on the
+full selected record set, before pagination; COUNT_DISTINCT of a relation is distinct target IDs.
+
+A dataset based on a master/resource entity may add `relationCounts`:
+
+```json
+[{"id":"usage","label":"Historical use","sourceEntityTypeId":"<events>","relationFieldId":"<event-to-resource-ONE>",
+  "difference":{"fieldId":"<numeric-initial>","label":"Remaining","emptyLabel":"No initial amount defined"}}]
+```
+
+Each descriptor projects `count:<id>` (INTEGER) and, if configured, `difference:<id>` (DECIMAL) into
+schema/row values, selectable by the existing TABLE column editor. The difference reuses the existing
+SUBTRACT arithmetic. It is never persisted into the initial field. All active source/target definitions
+must belong to the same authorized contract. Source relations must be ONE and target this dataset's
+entity. Multiple/corrupt destinations fail explicitly instead of multiplying a source record. Master
+rows without events remain present with count zero. Missing numeric values remain null; initial and
+difference schema fields carry the configured emptyLabel; negative results are preserved. TEXT initial
+fields are rejected, with no automatic coercion or configuration/data repair.
+
+Optional `filters` in a count accept only fixed FIELD_VALUE conditions (EQ/IN/HAS_VALUE), using stored
+field/option identity. They deliberately reject PANEL_FILTER; view day, search and pagination never
+restrict historical counts. Both configured SELECT states count unless the descriptor explicitly says
+otherwise. Physical deleted records are absent; no cancellation is inferred from labels or observations.
+The result represents existing authorized server records, not deleted audit history or physical stock.
+
+The editor exposes base entity, ONE grouping, related heading fields, inverse source/relation, numeric
+initial field, labels, and fixed conditions. Example with fictitious IDs/quantities only:
+`docs/examples/panel-daily-resources.json`. It has only the dynamic DATE filter; the resource is event
+data and does not filter the daily summary. The historical resource dataset has no day binding.
+
+New results carry `coverage: { source: "SERVER", includesPending: false }`. Clients must not add
+unreconciled local workflow intents to counts, nor infer completeness from a group page. Existing
+revision-bound routes use the same read snapshot; sourceEntityTypeId is included by current manifest
+dependency traversal, including relation edits, deletion, metadata and authorization. No migrations,
+writes, new workflow type, offline preparation trigger or synchronization engine is introduced.
+
+Deployment is Core then Client, then explicit configuration. Older Core rejects these descriptors;
+older Client lacks group-page semantics, so do not configure them before compatible runtime delivery.
+Before rolling Core/Client back, remove new descriptors and dependent columns/modules via compatible
+Core while preserving every business record, initial value and local pending operation.
+
+Derived inverse counts/differences are TABLE outputs in this extension. They are not offered as metric
+inputs or metric conditions; Core rejects those unsupported configurations. Ordinary source-field
+metrics, option conditions and related display-field conditions retain their existing behavior.

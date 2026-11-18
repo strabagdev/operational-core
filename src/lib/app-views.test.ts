@@ -3236,3 +3236,45 @@ describe("Attendance RELATION context configuration", () => {
     { await request(); expect(appViewCreate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ config: expect.objectContaining({ contextFieldIds: ["related_context"] }) }) })); }
   });
 });
+
+
+const parseDefaultPanel = (config: unknown) => parseAppViewConfig({ type: "PANEL", config: JSON.parse(JSON.stringify(config)) });
+
+describe("PANEL dynamic DATE defaults", () => {
+  it("preserves a dynamic TODAY descriptor through the normal saved-config parser", () => {
+    const config = recordsPanelConfig({ filters: [{ id: "date", valueType: "DATE", defaultValue: { type: "TODAY", timeZone: "America/Santiago" } }] });
+    const parsed = parseDefaultPanel(config);
+    expect(parsed.type).toBe("PANEL");
+    if (parsed.type === "PANEL") expect(parsed.filters[0]).toMatchObject({ defaultValue: { type: "TODAY", timeZone: "America/Santiago" } });
+    expect(JSON.stringify(parsed)).not.toContain("2026-11-17");
+  });
+  it.each(["", "Mars/Olympus", "+03:00", "America/Santiago/Bad"])("rejects unsupported TODAY time zone %s", timeZone => {
+    expect(() => parseDefaultPanel(recordsPanelConfig({ filters: [{ id: "date", valueType: "DATE", defaultValue: { type: "TODAY", timeZone } }] }))).toThrow();
+  });
+  it.each(["TEXT", "NUMBER", "BOOLEAN", "OPTION", "RECORD"])("rejects TODAY on non-DATE filter %s", valueType => {
+    expect(() => parseDefaultPanel(recordsPanelConfig({ filters: [{ id: "date", valueType, defaultValue: { type: "TODAY", timeZone: "UTC" } }] }))).toThrow();
+  });
+  it("does not add defaults to existing definitions", () => {
+    const parsed = parseDefaultPanel(recordsPanelConfig());
+    if (parsed.type !== "PANEL") throw Error("Unexpected renderer");
+    expect(parsed.filters[0]).not.toHaveProperty("defaultValue");
+  });
+  it.each(["create", "update"])("preserves TODAY through normal FormData %s", async operation => {
+    entityTypeFindFirst.mockResolvedValue(panelEntityType() as never);
+    const config = recordsPanelConfig({ filters: [{ id: "period", valueType: "DATE", defaultValue: { type: "TODAY", timeZone: "America/Santiago" } }], datasets: [{ ...recordsPanelConfig().datasets[0], filters: [{ type: "PANEL_FILTER", filterId: "period", fieldId: "date_field", operator: "EQ" }] }] });
+    const input = panelInput(config);
+    if (operation === "create") await createAppView("contract_1", "user_1", input);
+    else await updateAppView("contract_1", "view_1", "user_1", input);
+    const args = operation === "create" ? appViewCreate.mock.calls[0]?.[0] : appViewUpdate.mock.calls[0]?.[0];
+    expect(args?.data.config).toMatchObject({ filters: [{ defaultValue: { type: "TODAY", timeZone: "America/Santiago" } }] });
+    expect(JSON.stringify(args?.data.config)).not.toContain("2026-11-17");
+  });
+  it("does not bind a DATE-only TODAY default to DATETIME", async () => {
+    const entity = panelEntityType();
+    entity.fields = entity.fields.map(field => field.id === "date_field" ? { ...field, type: "DATETIME" } : field) as typeof entity.fields;
+    entityTypeFindFirst.mockResolvedValue(entity as never);
+    const config = recordsPanelConfig({ filters: [{ id: "period", valueType: "DATE", defaultValue: { type: "TODAY", timeZone: "UTC" } }], datasets: [{ ...recordsPanelConfig().datasets[0], filters: [{ type: "PANEL_FILTER", filterId: "period", fieldId: "date_field", operator: "EQ" }] }] });
+    await expect(updateAppView("contract_1", "view_1", "user_1", panelInput(config))).rejects.toThrow("requiere un campo DATE");
+    expect(appViewUpdate).not.toHaveBeenCalled();
+  });
+});

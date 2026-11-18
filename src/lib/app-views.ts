@@ -166,6 +166,7 @@ export type PanelFilter = {
   label?: string;
   valueType: "TEXT" | "NUMBER" | "DATE" | "BOOLEAN" | "OPTION" | "RECORD";
   required?: boolean;
+  defaultValue?: { type: "TODAY"; timeZone: string };
 };
 
 export type FilterExpr =
@@ -188,7 +189,18 @@ export type SortSpec = {
   direction: "asc" | "desc";
 };
 
+export type PanelRelationCount = {
+  id: string;
+  label: string;
+  sourceEntityTypeId: string;
+  relationFieldId: string;
+  filters?: Extract<FilterExpr, { type: "FIELD_VALUE" }>[];
+  difference?: { fieldId: string; label: string; emptyLabel: string };
+};
+
 export type DatasetDefinition = {
+  groupBy?: { relationFieldId: string; primaryFieldId?: string; secondaryFieldId?: string };
+  relationCounts?: PanelRelationCount[];
   id: string;
   name?: string;
   relatedFields?: Array<{ relationFieldId: string; fieldId: string }>;
@@ -1469,12 +1481,28 @@ const panelIdSchema = z.string().trim().min(1).regex(/^[A-Za-z0-9_-]+$/, "Usa so
 const panelPaginationSchema = z.object({
   pageSize: z.number().int().min(1).max(100),
 });
+function panelIanaTimeZoneSupported(timeZone: string) {
+  if (!/^(?:UTC|[A-Za-z_]+(?:\/[A-Za-z0-9_+-]+)+)$/.test(timeZone)) return false;
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone });
+    return true;
+  } catch { return false; }
+}
+const panelDateDefaultSchema = z.object({
+  type: z.literal("TODAY"),
+  timeZone: z.string().trim().min(1).refine(panelIanaTimeZoneSupported, "Selecciona una zona horaria IANA válida para Hoy."),
+}).strict();
 const panelFilterSchema = z.object({
   id: panelIdSchema,
   label: z.string().trim().min(1).optional(),
   valueType: z.enum(["TEXT", "NUMBER", "DATE", "BOOLEAN", "OPTION", "RECORD"]),
   required: z.boolean().optional(),
-}).strict();
+  defaultValue: panelDateDefaultSchema.optional(),
+}).strict().superRefine((filter, ctx) => {
+  if (filter.defaultValue && filter.valueType !== "DATE") {
+    ctx.addIssue({ code: "custom", path: ["defaultValue"], message: "Hoy sólo está disponible para filtros DATE." });
+  }
+});
 const panelFilterExprSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("FIELD_VALUE"),
@@ -1565,7 +1593,17 @@ const panelMetricConditionSchema = z.object({
   }
 });
 const panelPercentScaleSchema = z.enum(["RATIO", "WHOLE"]);
+const panelRelationCountSchema = z.object({
+  id: panelIdSchema,
+  label: z.string().trim().min(1),
+  sourceEntityTypeId: z.string().trim().min(1),
+  relationFieldId: z.string().trim().min(1),
+  filters: z.array(panelFilterExprSchema.options[0]).optional(),
+  difference: z.object({ fieldId: z.string().trim().min(1), label: z.string().trim().min(1), emptyLabel: z.string().trim().min(1) }).strict().optional(),
+}).strict();
 const panelDatasetSchema = z.object({
+  groupBy: z.object({ relationFieldId: z.string().trim().min(1), primaryFieldId: z.string().trim().min(1).optional(), secondaryFieldId: z.string().trim().min(1).optional() }).strict().optional(),
+  relationCounts: z.array(panelRelationCountSchema).max(10).optional(),
   id: panelIdSchema,
   name: z.string().trim().min(1).optional(),
   relatedFields: z.array(z.object({
@@ -1595,6 +1633,8 @@ const panelDatasetSchema = z.object({
     }),
   ]),
 }).strict().superRefine((dataset, ctx) => {
+  if (dataset.groupBy && dataset.transformation.type !== "RECORDS") ctx.addIssue({ code: "custom", path: ["groupBy"], message: "La agrupación conserva todos los registros y requiere RECORDS." });
+  if (new Set(dataset.relationCounts?.map(item => item.id)).size !== (dataset.relationCounts?.length ?? 0)) ctx.addIssue({ code: "custom", path: ["relationCounts"], message: "No repitas identificadores de conteos relacionados." });
   const relatedIds = (dataset.relatedFields ?? []).map((item) => panelRelatedFieldId(item.relationFieldId, item.fieldId));
   if (new Set(relatedIds).size !== relatedIds.length) {
     ctx.addIssue({ code: "custom", message: "No repitas campos relacionados en el dataset.", path: ["relatedFields"] });
@@ -2166,7 +2206,43 @@ async function validatePanelAppViewConfig({
       fieldNamesById.set(virtualId, `${relation.name} · ${targetField.name}`);
     }
 
+    if (dataset.groupBy) {
+      const group = dataset.groupBy;
+      const relation = requireActiveTargetField(fields, group.relationFieldId, "agrupación");
+      if (relation.type !== "RELATION" || (getRelationConfig(relation.config).relationKind ?? "ONE") !== "ONE" || !fieldIds.includes(relation.id)) {
+        throw new AppViewConfigError("Agrupar requiere una relación ONE incluida en el dataset.", "datasets");
+      }
+      await requireEntityType(client, contractId, getRelationConfig(relation.config).targetEntityTypeId!);
+      for (const labelId of [group.primaryFieldId, group.secondaryFieldId].filter(Boolean)) {
+        if (!(dataset.relatedFields ?? []).some(item => item.relationFieldId === group.relationFieldId && panelRelatedFieldId(item.relationFieldId, item.fieldId) === labelId)) {
+          throw new AppViewConfigError("La identificación del grupo debe provenir de campos proyectados de su misma relación.", "datasets");
+        }
+      }
+    }
+    for (const count of dataset.relationCounts ?? []) {
+      const source = await requireEntityType(client, contractId, count.sourceEntityTypeId);
+      const relation = requireActiveTargetField(source.fields, count.relationFieldId, "relación del conteo");
+      const relationConfig = relation.type === "RELATION" ? getRelationConfig(relation.config) : null;
+      if (!relationConfig || relationConfig.targetEntityTypeId !== entityType.id || (relationConfig.relationKind ?? "ONE") !== "ONE") {
+        throw new AppViewConfigError("El conteo requiere una relación ONE hacia la entidad del dataset, en el mismo contrato.", "datasets");
+      }
+      for (const condition of count.filters ?? []) {
+        if (condition.type !== "FIELD_VALUE") throw new AppViewConfigError("El conteo histórico no admite filtros interactivos.", "datasets");
+        requireActiveTargetField(source.fields, condition.fieldId, "condición del conteo");
+      }
+      if (count.difference) {
+        const initial = requireActiveTargetField(fields, count.difference.fieldId, "valor inicial de la diferencia");
+        if (!["INTEGER", "DECIMAL", "MONEY"].includes(initial.type)) throw new AppViewConfigError("El valor inicial debe ser numérico; no se convierten textos automáticamente.", "datasets");
+      }
+      for (const virtual of [ { id: `count:${count.id}`, name: count.label }, ...(count.difference ? [{ id: `difference:${count.id}`, name: count.difference.label }] : []) ]) {
+        if (fields.some(field => field.id === virtual.id) || relatedFieldsById.has(virtual.id)) throw new AppViewConfigError("Un campo calculado colisiona con otro campo del dataset.", "datasets");
+        relatedFieldsById.set(virtual.id, { ...fields[0], id: virtual.id, name: virtual.name, type: "DECIMAL", isActive: true });
+        fieldNamesById.set(virtual.id, virtual.name);
+      }
+    }
+
     for (const filter of dataset.filters ?? []) {
+      if ((dataset.relationCounts ?? []).some(count => filter.fieldId === `count:${count.id}` || filter.fieldId === `difference:${count.id}`)) throw new AppViewConfigError("Los conteos calculados son salidas; no filtros sobre campos almacenados.", "filters");
       const field = relatedFieldsById.get(filter.fieldId) ?? requireActiveTargetField(fields, filter.fieldId, "filtros del dataset");
       if (relatedFieldsById.has(filter.fieldId) && filter.type === "FIELD_VALUE") {
         throw new AppViewConfigError("Los campos relacionados usan filtros interactivos o condiciones de métricas.", "filters");
@@ -2177,6 +2253,10 @@ async function validatePanelAppViewConfig({
 
         if (!panelFilter) {
           throw new AppViewConfigError("El dataset referencia un filtro de panel inexistente.", "filters");
+        }
+
+        if (panelFilter.defaultValue && field.type !== "DATE") {
+          throw new AppViewConfigError("El valor inicial Hoy requiere un campo DATE, sin hora.", "filters");
         }
 
         if (!panelFilterValueTargetsField(panelFilter.valueType, field.type)) {
@@ -2248,6 +2328,10 @@ async function validatePanelAppViewConfig({
 
     for (const condition of metric.conditions ?? []) {
       const conditionField = datasetFields.get(condition.fieldId);
+      const derived = config.datasets.find(dataset => dataset.id === metric.datasetId)?.relationCounts ?? [];
+      if (derived.some(count => condition.fieldId === `count:${count.id}` || condition.fieldId === `difference:${count.id}`)) {
+        throw new AppViewConfigError("Los conteos y diferencias relacionados son columnas de lectura, no condiciones de métricas.", "metrics");
+      }
 
       if (!datasetFieldIds.has(condition.fieldId) || !conditionField?.isActive) {
         throw new AppViewConfigError(`La condición de la métrica ${metricName} referencia un campo fuera del dataset.`, "metrics");

@@ -1,0 +1,296 @@
+{
+  "schemaVersion": 1,
+  "layout": {
+    "columns": 12,
+    "rowHeight": 8,
+    "distribution": "AUTO"
+  },
+  "filters": [
+    {
+      "id": "day",
+      "label": "Fecha",
+      "valueType": "DATE",
+      "required": true,
+      "defaultValue": {
+        "type": "TODAY",
+        "timeZone": "America/Santiago"
+      }
+    }
+  ],
+  "datasets": [
+    {
+      "id": "daily",
+      "name": "Resumen diario",
+      "source": {
+        "type": "ENTITY",
+        "entityTypeId": "local_panel_events"
+      },
+      "relatedFields": [
+        {
+          "relationFieldId": "local_panel_person",
+          "fieldId": "local_panel_identifier"
+        },
+        {
+          "relationFieldId": "local_panel_person",
+          "fieldId": "local_panel_name"
+        }
+      ],
+      "groupBy": {
+        "relationFieldId": "local_panel_person",
+        "primaryFieldId": "related:local_panel_person:local_panel_identifier",
+        "secondaryFieldId": "related:local_panel_person:local_panel_name"
+      },
+      "filters": [
+        {
+          "type": "PANEL_FILTER",
+          "filterId": "day",
+          "fieldId": "local_panel_date",
+          "operator": "EQ"
+        }
+      ],
+      "transformation": {
+        "type": "RECORDS",
+        "fieldIds": [
+          "local_panel_person",
+          "local_panel_date",
+          "local_panel_status",
+          "local_panel_resource"
+        ],
+        "pagination": {
+          "pageSize": 1
+        }
+      }
+    },
+    {
+      "id": "resources",
+      "name": "Control histórico por recurso",
+      "source": {
+        "type": "ENTITY",
+        "entityTypeId": "local_panel_resources"
+      },
+      "filters": [],
+      "relationCounts": [
+        {
+          "id": "events",
+          "label": "Entregas históricas",
+          "sourceEntityTypeId": "local_panel_events",
+          "relationFieldId": "local_panel_resource",
+          "difference": {
+            "fieldId": "local_panel_initial",
+            "label": "Saldo",
+            "emptyLabel": "Sin cantidad definida"
+          }
+        }
+      ],
+      "transformation": {
+        "type": "RECORDS",
+        "fieldIds": [
+          "local_panel_code",
+          "local_panel_initial"
+        ],
+        "pagination": {
+          "pageSize": 25
+        }
+      }
+    }
+  ],
+  "metrics": [
+    {
+      "id": "total",
+      "name": "Entregas",
+      "datasetId": "daily",
+      "aggregation": "COUNT",
+      "filterIds": [
+        "day"
+      ]
+    },
+    {
+      "id": "people",
+      "name": "Personas distintas",
+      "datasetId": "daily",
+      "aggregation": "COUNT_DISTINCT",
+      "fieldId": "local_panel_person",
+      "filterIds": [
+        "day"
+      ]
+    },
+    {
+      "id": "a",
+      "name": "Entregas A",
+      "datasetId": "daily",
+      "aggregation": "COUNT",
+      "filterIds": [
+        "day"
+      ],
+      "conditions": [
+        {
+          "fieldId": "local_panel_status",
+          "operator": "EQUALS",
+          "value": {
+            "type": "OPTION",
+            "optionId": "local_panel_option_a"
+          }
+        }
+      ]
+    },
+    {
+      "id": "b",
+      "name": "Entregas B",
+      "datasetId": "daily",
+      "aggregation": "COUNT",
+      "filterIds": [
+        "day"
+      ],
+      "conditions": [
+        {
+          "fieldId": "local_panel_status",
+          "operator": "EQUALS",
+          "value": {
+            "type": "OPTION",
+            "optionId": "local_panel_option_b"
+          }
+        }
+      ]
+    }
+  ],
+  "calculatedFields": [],
+  "modules": [
+    {
+      "id": "kpi-total",
+      "title": "Entregas",
+      "datasetId": "daily",
+      "visualization": {
+        "type": "KPI",
+        "config": {
+          "metricId": "total",
+          "label": "Entregas",
+          "format": "INTEGER"
+        }
+      },
+      "layout": {
+        "x": 0,
+        "y": 0,
+        "w": 3,
+        "h": 2
+      }
+    },
+    {
+      "id": "kpi-people",
+      "title": "Personas distintas",
+      "datasetId": "daily",
+      "visualization": {
+        "type": "KPI",
+        "config": {
+          "metricId": "people",
+          "label": "Personas distintas",
+          "format": "INTEGER"
+        }
+      },
+      "layout": {
+        "x": 3,
+        "y": 0,
+        "w": 3,
+        "h": 2
+      }
+    },
+    {
+      "id": "kpi-a",
+      "title": "Entregas A",
+      "datasetId": "daily",
+      "visualization": {
+        "type": "KPI",
+        "config": {
+          "metricId": "a",
+          "label": "Entregas A",
+          "format": "INTEGER"
+        }
+      },
+      "layout": {
+        "x": 6,
+        "y": 0,
+        "w": 3,
+        "h": 2
+      }
+    },
+    {
+      "id": "kpi-b",
+      "title": "Entregas B",
+      "datasetId": "daily",
+      "visualization": {
+        "type": "KPI",
+        "config": {
+          "metricId": "b",
+          "label": "Entregas B",
+          "format": "INTEGER"
+        }
+      },
+      "layout": {
+        "x": 9,
+        "y": 0,
+        "w": 3,
+        "h": 2
+      }
+    },
+    {
+      "id": "daily-detail",
+      "title": "Registros por persona",
+      "datasetId": "daily",
+      "visualization": {
+        "type": "TABLE",
+        "config": {
+          "columns": [
+            {
+              "fieldId": "local_panel_date"
+            },
+            {
+              "fieldId": "local_panel_status"
+            },
+            {
+              "fieldId": "local_panel_resource"
+            }
+          ],
+          "searchable": false,
+          "paginated": true
+        }
+      },
+      "layout": {
+        "x": 0,
+        "y": 2,
+        "w": 12,
+        "h": 7
+      }
+    },
+    {
+      "id": "resource-table",
+      "title": "Control histórico por lote",
+      "datasetId": "resources",
+      "visualization": {
+        "type": "TABLE",
+        "config": {
+          "columns": [
+            {
+              "fieldId": "local_panel_code"
+            },
+            {
+              "fieldId": "local_panel_initial"
+            },
+            {
+              "fieldId": "count:events"
+            },
+            {
+              "fieldId": "difference:events"
+            }
+          ],
+          "searchable": false,
+          "paginated": true
+        }
+      },
+      "layout": {
+        "x": 0,
+        "y": 9,
+        "w": 12,
+        "h": 6
+      }
+    }
+  ]
+}

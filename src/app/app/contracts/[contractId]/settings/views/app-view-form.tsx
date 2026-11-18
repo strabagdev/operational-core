@@ -42,6 +42,7 @@ import {
   appViewWorkflowOptions,
   suggestedAppViewSlug,
 } from "@/lib/app-view-editor-options";
+import { panelCountFields } from "@/lib/panel-dataset-options";
 import { panelRelatedFieldId } from "@/lib/panel-related-fields";
 import type {
   AppViewConfig,
@@ -59,6 +60,7 @@ import type {
   PanelMetricConditionValue,
   PanelModule,
   PanelPercentScale,
+  PanelRelationCount,
   ReportSelectValueDisplay,
 } from "@/lib/app-views";
 import { cn } from "@/lib/utils";
@@ -2392,8 +2394,8 @@ export function PanelDatasetEditor({
           value={dataset.id}
         />
         <EntitySelect
-          helpText="Entidad que contiene los registros históricos o transaccionales."
-          label="Entidad con el historial o movimientos"
+          helpText="Entidad cuyos registros forman las filas del dataset; puede ser un maestro o un historial."
+          label="Entidad base del dataset"
           name={`panelDatasetEntity:${dataset.id}`}
           onChange={(entityTypeId) => {
             const nextEntity = entityTypes.find((item) => item.id === entityTypeId);
@@ -2523,6 +2525,29 @@ export function PanelDatasetEditor({
           setSelected={(fieldIds) => updateRelatedFields(relation.id, fieldIds)}
         />;
       })}
+      {transformation.type === "RECORDS" ? <fieldset className="grid gap-3 border-t border-border pt-3">
+        <legend className="text-sm font-medium">Agrupación de registros</legend>
+        <FieldSelect fields={activeFields.filter(field => field.type === "RELATION" && (getRelationConfig(field.config).relationKind ?? "ONE") === "ONE")}
+          includeEmpty label="Agrupar por relación, opcional" name={`panelGroup:${dataset.id}`} preferredType="RELATION"
+          value={dataset.groupBy?.relationFieldId ?? ""} onChange={relationFieldId => updateDataset({ ...dataset, groupBy: relationFieldId ? { relationFieldId } : undefined })} />
+        {dataset.groupBy ? <div className="grid gap-3 sm:grid-cols-2">
+          {(["primaryFieldId", "secondaryFieldId"] as const).map((key, index) => <FieldSelect key={key}
+            fields={relatedPanelEditorFields(dataset, entityTypes).filter(field => (dataset.relatedFields ?? []).some(item => item.relationFieldId === dataset.groupBy!.relationFieldId && panelRelatedFieldId(item.relationFieldId, item.fieldId) === field.id))}
+            includeEmpty label={index ? "Nombre secundario del grupo" : "Identificador principal del grupo"}
+            name={`panelGroup:${dataset.id}:${key}`} preferredType="TEXT" value={dataset.groupBy?.[key] ?? ""}
+            onChange={value => updateDataset({ ...dataset, groupBy: { ...dataset.groupBy!, [key]: value || undefined } })} />)}
+        </div> : null}
+        <p className="text-sm text-muted-foreground">Agrupa por ID, conserva cada registro y pagina grupos completos. Los indicadores siguen calculándose sobre todos los registros.</p>
+      </fieldset> : null}
+      <fieldset className="grid gap-3 border-t border-border pt-3">
+        <legend className="text-sm font-medium">Conteos de registros relacionados</legend>
+        <p className="text-sm text-muted-foreground">Parte de esta entidad e incluye elementos sin movimientos. El conteo histórico no recibe los filtros de fecha ni la búsqueda de la vista.</p>
+        {(dataset.relationCounts ?? []).map((count, countIndex) => <PanelRelationCountEditor key={countIndex}
+          count={count} entityTypes={entityTypes} dataset={dataset}
+          onChange={next => updateDataset({ ...dataset, relationCounts: replaceAt(dataset.relationCounts ?? [], countIndex, next) })}
+          onRemove={() => updateDataset({ ...dataset, relationCounts: dataset.relationCounts?.filter((_, i) => i !== countIndex) })} />)}
+        <Button type="button" variant="outline" onClick={() => updateDataset({ ...dataset, relationCounts: [...(dataset.relationCounts ?? []), { id: nextPanelId("count", (dataset.relationCounts ?? []).map(item => item.id)), label: "Registros relacionados", sourceEntityTypeId: "", relationFieldId: "" }] })}>Agregar conteo relacionado</Button>
+      </fieldset>
       <FieldError errors={fieldErrors?.panelDatasetFields} />
       <div className="flex justify-end">
         <button className="rounded border border-input px-3 py-1 text-sm" onClick={() => setDatasets(datasets.filter((_, itemIndex) => itemIndex !== index))} type="button">
@@ -2533,7 +2558,66 @@ export function PanelDatasetEditor({
   );
 }
 
-function PanelFilterEditor({
+export function PanelRelationCountEditor({ count, dataset, entityTypes, onChange, onRemove }: {
+  count: PanelRelationCount; dataset: PanelEditorDataset; entityTypes: AppViewEntityTypeOption[];
+  onChange: (count: PanelRelationCount) => void; onRemove: () => void;
+}) {
+  const source = entityTypes.find(entity => entity.id === count.sourceEntityTypeId);
+  const master = entityTypes.find(entity => entity.id === dataset.source.entityTypeId);
+  const relations = source?.fields.filter(field => field.isActive && field.type === "RELATION" &&
+    relationTargetEntityTypeId(field.config) === dataset.source.entityTypeId && (getRelationConfig(field.config).relationKind ?? "ONE") === "ONE") ?? [];
+  const conditionFields = source?.fields.filter(field => field.isActive && panelMetricConditionTargetsField(field.type)) ?? [];
+  const conditions = count.filters ?? [];
+  return <div className="grid gap-3 rounded border border-border p-3">
+    <div className="grid gap-3 sm:grid-cols-2">
+      <TextControl label="Identificador del conteo" value={count.id} onChange={id => onChange({ ...count, id })} />
+      <TextControl label="Etiqueta del conteo" value={count.label} onChange={label => onChange({ ...count, label })} />
+      <EntitySelect label="Entidad con los movimientos" name={`countSource:${count.id}`} options={entityTypes}
+        value={count.sourceEntityTypeId} onChange={sourceEntityTypeId => onChange({ ...count, sourceEntityTypeId, relationFieldId: "", filters: [] })} />
+      <FieldSelect label="Relación ONE hacia esta entidad" name={`countRelation:${count.id}`} preferredType="RELATION" fields={relations}
+        value={count.relationFieldId} onChange={relationFieldId => onChange({ ...count, relationFieldId })} />
+      <FieldSelect label="Valor inicial para restar el conteo, opcional" name={`countInitial:${count.id}`} preferredType="INTEGER" includeEmpty
+        fields={master?.fields.filter(field => field.isActive && ["INTEGER", "DECIMAL", "MONEY"].includes(field.type)) ?? []}
+        value={count.difference?.fieldId ?? ""} onChange={fieldId => onChange({ ...count, difference: fieldId ? { fieldId, label: count.difference?.label ?? "Diferencia", emptyLabel: count.difference?.emptyLabel ?? "Sin valor inicial definido" } : undefined })} />
+      {count.difference ? <><TextControl label="Etiqueta de la diferencia" value={count.difference.label} onChange={label => onChange({ ...count, difference: { ...count.difference!, label } })} />
+        <TextControl label="Mensaje si falta el valor inicial" value={count.difference.emptyLabel} onChange={emptyLabel => onChange({ ...count, difference: { ...count.difference!, emptyLabel } })} /></> : null}
+    </div>
+    <p className="text-sm text-muted-foreground">Condiciones fijas del conteo histórico (todas deben cumplirse). Sin condiciones se cuentan todos los registros existentes.</p>
+    {conditions.map((filter, index) => {
+      const field = conditionFields.find(field => field.id === filter.fieldId);
+      const convert = (raw: unknown): PanelMetricConditionValue | undefined => {
+        const template = field ? defaultPanelMetricConditionValue(field) : undefined;
+        if (!template) return undefined;
+        if (template.type === "OPTION") return { type: "OPTION", optionId: String(raw ?? "") };
+        if (template.type === "BOOLEAN") return { type: "BOOLEAN", value: raw === true || raw === "true" };
+        if (template.type === "NUMBER") return { type: "NUMBER", value: Number(raw) };
+        return { ...template, value: String(raw ?? "") };
+      };
+      const condition: PanelMetricCondition = { fieldId: filter.fieldId, operator: filter.operator === "HAS_VALUE" ? "IS_NOT_EMPTY" : filter.operator === "IN" ? "IN" : "EQUALS",
+        ...(filter.operator === "EQ" ? { value: convert(filter.value) } : filter.operator === "IN" ? { values: (filter.values ?? []).map(convert).filter((v): v is PanelMetricConditionValue => Boolean(v)) } : {}) };
+      const store = (next: PanelMetricCondition) => {
+        const raw = (value: PanelMetricConditionValue) => value.type === "OPTION" ? value.optionId : value.value;
+        const value: NonNullable<PanelRelationCount["filters"]>[number] = { type: "FIELD_VALUE", fieldId: next.fieldId,
+          operator: next.operator === "IS_NOT_EMPTY" ? "HAS_VALUE" : next.operator === "IN" ? "IN" : "EQ",
+          ...(next.value ? { value: raw(next.value) } : {}), ...(next.values ? { values: next.values.map(raw) } : {}) };
+        onChange({ ...count, filters: replaceAt(conditions, index, value) });
+      };
+      return <div className="grid gap-3 sm:grid-cols-3" key={index}>
+        <FieldSelect label="Campo de condición" name={`countCondition:${count.id}:${index}`} fields={conditionFields} preferredType="SELECT" value={filter.fieldId}
+          onChange={fieldId => onChange({ ...count, filters: replaceAt(conditions, index, { type: "FIELD_VALUE", fieldId, operator: "HAS_VALUE" }) })} />
+        <SelectControl label="Condición" name={`countOperator:${count.id}:${index}`} options={[{ value: "IS_NOT_EMPTY", label: "Con valor" }, { value: "EQUALS", label: "Igual a" }, { value: "IN", label: "Cualquiera de" }]}
+          value={condition.operator} onChange={operator => store({ fieldId: filter.fieldId, operator: operator as PanelMetricConditionOperator,
+            ...(operator === "EQUALS" && field ? { value: defaultPanelMetricConditionValue(field) } : operator === "IN" ? { values: [] } : {}) })} />
+        <PanelMetricConditionValueControl condition={condition} field={field} metricId={count.id} index={index} onChange={store} />
+        <Button type="button" variant="outline" onClick={() => onChange({ ...count, filters: conditions.filter((_, i) => i !== index) })}>Eliminar condición</Button>
+      </div>;
+    })}
+    <div className="flex flex-wrap gap-2"><Button type="button" variant="outline" disabled={!conditionFields.length} onClick={() => onChange({ ...count, filters: [...conditions, { type: "FIELD_VALUE", fieldId: conditionFields[0].id, operator: "HAS_VALUE" }] })}>Agregar condición fija</Button>
+      <Button type="button" variant="outline" onClick={onRemove}>Eliminar conteo</Button></div>
+  </div>;
+}
+
+export function PanelFilterEditor({
   datasets,
   entityTypes,
   filter,
@@ -2580,7 +2664,9 @@ function PanelFilterEditor({
                   const nextReference = nextBindings[0];
                   const nextDataset = datasets.find((item) => item.id === nextReference?.datasetId);
                   const nextField = fieldsForPanelFilterDataset(nextDataset, entityTypes).find((item) => item.id === nextReference?.fieldId);
-                  updateFilter({ ...filter, bindings: nextBindings, valueType: panelValueTypeForField(nextField) });
+                  const nextFilter = { ...filter, bindings: nextBindings, valueType: panelValueTypeForField(nextField) };
+                  if (nextField?.type !== "DATE") delete nextFilter.defaultValue;
+                  updateFilter(nextFilter);
                 }} type="checkbox" />
                 {dataset.name || dataset.id}
               </label>
@@ -2597,7 +2683,9 @@ function PanelFilterEditor({
                     binding.datasetId !== referenceBinding?.datasetId ||
                     panelFilterFieldsCompatible(field, fieldsForPanelFilterDataset(datasets.find((entry) => entry.id === item.datasetId), entityTypes)
                       .find((entry) => entry.id === item.fieldId)));
-                  updateFilter({ ...filter, bindings: validBindings, valueType: panelValueTypeForField(field) });
+                  const nextFilter = { ...filter, bindings: validBindings, valueType: panelValueTypeForField(field) };
+                  if (field?.type !== "DATE") delete nextFilter.defaultValue;
+                  updateFilter(nextFilter);
                 }}
                 preferredType="SELECT"
                 value={binding.fieldId}
@@ -2606,6 +2694,22 @@ function PanelFilterEditor({
           );
         })}
       </div>
+      {referenceField?.type === "DATE" ? <div className="grid gap-3 border-t border-border pt-3">
+        <SelectControl label="Valor inicial" name={`panelFilterInitial:${filter.id}`} value={filter.defaultValue?.type ?? ""}
+          options={[{ label: "Sin valor predeterminado", value: "" }, { label: "Hoy", value: "TODAY" }]}
+          onChange={(value) => {
+            const next = { ...filter };
+            if (value === "TODAY") next.defaultValue = {
+              type: "TODAY", timeZone: filter.defaultValue?.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
+            };
+            else delete next.defaultValue;
+            updateFilter(next);
+          }} />
+        {filter.defaultValue?.type === "TODAY" ? <TextControl label="Zona horaria IANA"
+          value={filter.defaultValue.timeZone}
+          onChange={(timeZone) => updateFilter({ ...filter, defaultValue: { type: "TODAY", timeZone } })} /> : null}
+        <p className="text-sm text-muted-foreground">Hoy se calcula al abrir la experiencia en la zona indicada. La fecha se puede cambiar manualmente.</p>
+      </div> : null}
       <div className="flex justify-end">
         <button className="rounded border border-input px-3 py-1 text-sm" onClick={() => setFilters(filters.filter((_, itemIndex) => itemIndex !== index))} type="button">
           Eliminar
@@ -2634,10 +2738,11 @@ function PanelMetricEditor({
 }) {
   const dataset = datasets.find((item) => item.id === metric.datasetId);
   const fields = fieldsForPanelDataset(dataset, entityTypes);
-  const relatedIds = new Set((dataset?.relatedFields ?? []).map((item) => panelRelatedFieldId(item.relationFieldId, item.fieldId)));
+  const computedIds = new Set(panelCountFields(dataset ?? {}).map(field => field.id));
+  const relatedIds = new Set([...(dataset?.relatedFields ?? []).map((item) => panelRelatedFieldId(item.relationFieldId, item.fieldId)), ...computedIds]);
   const compatibleFields = fields.filter((field) => !relatedIds.has(field.id) &&
     panelMetricAggregationTargetsField(metric.aggregation, field.type));
-  const conditionFields = fields.filter((field) => panelMetricConditionTargetsField(field.type));
+  const conditionFields = fields.filter((field) => !computedIds.has(field.id) && panelMetricConditionTargetsField(field.type));
   const applicableFilters = applicablePanelMetricFilters(metric.datasetId, filters);
   const updateMetric = (next: PanelEditorMetric) => setMetrics(replaceAt(metrics, index, next));
   const conditions = metric.conditions ?? [];
@@ -5118,6 +5223,8 @@ export function cleanPanelDatasetForEntity(
   if (dataset.transformation.type === "RECORDS") {
     return {
       ...dataset,
+      groupBy: dataset.groupBy && activeFieldIds.has(dataset.groupBy.relationFieldId) ? dataset.groupBy : undefined,
+      relationCounts: dataset.relationCounts?.filter(count => entityTypes.some(source => source.id === count.sourceEntityTypeId && source.fields.some(field => field.id === count.relationFieldId && relationTargetEntityTypeId(field.config) === entityType?.id))),
       relatedFields,
       transformation: {
         type: "RECORDS",
@@ -5449,7 +5556,7 @@ function cleanPanelSortForEntity(
 
 function datasetFieldIdsForDataset(dataset: PanelEditorDataset | undefined) {
   return [...(dataset?.transformation.fieldIds ?? []), ...(dataset?.relatedFields ?? [])
-    .map((item) => panelRelatedFieldId(item.relationFieldId, item.fieldId))];
+    .map((item) => panelRelatedFieldId(item.relationFieldId, item.fieldId)), ...panelCountFields(dataset ?? {}).map(field => field.id)];
 }
 
 function relatedPanelEditorFields(dataset: PanelEditorDataset | undefined, entityTypes: AppViewEntityTypeOption[]) {
@@ -5472,7 +5579,8 @@ function fieldsForPanelDataset(
   return [...fieldIds
     .map((fieldId) => entityType?.fields.find((field) => field.id === fieldId && field.isActive))
     .filter((field): field is AppViewEntityTypeOption["fields"][number] => Boolean(field)),
-  ...relatedPanelEditorFields(dataset, entityTypes)];
+  ...relatedPanelEditorFields(dataset, entityTypes),
+  ...panelCountFields(dataset ?? {}).map(field => ({ ...field, key: field.id, isActive: true, options: [] }))];
 }
 
 function fieldsForPanelFilterDataset(dataset: PanelEditorDataset | undefined, entityTypes: AppViewEntityTypeOption[]) {
