@@ -1,3 +1,5 @@
+import { panelCompatibility, PANEL_UPDATE_MESSAGE } from "./panel-consumer";
+import { apiError } from "./api-response";
 import { createHash } from "node:crypto";
 import { Prisma, type EntityFieldType } from "@prisma/client";
 
@@ -87,11 +89,13 @@ export async function getApiPanel({
   contractId,
   query,
   userId,
+  consumerFeatures = [],
 }: {
   appViewId: string;
   contractId: string;
   query: PanelQuery;
   userId: string;
+  consumerFeatures?: readonly string[];
 }) {
   const canAccess = await userCanAccessAppView({ appViewId, contractId, userId });
 
@@ -126,6 +130,11 @@ export async function getApiPanel({
       response: badRequest("La experiencia no está configurada como panel.", "INVALID_PANEL"),
     };
   }
+
+  const compatibility = panelCompatibility(config, panelConfigRevision(config), consumerFeatures);
+  if (compatibility?.status === "update-required") return { ok: false as const,
+    response: apiError({ status: 426, code: "PANEL_CLIENT_UPDATE_REQUIRED", message: PANEL_UPDATE_MESSAGE,
+      details: { panelCompatibility: compatibility }, headers: { "Cache-Control": "no-store", Vary: "Accept" } }) };
 
   const dataset = resolveRequestedDataset(config, query.datasetId);
 
@@ -202,6 +211,7 @@ export async function getApiPanel({
         slug: appView.slug,
       },
       schemaVersion: config.schemaVersion,
+      ...(compatibility ? { panelCompatibility: compatibility } : {}),
       configRevision: panelConfigRevision(config),
       calculatedAt,
       filters: config.filters,

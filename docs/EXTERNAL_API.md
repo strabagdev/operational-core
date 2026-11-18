@@ -1980,3 +1980,50 @@ Core while preserving every business record, initial value and local pending ope
 Derived inverse counts/differences are TABLE outputs in this extension. They are not offered as metric
 inputs or metric conditions; Core rejects those unsupported configurations. Ordinary source-field
 metrics, option conditions and related display-field conditions retain their existing behavior.
+
+
+### PANEL consumer capabilities — local guard, 2026-11-18
+
+New PANEL descriptors require explicit consumer capabilities, not a bundle-number guess. A capable
+consumer sends a standard, CORS-safelisted Accept value (ASCII token parameters, below 128 bytes):
+
+`application/json;opco-panel=1;features=counts-v1.difference-v1.groups-v1.today-v1`
+
+The requirements are derived from the configured TODAY default, groupBy, relationCounts and optional
+difference. Missing/malformed/unknown-version advertisements grant no capability. This is content
+negotiation, not an authorization grant: contract membership and AppView access are checked first.
+Neither a new permission nor an identity, migration, writer or business rule is introduced.
+
+For a compatible definition, all existing responses remain unchanged. A feature-requiring PANEL
+response adds panelCompatibility {version:1,status:compatible,required,accepted,definitionRevision}.
+Core rejects an insufficient consumer with HTTP426/PANEL_CLIENT_UPDATE_REQUIRED and the ordinary API
+error message before selecting datasets, validating filters or querying business records. The guard is
+inside getApiPanel, so both direct and revision-bound reads use the same admission rule.
+
+GET views preserves every assignment and all compatible experiences. For an incompatible PANEL it
+projects a valid legacy TABLE update shell, with no TODAY, grouping, inverse counts, business rows or
+required filters. It retains the real identity and definition revision and adds panelCompatibility
+status=update-required. This projection is transport-only; the stored AppView is untouched. An already
+open legacy Client is independently denied at the dataset endpoint even if it retains earlier metadata.
+The legacy API error envelope carries the user-facing update message; it need not know the new code.
+Responses use Cache-Control:no-store and Vary:Accept to prevent cross-consumer HTTP cache variants.
+
+Feature acknowledgements (including per-view projections) are part of effectiveContext for revision
+selection/request binding. Legacy representations without these fields keep their original fingerprints.
+A consumer cannot combine pages or metadata from different admitted representations under one revision.
+Manifest V1/V2, authorization, epoch and data revision tracking retain their existing mechanisms.
+
+A server cannot retract data already interpreted by a disconnected unmodified Client. A legacy tab
+with previously cached incompatible data can still read it offline; no server guard or service-worker
+installation fixes its running JavaScript. Safe activation therefore deploys this Core guard before
+new descriptors are distributed, then a capable Client; verify already-open older Client rejection
+and compatible cached consultations before activation. Keep feature-aware rollback versions after
+new snapshots exist; do not roll back to a reader lacking group semantics or delete local storage.
+No production activation or quantity-field conversion is performed by this local patch.
+
+The Accept advertisement also accompanies manifest V1/V2 requests. The manifest excludes only
+feature-incompatible PANEL views from its genericReuse offer; an already-open legacy consumer cannot
+use an otherwise current receipt as an online admission bypass. All compatible views and Attendance
+negotiation retain their policy. This does not rotate epoch, alter the vector or introduce a new
+cache/queue. The route uses no-store and Vary:Accept. Responses/data already admitted before the guard
+was deployed, or rendered without a subsequent remote check, cannot be withdrawn retroactively.

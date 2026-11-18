@@ -3,12 +3,14 @@ import type { AppView, AppViewType } from "@prisma/client";
 import { getEffectiveAppViewsForUserContract } from "./app-view-access";
 import { parseAppViewConfig, type AppViewConfig } from "./app-views";
 import { panelConfigRevision } from "./panels";
+import { panelCompatibility, panelUpdatePlaceholder, type PanelCompatibility } from "./panel-consumer";
 
 type ApiAppView = Pick<AppView, "config" | "icon" | "id" | "name" | "slug" | "sortOrder" | "type">;
 
 export type SerializedApiAppView = {
   config: Omit<AppViewConfig, "type">;
   configRevision?: string;
+  panelCompatibility?: PanelCompatibility;
   icon: string | null;
   id: string;
   name: string;
@@ -65,4 +67,16 @@ export function serializeApiAppView(view: ApiAppView): SerializedApiAppView | nu
 
     return null;
   }
+}
+
+/** Transport projection only. Stored definitions and all compatible views remain unchanged. */
+export function projectPanelViewsForConsumer(views: SerializedApiAppView[], consumer: readonly string[]) {
+  return views.map(view => {
+    if (view.type !== "PANEL") return view;
+    const config = { ...view.config, type: "PANEL" } as import("./app-views").PanelConfig;
+    const compatibility = panelCompatibility(config, view.configRevision!, consumer);
+    if (!compatibility) return view;
+    return { ...view, panelCompatibility: compatibility,
+      ...(compatibility.status === "update-required" ? { config: panelUpdatePlaceholder(config) } : {}) };
+  });
 }

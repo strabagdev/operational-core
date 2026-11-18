@@ -1,3 +1,4 @@
+import { panelConsumerFeatures } from "@/lib/panel-consumer";
 import { requireApiContractAccess } from "@/lib/api-auth";
 import { apiError, success } from "@/lib/api-response";
 import { getOfflineManifest, OfflineManifestError, parseOfflineManifestRequest } from "@/lib/offline-manifest";
@@ -6,10 +7,10 @@ export const runtime = "nodejs";
 export async function GET(request:Request,{params}:{params:Promise<{contractId:string}>}) {
   const {contractId}=await params;const access=await requireApiContractAccess(request,contractId);
   if(!access.ok){access.response.headers.set("Cache-Control","no-store");return access.response;}
-  const headers={"Cache-Control":"no-store"};
+  const headers={"Cache-Control":"no-store",Vary:"Accept"};
   try{
     const query=parseOfflineManifestRequest(new URL(request.url).searchParams);
-    const data=await getOfflineManifest({appId:access.context.app.id,userId:access.context.user.id,contractId:access.context.contract.id},query);
+    const data=await getOfflineManifest({appId:access.context.app.id,userId:access.context.user.id,contractId:access.context.contract.id,panelConsumerFeatures:panelConsumerFeatures(request.headers.get("Accept"))},query);
     return success(data,{headers});
   }catch(error){
     if(error instanceof OfflineManifestError)return apiError({code:error.code,status:error.status,message:error.message,headers});

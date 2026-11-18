@@ -1,3 +1,4 @@
+import { panelReadRepresentation } from "./panel-consumer";
 import { requireApiContractAccess } from "./api-auth";
 import { apiError } from "./api-response";
 import { buildOfflineManifest, OfflineManifestError, offlineManifestHash } from "./offline-manifest";
@@ -53,7 +54,8 @@ export async function revisionBoundRead(request:Request, resource:RevisionReadRe
       const envelope=await response.json();
       if (envelope?.ok!==true || !envelope.data || typeof envelope.data!=="object") throw new RevisionReadError("READ_REVISION_UNAVAILABLE",503,"No se pudo acreditar la lectura.");
       const data=envelope.data;
-      const effectiveContext={date:typeof data.date==="string"?data.date:null,from:typeof data.from==="string"?data.from:null,to:typeof data.to==="string"?data.to:null};
+      const representation = ["panel", "views"].includes(resource.kind) ? panelReadRepresentation(data) : undefined;
+      const effectiveContext={...(representation ? {panelCompatibility: representation} : {}),date:typeof data.date==="string"?data.date:null,from:typeof data.from==="string"?data.from:null,to:typeof data.to==="string"?data.to:null};
       const manifest=await buildOfflineManifest(tx,{appId:access.context.app.id,userId:access.context.user.id,contractId:resource.contractId},
         {version:1,appViewIds:resource.appViewId?[resource.appViewId]:[],...(effectiveContext.date?{date:effectiveContext.date}:{})},
         {entityTypeIds:resource.entityTypeId?[resource.entityTypeId]:[],allEntities:resource.kind==="entities"});

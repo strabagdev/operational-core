@@ -1,6 +1,7 @@
+import { panelConsumerFeatures } from "@/lib/panel-consumer";
 import { revisionBoundRead } from "@/lib/revision-bound-read";
 import { requireApiContractAccess } from "@/lib/api-auth";
-import { getApiContractViews, serializeApiAppViews } from "@/lib/api-app-views";
+import { getApiContractViews, serializeApiAppViews, projectPanelViewsForConsumer } from "@/lib/api-app-views";
 import { success } from "@/lib/api-response";
 
 export const runtime = "nodejs";
@@ -22,10 +23,12 @@ async function legacyGET(
   });
 
   return success({
-    views: serializeApiAppViews(views),
+    views: projectPanelViewsForConsumer(serializeApiAppViews(views), panelConsumerFeatures(request.headers.get("Accept"))),
   });
 }
 
 export async function GET(request: Request, context: { params: Promise<{ contractId: string }> }) {
-  return revisionBoundRead(request, { kind: "views", ...await context.params }, () => legacyGET(request, context));
+  const response = await revisionBoundRead(request, { kind: "views", ...await context.params }, () => legacyGET(request, context));
+  response.headers.set("Cache-Control", "no-store"); response.headers.append("Vary", "Accept");
+  return response;
 }

@@ -1,3 +1,4 @@
+import { requiredPanelFeatures } from "./panel-consumer";
 import { createHash } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { selectiveReuseEnabled, genericReuseEnabled, genericReuseKinds } from "./offline-selective-reuse";
@@ -10,7 +11,7 @@ export const OFFLINE_MANIFEST_VERSION = 1;
 export const OFFLINE_NEGOTIATION_VERSIONS = Object.freeze({ readRepresentationVersion: 1, receiptVersion: 1, storagePolicyVersion: 1 } as const);
 export const OFFLINE_MANIFEST_MAX_VIEWS = 100;
 export const OFFLINE_MANIFEST_MAX_ENTITIES = 200;
-export type OfflineManifestScope = { appId:string; userId:string; contractId:string };
+export type OfflineManifestScope = { appId:string; userId:string; contractId:string; panelConsumerFeatures?:readonly string[] };
 type NegotiationExpectations = { scopeFingerprint?:string; manifestVectorRevision?:string; epoch?:string; definitionsRevision?:string };
 type OfflineNegotiationRequest = { nonce:string; readRepresentationVersion:number; receiptVersion:number; storagePolicyVersion:number; expected:NegotiationExpectations };
 export type OfflineManifestRequest = { date?:string; month?:string; appViewIds:string[] } &
@@ -126,9 +127,11 @@ export async function buildOfflineManifest(tx:Prisma.TransactionClient, scope:Of
     }
     return dependencies;
   };
+  const panelRequirements = new Map<string, readonly string[]>();
   const experiences=views.map(view=>{
     let valid=true;let config:ReturnType<typeof parseAppViewConfig>|undefined;
     try{config=parseAppViewConfig(view);}catch{valid=false;}
+    if (config?.type === "PANEL") panelRequirements.set(view.id, requiredPanelFeatures(config));
     const issues=new Set<string>();
     const initial=config?configuredEntities(config):[];
     const referenced=new Set<string>(),pendingViews=config?viewReferences(config):[];
@@ -168,7 +171,8 @@ export async function buildOfflineManifest(tx:Prisma.TransactionClient, scope:Of
     {scopeFingerprint:offlineManifestHash(identity),manifestVectorRevision:readBindingVector.revision,epoch:catalog.epoch,definitionsRevision:state.readDefinitionsRevision},
     manifest.readBindingVector.available&&manifest.tracking.dependenciesResolved&&entities.every(entity=>entity.active&&entity.tracked),
     offlineManifestHash({scope:identity,query}),{enabled:!!query.month && selectiveReuseEnabled(contract.id),appViewIds:experiences.filter(view=>view.workflowKey==="attendance"&&view.status==="diagnostic").map(view=>view.appViewId)},
-    {enabled:genericReuseEnabled(),views:experiences.filter(view=>view.status!=="invalid-definition"&&view.status!=="dependency-unavailable").map(view=>({appViewId:view.appViewId,kinds:genericReuseKinds(view.type,view.workflowKey)})).filter(view=>view.kinds.length>0)}):undefined;
+    {enabled:genericReuseEnabled(),views:experiences.filter(view=>view.status!=="invalid-definition"&&view.status!=="dependency-unavailable").filter(view=>(panelRequirements.get(view.appViewId)??[]).every(feature=>scope.panelConsumerFeatures?.includes(feature)))
+      .map(view=>({appViewId:view.appViewId,kinds:genericReuseKinds(view.type,view.workflowKey)})).filter(view=>view.kinds.length>0)}):undefined;
   return {...manifest,...(negotiation?{negotiation}:{})};
 }
 

@@ -1,3 +1,4 @@
+import { panelConsumerFeatures } from "@/lib/panel-consumer";
 import { revisionBoundRead } from "@/lib/revision-bound-read";
 import { requireApiContractAccess } from "@/lib/api-auth";
 import { success } from "@/lib/api-response";
@@ -19,6 +20,7 @@ async function legacyGET(
   const searchParams = new URL(request.url).searchParams;
   const panel = await getApiPanel({
     appViewId,
+    consumerFeatures: panelConsumerFeatures(request.headers.get("Accept")),
     contractId: access.context.contract.id,
     query: {
       datasetId: searchParams.get("datasetId"),
@@ -38,5 +40,7 @@ async function legacyGET(
 }
 
 export async function GET(request: Request, context: { params: Promise<{ contractId: string; appViewId: string }> }) {
-  return revisionBoundRead(request, { kind: "panel", ...await context.params }, () => legacyGET(request, context));
+  const response = await revisionBoundRead(request, { kind: "panel", ...await context.params }, () => legacyGET(request, context));
+  response.headers.set("Cache-Control", "no-store"); response.headers.append("Vary", "Accept");
+  return response;
 }

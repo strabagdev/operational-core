@@ -1,3 +1,4 @@
+import { PANEL_FEATURES } from "./panel-consumer";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { prisma } from "./prisma";
 import { getApiPanel } from "./panels";
@@ -7,7 +8,7 @@ import { panelLocalScope as s, seedLocalPanel } from "../test/panel-local-seed";
 const enabled = Boolean(process.env.PANEL_DAILY_PG_INTEGRATION_DATABASE_URL);
 const run = enabled ? describe : describe.skip;
 const read = async (datasetId = "daily", day = "2026-11-17", page = "1", pageSize = "1") => {
-  const response = await getApiPanel({ appViewId: s.view, contractId: s.contract, userId: s.user, query: { datasetId, filters: JSON.stringify({ day }), page, pageSize } });
+  const response = await getApiPanel({ consumerFeatures: PANEL_FEATURES, appViewId: s.view, contractId: s.contract, userId: s.user, query: { datasetId, filters: JSON.stringify({ day }), page, pageSize } });
   if (!response.ok) throw new Error(await response.response.text());
   return response.data;
 };
@@ -114,7 +115,7 @@ run("PANEL daily groups and historical inverse counts — real isolated PostgreS
   });
   it("respects permission revocation before reading any dataset", async () => {
     await prisma.userAppViewAccess.deleteMany({ where: { appViewId: s.view, userId: s.user } });
-    try { const denied = await getApiPanel({ appViewId: s.view, contractId: s.contract, userId: s.user, query: {} }); expect(denied.ok).toBe(false); if (!denied.ok) expect(denied.response.status).toBe(403); }
+    try { const denied = await getApiPanel({ consumerFeatures: PANEL_FEATURES, appViewId: s.view, contractId: s.contract, userId: s.user, query: {} }); expect(denied.ok).toBe(false); if (!denied.ok) expect(denied.response.status).toBe(403); }
     finally { await prisma.userAppViewAccess.create({ data: { appViewId: s.view, userId: s.user, contractId: s.contract } }); }
   });
 });
