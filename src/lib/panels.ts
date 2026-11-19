@@ -1,3 +1,4 @@
+import { resolvePanelOperationalFilters, PanelOperationalCalendarError } from "./panel-operational-calendar";
 import { captureTimeFieldIds } from "./capture-time";
 import { panelCompatibility, PANEL_UPDATE_MESSAGE } from "./panel-consumer";
 import { apiError } from "./api-response";
@@ -124,7 +125,10 @@ export async function getApiPanel({
     };
   }
 
-  const config = parseAppViewConfig(appView);
+  const parsedConfig = parseAppViewConfig(appView);
+  let config;
+  try {config = parsedConfig.type === "PANEL" ? {...parsedConfig,filters:await resolvePanelOperationalFilters(parsedConfig.filters,contractId)} : parsedConfig;}
+  catch(error){if(error instanceof PanelOperationalCalendarError)return {ok:false as const,response:apiError({status:409,code:"PANEL_OPERATIONAL_CALENDAR_UNAVAILABLE",message:error.message,headers:{"Cache-Control":"no-store"}})};throw error;}
 
   if (config.type !== "PANEL") {
     return {

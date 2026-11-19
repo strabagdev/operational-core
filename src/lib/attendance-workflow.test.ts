@@ -69,7 +69,7 @@ type EntityRecordFindManyMockArgs = {
 };
 
 const tx = {
-  appView: {findMany: vi.fn(async()=>[])},
+  appView: {findMany: vi.fn(async()=>[]),findFirst:(...args:Parameters<typeof prisma.appView.findFirst>)=>prisma.appView.findFirst(...args)},
   $queryRaw: vi.fn(async () => []),
   auditEvent: {
     create: vi.fn(),

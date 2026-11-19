@@ -1,3 +1,5 @@
+import { operationalDayContract, verifyOperationalDay } from "./operational-day-server";
+import { OperationalCalendarError, type OperationalCalendar, type OperationalDayCommand } from "./operational-calendar";
 import { assertCaptureCommand, captureTimeContract, captureTimeRead, protectCaptureValues, validCaptureInstant, type CaptureTimeConfig, type CaptureTimeCommand, type CaptureTimeRead } from "./capture-time";
 import {allowsAttendanceRepetition, type AttendanceRepetitionPolicy} from "./attendance-repetition";
 import { releaseRejectedWorkflowClaim, authorizeWorkflowWrite, workflowWriteMetadata, parseWorkflowWriteCommand, WorkflowWritePolicyError, assertGenericEntityWritesAllowed, type WorkflowWriteCommand } from "./workflow-write-policy";
@@ -98,6 +100,7 @@ export type StateUpdateContext = {
 
 export type StateUpdateInput = {
   captureTime?: CaptureTimeCommand;
+  operationalDay?: OperationalDayCommand;
   repetitionPolicy?: AttendanceRepetitionPolicy;
   eventOccurredAt?: string;
   repetitionAcknowledged?: boolean;
@@ -146,6 +149,7 @@ const latestStateUpdateMaxPageSize = 100;
 
 export function attendanceStateUpdateConfig(config: {
   captureTime?: CaptureTimeConfig;
+  operationalCalendar?: OperationalCalendar;
   repetitionPolicy?: AttendanceRepetitionPolicy;
   codeSearch?: { fieldId: string };
   sourceEntityTypeId: string;
@@ -167,6 +171,7 @@ export function attendanceStateUpdateConfig(config: {
     workflowKey: "state-update",
     attendanceRepetitionPolicy: config.repetitionPolicy ?? "ONE_PER_DAY",
     ...(config.captureTime ? { captureTime: config.captureTime } : {}),
+    ...(config.operationalCalendar ? { operationalCalendar: config.operationalCalendar } : {}),
     ...(config.codeSearch ? { codeSearch: config.codeSearch } : {}),
     sourceEntityTypeId: config.sourceEntityTypeId,
     targetEntityTypeId: config.targetEntityTypeId,
@@ -332,7 +337,7 @@ export async function getStateUpdateWorkflow({
     ok: true as const,
     data: await withSubjectPresentation({
       appView: context.context.appView,
-      ...captureTimeContract(context.context.config),
+      ...captureTimeContract(context.context.config), ...operationalDayContract(context.context.config),
       ...(await workflowWriteMetadata(context.context.targetEntityType.id, context.context.appView.id)),
       searchComparison,
       ...(codeSearch.metadata ? { codeSearchField: codeSearch.metadata } : {}),
@@ -435,7 +440,7 @@ export async function getStateUpdateCurrentBatch(input: {
   const policy = context.schedulePolicy;
   const scheduleResolution = policy ? await resolveSchedule(prisma,input.contractId,policy,date.value ?? undefined,context.composite?.identity?.values[policy.sourceFieldId]) : undefined;
   return { ok: true as const, data: await withSubjectPresentation({
-    appView: context.appView, ...captureTimeContract(context.config), contractId: input.contractId, currentBatchCapabilities: capabilities,
+    appView: context.appView, ...captureTimeContract(context.config), ...operationalDayContract(context.config), contractId: input.contractId, currentBatchCapabilities: capabilities,
     ...(await workflowWriteMetadata(context.targetEntityType.id, context.appView.id)),
     currentBatch: { version: 1, requestedSubjectIds: input.subjectRecordIds, results },
     workflow: workflowMetadata(context), date: date.value,
@@ -566,8 +571,19 @@ async function saveStateUpdateEntryInContext({
   timing?: StateUpdateWorkflowTiming;
   userId: string;
 }): Promise<{ ok: true; result: StateUpdateResult }> {
-  try { assertCaptureCommand(context.config,input); await authorizeWorkflowWrite(context.transaction, context.config, context.appView.id, input); }
-  catch (error) { if (!(error instanceof WorkflowWritePolicyError)) throw error; await releaseRejectedWorkflowClaim(context.transaction ?? prisma,appId,contractId,input.clientRequestId,idempotencyKey); return { ok: true, result: { result: "ERROR", code: error.code, message: error.message, subjectRecordId: input.subjectRecordId } }; }
+  try {
+    await authorizeWorkflowWrite(context.transaction, context.config, context.appView.id, input);
+    if(context.config.attendanceRepetitionPolicy !== undefined || context.config.operationalCalendar || input.operationalDay){
+      // Configuration edits take an UPDATE lock; keep this definition stable until the mutation commits.
+      const tx=context.transaction??prisma;
+      await tx.$queryRaw`SELECT id FROM "AppView" WHERE id=${context.appView.id} AND "contractId"=${contractId} FOR SHARE`;
+      const view=await tx.appView.findFirst({where:{id:context.appView.id,contractId,active:true}});
+      if(!view)throw new OperationalCalendarError("OPERATIONAL_DAY_REVIEW_REQUIRED","La experiencia no está disponible. La intención se conserva.");
+      const fresh=parseAppViewConfig(view);
+      verifyOperationalDay(fresh.type==="WORKFLOW"&&fresh.workflowKey==="attendance"?fresh:{},input);
+    }
+    verifyOperationalDay(context.config,input); assertCaptureCommand(context.config,input); }
+  catch (error) { if (!(error instanceof WorkflowWritePolicyError) && !(error instanceof OperationalCalendarError)) throw error; await releaseRejectedWorkflowClaim(context.transaction ?? prisma,appId,contractId,input.clientRequestId,idempotencyKey); return { ok: true, result: { result: "ERROR", code: error.code, message: error.message, subjectRecordId: input.subjectRecordId } }; }
   const subject = (await (context.transaction ?? prisma).entityRecord.findMany({
     select: { displayName: true, id: true },
     take: 1,
@@ -1165,9 +1181,10 @@ function parseStateUpdateBody(body: unknown, config: StateUpdateWorkflowConfig, 
       (body.targetRecordId !== undefined && (!repeated || typeof body.targetRecordId !== "string" || !body.targetRecordId.trim() || body.targetRecordId !== body.targetRecordId.trim() || body.targetRecordId.length > 200))) {
     return writeError("ATTENDANCE_POLICY_CHANGED", "La política o el comando no son compatibles. Actualiza y revisa la intención sin reenviarla como un registro nuevo.");
   }
-  if (body.eventOccurredAt !== undefined && (!repeated && !config.captureTime || typeof body.eventOccurredAt!=="string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(body.eventOccurredAt) || !Number.isFinite(Date.parse(body.eventOccurredAt)) || new Date(body.eventOccurredAt).toISOString()!==body.eventOccurredAt)) return writeError("INVALID_EVENT_TIME", "La fecha y hora de captura no son válidas.");
+  if (body.eventOccurredAt !== undefined && (!repeated && !config.captureTime && !config.operationalCalendar || typeof body.eventOccurredAt!=="string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(body.eventOccurredAt) || !Number.isFinite(Date.parse(body.eventOccurredAt)) || new Date(body.eventOccurredAt).toISOString()!==body.eventOccurredAt)) return writeError("INVALID_EVENT_TIME", "La fecha y hora de captura no son válidas.");
   if (body.targetRecordId && (body.overwrite !== true || !stringValue(body.expectedUpdatedAt))) return writeError("OVERWRITE_EXPECTATION_REQUIRED", "La edición requiere el registro seleccionado y su versión base.");
   if (config.captureTime && body.captureTime && body.eventOccurredAt===undefined && !body.expectedUpdatedAt && !body.targetRecordId) return writeError("CAPTURE_TIME_REQUIRED","La alta nueva requiere el instante original de confirmación; no se inventó uno.");
+  try { verifyOperationalDay(config,{...body,dateValue:parsedDate.value??undefined}); } catch(error) { if(error instanceof OperationalCalendarError)return writeError(error.code,error.message);throw error; }
   const rawStates = isRecord(body.states) ? body.states : {};
   const states: Record<string, unknown> = {};
   const allowedStateFieldIds = new Set(config.stateFields.map((field) => field.fieldId));
@@ -1198,6 +1215,7 @@ function parseStateUpdateBody(body: unknown, config: StateUpdateWorkflowConfig, 
     body: {
       ...(schedule ? {schedule} : {}),
       ...(config.uniqueness.mode === "subject-date-fields" ? { identity: body.identity as CompositeIdentity } : {}),
+      ...(body.operationalDay !== undefined ? {operationalDay:body.operationalDay as OperationalDayCommand}:{}),
       ...(body.captureTime !== undefined ? {captureTime:body.captureTime as CaptureTimeCommand} : {}),
       ...(body.eventOccurredAt !== undefined ? {eventOccurredAt:body.eventOccurredAt as string} : {}),
       ...(body.repetitionPolicy !== undefined ? {repetitionPolicy: body.repetitionPolicy as AttendanceRepetitionPolicy} : {}),
@@ -1716,6 +1734,7 @@ async function createStateUpdateRecord({
       entityTypeId: context.targetEntityType.id,
       metadata: {
         ...(input.eventOccurredAt ? {eventOccurredAt:input.eventOccurredAt} : {}),
+        ...(input.operationalDay ? {operationalDay:input.operationalDay} : {}),
         ...(context.config.captureTime ? {captureTime:{version:1,...context.config.captureTime,source:"DEVICE_CONFIRMATION"}}:{}),
         ...(input.writeCommand ? {workflowWriteFingerprint:input.writeCommand.configurationFingerprint} : {}),
         apiExternalAppId: appId,
@@ -2585,6 +2604,7 @@ function canonicalStateUpdateRequestHash({
     ...(body.identity ? { identity: { ...body.identity, values: JSON.parse(identityContextKey(body.identity.values)) } } : {}),
     ...(body.writeCommand ? {writeCommand: body.writeCommand} : {}),
     ...(body.schedule ? {schedule: body.schedule} : {}),
+    ...(body.operationalDay !== undefined ? {operationalDay:body.operationalDay}:{}),
     ...(body.captureTime !== undefined ? {captureTime:body.captureTime} : {}),
     ...(body.eventOccurredAt !== undefined ? {eventOccurredAt:body.eventOccurredAt} : {}),
     ...(body.repetitionPolicy !== undefined && body.repetitionPolicy !== "ONE_PER_DAY" ? {repetitionPolicy:body.repetitionPolicy} : {}),

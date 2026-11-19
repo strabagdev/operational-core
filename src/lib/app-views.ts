@@ -1,3 +1,5 @@
+import { resolvePanelOperationalFilters } from "./panel-operational-calendar";
+import { parseOperationalCalendar, type OperationalCalendar } from "./operational-calendar";
 import { validCaptureZone, parseCaptureTime, assertCaptureFieldRole, captureTimeFieldIds, validateCaptureBindingChange, type CaptureTimeConfig } from "./capture-time";
 import {attendanceRepetitionPolicies, type AttendanceRepetitionPolicy} from "./attendance-repetition";
 import {createAuditEvent} from "./audit";
@@ -167,7 +169,7 @@ export type PanelFilter = {
   label?: string;
   valueType: "TEXT" | "NUMBER" | "DATE" | "BOOLEAN" | "OPTION" | "RECORD";
   required?: boolean;
-  defaultValue?: { type: "TODAY"; timeZone: string };
+  defaultValue?: { type: "TODAY"; timeZone: string } | { type: "OPERATIONAL_TODAY"; calendarAppViewId: string; calendar?: OperationalCalendar; calendarKey?: string };
 };
 
 export type FilterExpr =
@@ -366,6 +368,7 @@ const defaultReportTimeFilter = {
 
 export type AttendanceWorkflowConfig = {
   captureTime?: CaptureTimeConfig;
+  operationalCalendar?: OperationalCalendar;
   repetitionPolicy?: AttendanceRepetitionPolicy;
   workflowWritePolicy?: WorkflowWritePolicy;
       type: "WORKFLOW";
@@ -385,6 +388,7 @@ export type AttendanceWorkflowConfig = {
 export type StateUpdateWorkflowConfig = {
   /** Internal automatic capture binding supplied by the Attendance adapter. */
   captureTime?: CaptureTimeConfig;
+  operationalCalendar?: OperationalCalendar;
   /** Internal Attendance adapter capability; never configurable by STATE_UPDATE. */
   attendanceRepetitionPolicy?: AttendanceRepetitionPolicy;
   workflowWritePolicy?: WorkflowWritePolicy;
@@ -436,6 +440,8 @@ export function getAppViewInput(formData: FormData) {
     }),
     rawConfig: {
       repetitionPolicy: formData.get("repetitionPolicy") || undefined,
+      operationalCalendarSpecified: formData.has("operationalCalendar"),
+      operationalCalendar: calendarFromForm(formData),
       captureTimeSpecified: formData.has("captureTimeFieldId"),
       captureTime: formData.get("captureTimeFieldId") ? { fieldId: formData.get("captureTimeFieldId"), timeZone: formData.get("captureTimeZone") } : undefined,
       entityTypeId: formData.get("entityTypeId"),
@@ -635,6 +641,7 @@ export async function updateAppView(
   const config = await validateAppViewConfig({
     contractId: authorized.contract.id,
     rawConfig: input.common.type === "WORKFLOW" ? { ...input.rawConfig,
+      ...(!input.rawConfig.operationalCalendarSpecified ? { operationalCalendar:(authorized.appView.config as {operationalCalendar?:OperationalCalendar})?.operationalCalendar } : {}),
       ...(!input.rawConfig.captureTimeSpecified ? {captureTime:(authorized.appView.config as {captureTime?:CaptureTimeConfig})?.captureTime}:{}),
       ...(!input.rawConfig.workflowWritePolicySpecified ? {workflowWritePolicy:(authorized.appView.config as {workflowWritePolicy?:WorkflowWritePolicy})?.workflowWritePolicy}:{}),
       ...(!input.rawConfig.codeSearchSpecified ? {codeSearch:(authorized.appView.config as {codeSearch?:{fieldId:string}})?.codeSearch}:{}),
@@ -1121,6 +1128,7 @@ async function validateAppViewConfig({
         targetEntityTypeId: config.targetEntityTypeId,
         ...(config.repetitionPolicy ? { repetitionPolicy: config.repetitionPolicy } : {}),
         ...(config.captureTime ? { captureTime: config.captureTime } : {}),
+        ...(config.operationalCalendar ? { operationalCalendar: config.operationalCalendar } : {}),
         personFieldId: config.personFieldId,
         dateFieldId: config.dateFieldId,
         statusFieldId: config.statusFieldId,
@@ -1434,6 +1442,7 @@ const workflowBaseConfigInputSchema = z.object({
 });
 
 const attendanceWorkflowConfigInputSchema = workflowBaseConfigInputSchema.extend({
+  operationalCalendar: z.custom<OperationalCalendar>(value => { try { return !!parseOperationalCalendar(value); } catch { return false; } }, "Revisa zona, inicio y franjas del día operativo.").optional(),
   captureTime: z.custom<CaptureTimeConfig>(value => { try { return !!parseCaptureTime(value); } catch { return false; } }, "Selecciona un DATETIME y una zona IANA válidos.").optional(),
   repetitionPolicy: z.enum(attendanceRepetitionPolicies).optional(),
   workflowKey: z.literal("attendance"),
@@ -1500,10 +1509,10 @@ function panelIanaTimeZoneSupported(timeZone: string) {
     return true;
   } catch { return false; }
 }
-const panelDateDefaultSchema = z.object({
+const panelDateDefaultSchema = z.union([z.object({
   type: z.literal("TODAY"),
   timeZone: z.string().trim().min(1).refine(panelIanaTimeZoneSupported, "Selecciona una zona horaria IANA válida para Hoy."),
-}).strict();
+}).strict(), z.object({ type:z.literal("OPERATIONAL_TODAY"),calendarAppViewId:z.string().trim().min(1) }).strict()]);
 const panelFilterSchema = z.object({
   id: panelIdSchema,
   label: z.string().trim().min(1).optional(),
@@ -2004,6 +2013,7 @@ function parseWorkflowConfigInput(rawConfig: unknown) {
   return attendanceWorkflowConfigInputSchema.parse({
     ...raw,
     contextFieldIds: uniqueStrings(stringArray(raw.contextFieldIds)),
+    ...(raw.operationalCalendar !== undefined ? { operationalCalendar: parseOperationalCalendar(raw.operationalCalendar) } : {}),
     ...(raw.captureTime !== undefined ? {captureTime: parseCaptureTime(raw.captureTime)} : {}),
     defaultCheckInOptionId: raw.defaultCheckInOptionId ?? raw.presentOptionId,
     workflowKey,
@@ -2161,6 +2171,14 @@ async function validatePanelAppViewConfig({
   config: z.infer<typeof panelConfigInputSchema>;
   contractId: string;
 }) {
+  for (const filter of config.filters) {
+    if (filter.defaultValue?.type !== "OPERATIONAL_TODAY") continue;
+    try { await resolvePanelOperationalFilters([filter],contractId,client); } catch(error) {throw new AppViewConfigError(error instanceof Error?error.message:"Calendario no disponible.","filters");}
+    const source=await client.appView.findFirst({where:{id:filter.defaultValue.calendarAppViewId,contractId},select:{config:true}});
+    const owner=source?.config as {targetEntityTypeId?:string;dateFieldId?:string};
+    const bindings=config.datasets.flatMap(d=>(d.filters??[]).filter(f=>f.type==="PANEL_FILTER"&&f.filterId===filter.id).map(f=>({d,f})));
+    if(!bindings.length||bindings.some(({d,f})=>d.source.entityTypeId!==owner.targetEntityTypeId||f.fieldId!==owner.dateFieldId))throw new AppViewConfigError("El día operativo debe filtrar el DATE de la experiencia vinculada.","filters");
+  }
   const filtersById = new Map(config.filters.map((filter) => [filter.id, filter]));
   const datasetFieldIdsById = new Map<string, Set<string>>();
   const datasetRelatedFieldIdsById = new Map<string, Set<string>>();
@@ -2878,6 +2896,11 @@ function validateAttendanceAppViewFields({
   if (dateField.type !== "DATE") {
     throw new AppViewConfigError("El campo Fecha debe ser de tipo fecha.", "dateFieldId");
   }
+  if (config.operationalCalendar) {
+    const calendar=parseOperationalCalendar(config.operationalCalendar)!;
+    const options=new Set(statusField.options.filter(o=>o.isActive).map(o=>o.id));
+    if (calendar.bands.some(b=>!options.has(b.optionId))) throw new AppViewConfigError("Cada franja debe usar una opción activa del SELECT configurado.","operationalCalendar");
+  }
   if (config.captureTime) {
     const field = requireActiveTargetField(targetFields, config.captureTime.fieldId, "Hora de captura");
     assertCaptureFieldRole(field);
@@ -3156,4 +3179,10 @@ class AppViewConfigError extends Error {
     this.name = "AppViewConfigError";
     this.fieldName = fieldName;
   }
+}
+
+function calendarFromForm(formData:FormData) {
+  const value=formData.get("operationalCalendar"); if(!value)return undefined;
+  try {return parseOperationalCalendar(JSON.parse(String(value)));}
+  catch(error){throw new AppViewConfigError(error instanceof Error?error.message:"Calendario inválido.","operationalCalendar");}
 }

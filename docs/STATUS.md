@@ -480,3 +480,11 @@ V1 conserva JSON y hashes; rechazos de autenticación llevan no-store. Sin Clien
 migraciones nuevas. Compatibilidad no acredita cobertura local ni almacenamiento físico y todas
 las banderas de omisión siguen false. El gate Client por runtime y la activación siguen pendientes.
 Sin producción, commit, push ni deploy; índices habituales, exclusiones y pendientes preservados.
+
+
+## Calendario operativo opcional — local 2026-11-19
+
+Definición Attendance opcional, DATE automático/manual, franjas SELECT sin sustitución y
+PANEL vinculado: [OPERATIONAL_CALENDAR.md](./OPERATIONAL_CALENDAR.md). Transporte único
+eventOccurredAt y ruta versionada; pendientes conservados. Sin migración, publicación ni
+configuración productiva. Activación captureTime sigue pendiente.

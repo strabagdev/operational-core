@@ -1,6 +1,6 @@
 import type { PanelConfig } from "./app-views";
 
-export const PANEL_FEATURES = ["capture-time-v1", "counts-v1", "difference-v1", "groups-v1", "today-v1"] as const;
+export const PANEL_FEATURES = ["operational-day-v1", "capture-time-v1", "counts-v1", "difference-v1", "groups-v1", "today-v1"] as const;
 export type PanelFeature = typeof PANEL_FEATURES[number];
 export type PanelCompatibility = { version: 1; status: "compatible" | "update-required"; required: PanelFeature[]; accepted: PanelFeature[]; definitionRevision: string };
 export const PANEL_UPDATE_MESSAGE = "Esta experiencia requiere actualizar Opco Client. Tus datos guardados y pendientes se conservan. Actualiza la aplicación cuando puedas hacerlo sin cerrar un borrador.";
@@ -27,6 +27,7 @@ export function panelConsumerFeatures(accept: string | null): PanelFeature[] {
 
 export function requiredPanelFeatures(config: Pick<PanelConfig, "filters" | "datasets"> & Partial<Pick<PanelConfig,"modules">>): PanelFeature[] {
   const required = new Set<PanelFeature>();
+  if(config.filters.some(f=>f.defaultValue?.type==="OPERATIONAL_TODAY"))required.add("operational-day-v1");
   if(config.modules?.some(m=>m.visualization.type==="TABLE"&&m.visualization.config.columns.some(c=>c.captureTime)))required.add("capture-time-v1");
   if (config.filters.some(filter => filter.defaultValue?.type === "TODAY")) required.add("today-v1");
   for (const dataset of config.datasets) {

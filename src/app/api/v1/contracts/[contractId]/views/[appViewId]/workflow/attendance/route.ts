@@ -1,3 +1,4 @@
+import {panelConsumerFeatures} from "@/lib/panel-consumer";
 import { revisionBoundRead } from "@/lib/revision-bound-read";
 import { requireApiContractAccess } from "@/lib/api-auth";
 import { applyApiDiagnosticsHeaders, createApiServerTiming } from "@/lib/api-diagnostics";
@@ -29,6 +30,7 @@ async function legacyGET(
     appViewId,
     contractId: access.context.contract.id,
     date: searchParams.get("date"),
+    ...(searchParams.has("operationalDayVersion") || panelConsumerFeatures(request.headers.get("Accept")).includes("operational-day-v1") ? {operationalDayVersion: searchParams.get("operationalDayVersion") ?? "1"} : {}),
     ...(searchParams.has("daySnapshotVersion") ? {daySnapshotVersion:searchParams.get("daySnapshotVersion")} : {}),
     ...(searchParams.has("page") ? {page:searchParams.get("page")} : {}),
     ...(searchParams.has("pageSize") ? {pageSize:searchParams.get("pageSize")} : {}),

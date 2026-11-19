@@ -112,7 +112,7 @@ export async function buildOfflineManifest(tx:Prisma.TransactionClient, scope:Of
   const readViews=await tx.appView.findMany({where:{contractId:contract.id},orderBy:{id:"asc"},take:OFFLINE_MANIFEST_MAX_ENTITIES+1});
   if(readViews.length>OFFLINE_MANIFEST_MAX_ENTITIES)throw new OfflineManifestError("OFFLINE_MANIFEST_LIMIT",400,"Demasiadas definiciones de experiencia para acreditar la lectura.");
   const readViewById=new Map(readViews.map(view=>[view.id,view]));
-  const viewReferences=(value:unknown):string[]=>Array.isArray(value)?value.flatMap(viewReferences):value&&typeof value==="object"?Object.entries(value).flatMap(([key,item])=>key==="stateUpdateAppViewId"&&typeof item==="string"?[item]:viewReferences(item)):[];
+  const viewReferences=(value:unknown):string[]=>Array.isArray(value)?value.flatMap(viewReferences):value&&typeof value==="object"?Object.entries(value).flatMap(([key,item])=>(key==="stateUpdateAppViewId"||key==="calendarAppViewId")&&typeof item==="string"?[item]:viewReferences(item)):[];
   const byId=new Map(types.map(type=>[type.id,type]));const revisionById=new Map(revisions.map(row=>[row.entityTypeId,row.dataRevision]));
   const selectedIds=new Set<string>();
   const dependenciesFor = (initial:string[], issues:Set<string>) => {

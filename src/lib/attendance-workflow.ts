@@ -1,3 +1,4 @@
+import { operationalDayContract } from "./operational-day-server";
 import { captureTimeContract, captureTimeRead } from "./capture-time";
 import {attendanceRepetitionPolicy, allowsAttendanceRepetition, type AttendanceRepetitionPolicy} from "./attendance-repetition";
 import { releaseRejectedWorkflowClaim, isWorkflowWriteRejectionCode, workflowWriteMetadata, parseWorkflowWriteCommand, WorkflowWritePolicyError, type WorkflowWriteCommand } from "./workflow-write-policy";
@@ -115,6 +116,7 @@ export async function getAttendanceWorkflowDay({
   searchComparisonVersion,
   daySnapshotVersion, page, pageSize,
   userId,
+  operationalDayVersion,
 }: {
   appViewId: string;
   contractId: string;
@@ -127,6 +129,7 @@ export async function getAttendanceWorkflowDay({
   page?: string | null;
   pageSize?: string | null;
   userId: string;
+  operationalDayVersion?: string | null;
 }) {
   const parsedDate = parseAttendanceDate(date);
 
@@ -159,6 +162,7 @@ export async function getAttendanceWorkflowDay({
     searchComparison=workflowSearchMetadata(context.context.sourceEntityType.fields,context.context.sourceEntityType.id,"attendance",search,codeSearch.fieldId,personRecordId);
   } catch(error) { if(error instanceof SearchComparisonError)return {ok:false as const,response:badRequest(error.message,error.code)};throw error; }
 
+  if (context.context.config.operationalCalendar && operationalDayVersion !== "1") return {ok:false as const,response:new Response(JSON.stringify({ok:false,error:{code:"OPERATIONAL_DAY_CLIENT_UPDATE_REQUIRED",message:"Actualiza Opco Client para esta jornada. Tus datos y pendientes se conservan."}}),{status:426,headers:{"Content-Type":"application/json","Cache-Control":"no-store"}})};
   const people = await findAttendancePeople({
     context: context.context,
     personRecordId,
@@ -195,7 +199,7 @@ export async function getAttendanceWorkflowDay({
     ok: true as const,
     data: await withSubjectPresentation({
       appView: context.context.appView,
-      ...captureTimeContract(context.context.config),
+      ...captureTimeContract(context.context.config), ...operationalDayContract(context.context.config),
       ...writeMetadata,
       searchComparison,
       ...(codeSearch.metadata ? { codeSearchField: codeSearch.metadata } : {}),
@@ -309,7 +313,7 @@ export async function saveAttendanceWorkflowDay({
   const results: AttendanceEntryResult[] = [];
   const stateUpdateContext = await getStateUpdateContextForConfig({
     appView: context.context.appView,
-      ...captureTimeContract(context.context.config),
+      ...captureTimeContract(context.context.config), ...operationalDayContract(context.context.config),
     config: attendanceStateUpdateConfig(context.context.config),
     contractId,
   });
@@ -368,7 +372,7 @@ export async function saveAttendanceWorkflowDay({
 
   const data = {
     appView: context.context.appView,
-      ...captureTimeContract(context.context.config),
+      ...captureTimeContract(context.context.config), ...operationalDayContract(context.context.config),
     date: parsed.body.dateValue,
     results,
   };

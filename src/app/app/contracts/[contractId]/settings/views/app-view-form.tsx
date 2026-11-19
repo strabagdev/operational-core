@@ -1,5 +1,6 @@
 "use client";
 
+import {OperationalCalendarEditor} from "./operational-calendar-editor";
 import {SubjectPresentationEditor} from "./subject-presentation-editor";
 
 import { useActionState, useEffect, useMemo, useRef, useState } from "react";
@@ -736,6 +737,7 @@ export function AppViewForm({
 
       {type === "PANEL" ? (
         <PanelConfigFields
+          appViews={appViews}
           activeSection={activePanelSection}
           config={panelConfig}
           datasets={panelDatasets}
@@ -856,6 +858,9 @@ export function AppViewForm({
         />
       )}
 
+      {type === "WORKFLOW" && workflowKey === "attendance" ? <OperationalCalendarEditor
+        initial={initialValues?.config.type==="WORKFLOW" && initialValues.config.workflowKey==="attendance" ? initialValues.config.operationalCalendar : undefined}
+        options={statusField?.options??[]} errors={state.fieldErrors?.operationalCalendar}/>:null}
       {type === "WORKFLOW" ? <details className="rounded-md border border-border p-4">
         <summary className="cursor-pointer text-sm font-medium">Protección de escrituras del destino (opcional)</summary>
         <p className="mt-2 text-sm text-muted-foreground">Sin política se conserva el comportamiento actual. Configura primero una experiencia existente. Usa version 1, mode workflow-only, acceptNewCommands y allowedAppViewIds. Pausa las capturas antes de desarmar.</p>
@@ -909,6 +914,7 @@ function formSnapshot(formData: FormData) {
 }
 
 function PanelConfigFields({
+  appViews = [],
   activeSection,
   config,
   datasets,
@@ -934,6 +940,7 @@ function PanelConfigFields({
   setNotice,
   setPreviewExpanded,
 }: {
+  appViews?: AppViewOption[];
   activeSection: PanelEditorSectionId;
   config: PanelConfig;
   datasets: PanelEditorDataset[];
@@ -1307,6 +1314,7 @@ function PanelConfigFields({
       ) : null}
       {sheet?.kind === "filter" ? (
         <PanelFilterSheet
+          appViews={appViews}
           datasets={datasets}
           entityTypes={entityTypes}
           filters={filters}
@@ -1849,6 +1857,7 @@ function PanelDatasetSheet({
 }
 
 function PanelFilterSheet({
+  appViews = [],
   datasets,
   entityTypes,
   filters,
@@ -1857,6 +1866,7 @@ function PanelFilterSheet({
   open,
   setFilters,
 }: {
+  appViews?: AppViewOption[];
   datasets: PanelEditorDataset[];
   entityTypes: AppViewEntityTypeOption[];
   filters: PanelEditorFilter[];
@@ -1890,6 +1900,7 @@ function PanelFilterSheet({
       {notice ? <p className="text-sm text-destructive" role="alert">{notice}</p> : null}
       {draftFilters[draftIndex] ? (
         <PanelFilterEditor
+          appViews={appViews}
           datasets={datasets}
           entityTypes={entityTypes}
           filter={draftFilters[draftIndex]}
@@ -2032,6 +2043,7 @@ function panelEditorSections({
   metrics,
   modules,
 }: {
+  appViews?: AppViewOption[];
   activeSection: PanelEditorSectionId;
   datasets: PanelEditorDataset[];
   fieldErrors?: Record<string, string[]>;
@@ -2625,6 +2637,7 @@ export function PanelRelationCountEditor({ count, dataset, entityTypes, onChange
 }
 
 export function PanelFilterEditor({
+  appViews = [],
   datasets,
   entityTypes,
   filter,
@@ -2632,6 +2645,7 @@ export function PanelFilterEditor({
   index,
   setFilters,
 }: {
+  appViews?: AppViewOption[];
   datasets: PanelEditorDataset[];
   entityTypes: AppViewEntityTypeOption[];
   filter: PanelEditorFilter;
@@ -2703,18 +2717,22 @@ export function PanelFilterEditor({
       </div>
       {referenceField?.type === "DATE" ? <div className="grid gap-3 border-t border-border pt-3">
         <SelectControl label="Valor inicial" name={`panelFilterInitial:${filter.id}`} value={filter.defaultValue?.type ?? ""}
-          options={[{ label: "Sin valor predeterminado", value: "" }, { label: "Hoy", value: "TODAY" }]}
+          options={[{ label: "Sin valor predeterminado", value: "" }, { label: "Hoy", value: "TODAY" }, { label: "Día operativo actual (vinculado)", value: "OPERATIONAL_TODAY" }]}
           onChange={(value) => {
             const next = { ...filter };
             if (value === "TODAY") next.defaultValue = {
-              type: "TODAY", timeZone: filter.defaultValue?.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
+              type: "TODAY", timeZone: filter.defaultValue?.type === "TODAY" ? filter.defaultValue.timeZone : Intl.DateTimeFormat().resolvedOptions().timeZone,
             };
+            else if(value==="OPERATIONAL_TODAY")next.defaultValue={type:"OPERATIONAL_TODAY",calendarAppViewId:""};
             else delete next.defaultValue;
             updateFilter(next);
           }} />
         {filter.defaultValue?.type === "TODAY" ? <TextControl label="Zona horaria IANA"
           value={filter.defaultValue.timeZone}
           onChange={(timeZone) => updateFilter({ ...filter, defaultValue: { type: "TODAY", timeZone } })} /> : null}
+        {filter.defaultValue?.type==="OPERATIONAL_TODAY" ? <><SelectControl label="Calendario de experiencia" name={`calendarSource:${filter.id}`} value={filter.defaultValue.calendarAppViewId}
+          options={[{label:"Seleccionar experiencia",value:""},...appViews.filter(v=>v.type==="WORKFLOW"&&v.config.type==="WORKFLOW"&&v.config.workflowKey==="attendance"&&v.config.operationalCalendar).map(v=>({label:v.name,value:v.id}))]}
+          onChange={calendarAppViewId=>updateFilter({...filter,defaultValue:{type:"OPERATIONAL_TODAY",calendarAppViewId}})}/><p className="text-sm text-muted-foreground">Zona e inicio heredados de la experiencia vinculada; no hay otra copia de horarios. La fecha manual sigue disponible.</p></>:null}
         <p className="text-sm text-muted-foreground">Hoy se calcula al abrir la experiencia en la zona indicada. La fecha se puede cambiar manualmente.</p>
       </div> : null}
       <div className="flex justify-end">

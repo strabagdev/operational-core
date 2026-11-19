@@ -2041,3 +2041,11 @@ Pendientes antiguos sin captura se conservan para revisión explícita, con su c
 Las altas por editor/API/import genéricos de un destino con captura automática requieren un workflow compatible. Las actualizaciones de otros campos conservan el DATETIME y siguen sus permisos/versiones habituales; intentar modificar/eliminar el valor automático falla CAPTURE_TIME_IMMUTABLE. El importador no lo expone. Otros workflows no pueden eludir esta protección. Desactivar una AppView no desprotege su historial. El campo vinculado no puede desactivarse ni cambiar a un rol incompatible.
 
 Attendance ordena sus registros por el DATETIME acreditado, descendente, con desempate por identidad, sin usarlo como identidad. PANEL conserva sus ordenamientos configurables; una columna DATETIME puede configurar `captureTime:{timeZone,operationalDateFieldId?}` para presentación compacta y detalle. Requiere la capacidad aditiva PANEL `capture-time-v1`; el guard existente rechaza/proyecta consumidores incompatibles. Los valores y los cálculos no se alteran.
+
+
+## Calendario operativo opcional — local 2026-11-19
+
+Definición Attendance opcional, DATE automático/manual, franjas SELECT sin sustitución y
+PANEL vinculado: [OPERATIONAL_CALENDAR.md](./OPERATIONAL_CALENDAR.md). Transporte único
+eventOccurredAt y ruta versionada; pendientes conservados. Sin migración, publicación ni
+configuración productiva. Activación captureTime sigue pendiente.

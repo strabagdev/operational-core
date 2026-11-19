@@ -1,7 +1,7 @@
 import { panelConsumerFeatures } from "@/lib/panel-consumer";
 import { revisionBoundRead } from "@/lib/revision-bound-read";
 import { requireApiContractAccess } from "@/lib/api-auth";
-import { getApiContractViews, serializeApiAppViews, projectPanelViewsForConsumer } from "@/lib/api-app-views";
+import { getApiContractViews, serializeApiAppViews, resolveApiOperationalCalendars, projectPanelViewsForConsumer } from "@/lib/api-app-views";
 import { success } from "@/lib/api-response";
 
 export const runtime = "nodejs";
@@ -23,7 +23,7 @@ async function legacyGET(
   });
 
   return success({
-    views: projectPanelViewsForConsumer(serializeApiAppViews(views), panelConsumerFeatures(request.headers.get("Accept"))),
+    views: projectPanelViewsForConsumer(await resolveApiOperationalCalendars(serializeApiAppViews(views),contractId), panelConsumerFeatures(request.headers.get("Accept"))),
   });
 }
 

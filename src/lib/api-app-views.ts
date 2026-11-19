@@ -1,3 +1,4 @@
+import { resolvePanelOperationalFilters, PanelOperationalCalendarError } from "./panel-operational-calendar";
 import type { AppView, AppViewType } from "@prisma/client";
 
 import { getEffectiveAppViewsForUserContract } from "./app-view-access";
@@ -79,4 +80,16 @@ export function projectPanelViewsForConsumer(views: SerializedApiAppView[], cons
     return { ...view, panelCompatibility: compatibility,
       ...(compatibility.status === "update-required" ? { config: panelUpdatePlaceholder(config) } : {}) };
   });
+}
+
+export async function resolveApiOperationalCalendars(views:SerializedApiAppView[],contractId:string) {
+ return Promise.all(views.map(async view=>{
+   if(view.type!=="PANEL")return view;
+   const config={...view.config,type:"PANEL"}as import("./app-views").PanelConfig;
+   if(!config.filters.some(f=>f.defaultValue?.type==="OPERATIONAL_TODAY"))return view;
+   let resolved;
+   try {resolved={...config,filters:await resolvePanelOperationalFilters(config.filters,contractId)};}
+   catch(error){if(error instanceof PanelOperationalCalendarError)return view;throw error;}
+   return{...view,config:{...view.config,filters:resolved.filters},configRevision:panelConfigRevision(resolved)};
+ }));
 }

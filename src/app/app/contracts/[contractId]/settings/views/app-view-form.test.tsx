@@ -2248,7 +2248,7 @@ it("edits TODAY and serializes its relative descriptor rather than a fixed date"
   expect(html).toContain("Valor inicial"); expect(html).toContain("Hoy"); expect(html).toContain("Zona horaria IANA"); expect(html).toContain("America/Santiago");
   const zone = findEditorElement(editor, element => element.props.label === "Zona horaria IANA");
   (zone?.props.onChange as (value: string) => void)("Asia/Tokyo");
-  expect(saved[0].defaultValue?.timeZone).toBe("Asia/Tokyo");
+  expect(saved[0].defaultValue).toMatchObject({type:"TODAY",timeZone:"Asia/Tokyo"});
   const rebuilt = buildPanelConfig({ columns: 12, rowHeight: 8, distribution: "AUTO", datasets: config.datasets, filters: saved, modules: config.modules, metrics: [] });
   const wireConfig = JSON.parse(JSON.stringify(rebuilt));
   delete wireConfig.type; // The normal panelConfig FormData omits the renderer discriminator.
