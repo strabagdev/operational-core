@@ -87,6 +87,7 @@ function input(required: boolean, overrides: Record<string, unknown> = {}) {
 
 function tx() {
   return {
+    appView: {findMany:vi.fn(async()=>[])},
     entityField: {
       findUnique: vi.fn(async ({where}) => {
         const authorized = await entityTypeFindFirst.mock.results.at(-1)?.value;

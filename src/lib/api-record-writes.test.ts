@@ -18,6 +18,7 @@ import {
 import { prisma } from "@/lib/prisma";
 
 const prismaMock = vi.hoisted(() => ({
+  appView: {findMany:vi.fn(async()=>[])},
   $queryRaw: vi.fn(),
   $transaction: vi.fn(),
   apiIdempotencyKey: {

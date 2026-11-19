@@ -2027,3 +2027,17 @@ use an otherwise current receipt as an online admission bypass. All compatible v
 negotiation retain their policy. This does not rotate epoch, alter the vector or introduce a new
 cache/queue. The route uses no-store and Vary:Accept. Responses/data already admitted before the guard
 was deployed, or rendered without a subsequent remote check, cannot be withdrawn retroactively.
+
+## Captura automática opcional de Attendance (candidato local 2026-11-18)
+
+Attendance puede configurar `captureTime: {fieldId, timeZone}`. El editor permite elegir un DATETIME simple, opcional, sin default ni unicidad y una zona IANA (ejemplo America/Santiago). DATE conserva exactamente el día operativo y la identidad existentes. Omitir captureTime mantiene el comportamiento anterior. Un campo con valores anteriores no administrados no puede vincularse como captura; no hay backfill. Una vinculación con historial no puede eliminarse ni cambiar de campo/destino.
+
+La confirmación definitiva del alta genera un solo `eventOccurredAt` UTC ISO con milisegundos. Con advertencia se genera en “Confirmar uno adicional”; cancelar no crea intención. El mismo instante y clientRequestId persisten en el outbox compartido antes de enviar. Ningún reintento recalcula la hora. Core sólo lo copia al DATETIME en CREATED; UPDATED y UNCHANGED devuelven el valor original, incluido null histórico. `createdAt` y `updatedAt` siguen siendo marcas del servidor y no acreditan captura. No se corrigen relojes del dispositivo.
+
+El contrato de lectura y ACK incluye `captureTime:{version:1,fieldId,timeZone,value,source}`, donde source sólo es DEVICE_CONFIRMATION cuando existe valor. El comando envía `captureTime:{version:1,fieldId,timeZone}` y el instante en eventOccurredAt; no se duplica como extraValue. La ruta dedicada `/api/v1/contracts/:contractId/views/:appViewId/workflow/state-update/capture` evita que un Core anterior interprete parcialmente el comando (404/405, sin fallback). Core actualizado rechaza comandos antiguos/incompletos contra una experiencia habilitada con CAPTURE_TIME_REVIEW_REQUIRED o CAPTURE_TIME_REQUIRED. El despliegue debe ser Core → Client → configuración opcional; no activar durante una cola antigua sin revisarla.
+
+Pendientes antiguos sin captura se conservan para revisión explícita, con su clave y datos; no se les asigna la hora de sincronización. Los idempotency receipts completados siguen siendo reejecutables. No hay migraciones de BD, nueva cola, cambios de identidad, política de repetición ni motor de sync.
+
+Las altas por editor/API/import genéricos de un destino con captura automática requieren un workflow compatible. Las actualizaciones de otros campos conservan el DATETIME y siguen sus permisos/versiones habituales; intentar modificar/eliminar el valor automático falla CAPTURE_TIME_IMMUTABLE. El importador no lo expone. Otros workflows no pueden eludir esta protección. Desactivar una AppView no desprotege su historial. El campo vinculado no puede desactivarse ni cambiar a un rol incompatible.
+
+Attendance ordena sus registros por el DATETIME acreditado, descendente, con desempate por identidad, sin usarlo como identidad. PANEL conserva sus ordenamientos configurables; una columna DATETIME puede configurar `captureTime:{timeZone,operationalDateFieldId?}` para presentación compacta y detalle. Requiere la capacidad aditiva PANEL `capture-time-v1`; el guard existente rechaza/proyecta consumidores incompatibles. Los valores y los cálculos no se alteran.

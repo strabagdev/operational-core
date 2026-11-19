@@ -38,6 +38,7 @@ function binding(config: unknown) {
   return { source: config.sourceEntityTypeId, target: config.targetEntityTypeId, subject: attendance ? config.personFieldId : config.subjectFieldId,
     date: uniqueness === "subject-date" ? config.dateFieldId : null, uniqueness,
     ...(["MULTIPLE", "MULTIPLE_WITH_WARNING"].includes(String(repeat)) ? {repetitionPolicy:repeat} : {}),
+    ...(config.captureTime ? {captureTime:config.captureTime} : {}),
     extras: [...new Set([...strings(attendance ? config.contextFieldIds : config.extraFieldIds), ...(attendance && typeof config.observationFieldId === "string" ? [config.observationFieldId] : [])])].sort() };
 }
 /** The same physical subject/date identity cannot simultaneously promise one row and independent events. */
@@ -52,7 +53,7 @@ export async function assertAttendanceRepetitionWriters(tx: Client, config: unkn
     const views = await tx.appView.findMany({ where: { type: "WORKFLOW", active: true, config: { path: ["targetEntityTypeId"], equals: String(config.targetEntityTypeId) } }, select: { id: true, config: true } });
     if (adapted && viewId) {
         const live = views.find(view => view.id === viewId);
-        if (!live || !object(live.config) || (live.config.workflowKey ?? live.config.workflow) !== "attendance" || (live.config.repetitionPolicy ?? "ONE_PER_DAY") !== policy || live.config.personFieldId !== subject || live.config.dateFieldId !== config.dateFieldId || live.config.sourceEntityTypeId !== config.sourceEntityTypeId || live.config.statusFieldId !== (Array.isArray(config.stateFields) ? config.stateFields[0]?.fieldId : undefined) || JSON.stringify(binding(live.config).extras) !== JSON.stringify(binding(config).extras))
+        if (!live || !object(live.config) || (live.config.workflowKey ?? live.config.workflow) !== "attendance" || (live.config.repetitionPolicy ?? "ONE_PER_DAY") !== policy || live.config.personFieldId !== subject || live.config.dateFieldId !== config.dateFieldId || live.config.sourceEntityTypeId !== config.sourceEntityTypeId || live.config.statusFieldId !== (Array.isArray(config.stateFields) ? config.stateFields[0]?.fieldId : undefined) || JSON.stringify(binding(live.config).extras) !== JSON.stringify(binding(config).extras) || JSON.stringify(live.config.captureTime??null)!==JSON.stringify(config.captureTime??null))
             throw new WorkflowWritePolicyError("ATTENDANCE_POLICY_CHANGED", "La configuración cambió antes de guardar. Revisa la intención conservada; no se modificó ningún registro.");
     }
     for (const view of views) {
@@ -177,7 +178,7 @@ export async function validateWritePolicyChange(tx: Client, contractId: string, 
 }
 
 export function isWorkflowWriteRejectionCode(code: string) {
-  return ["WORKFLOW_WRITES_PAUSED","WORKFLOW_NOT_AUTHORIZED","WORKFLOW_COMMAND_INCOMPATIBLE","WORKFLOW_CONTEXT_REQUIRED","AMBIGUOUS_WORKFLOW_WRITE_POLICY","INVALID_WORKFLOW_WRITE_POLICY"].includes(code);
+  return ["CAPTURE_TIME_REVIEW_REQUIRED","CAPTURE_TIME_CONFIG_CHANGED","CAPTURE_TIME_REQUIRED","WORKFLOW_WRITES_PAUSED","WORKFLOW_NOT_AUTHORIZED","WORKFLOW_COMMAND_INCOMPATIBLE","WORKFLOW_CONTEXT_REQUIRED","AMBIGUOUS_WORKFLOW_WRITE_POLICY","INVALID_WORKFLOW_WRITE_POLICY"].includes(code);
 }
 /** Only this request's unexecuted claim; completed receipts are never removed. */
 export async function releaseRejectedWorkflowClaim(tx: Client, appId: string, contractId: string, clientRequestId: string | undefined, claim: {operation:string;requestHash:string} | null) {

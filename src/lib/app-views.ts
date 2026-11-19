@@ -1,3 +1,4 @@
+import { validCaptureZone, parseCaptureTime, assertCaptureFieldRole, captureTimeFieldIds, validateCaptureBindingChange, type CaptureTimeConfig } from "./capture-time";
 import {attendanceRepetitionPolicies, type AttendanceRepetitionPolicy} from "./attendance-repetition";
 import {createAuditEvent} from "./audit";
 import { assertAttendanceRepetitionWriters, lockWritePolicyTargets, parseWorkflowWritePolicy, validateWritePolicyChange, WorkflowWritePolicyError, type WorkflowWritePolicy } from "./workflow-write-policy";
@@ -243,6 +244,7 @@ export type PanelModule = {
             fieldId: string;
             label?: string;
             valueDisplay?: ReportSelectValueDisplay;
+            captureTime?: {timeZone:string;operationalDateFieldId?:string};
             format?: string;
           }>;
           searchable?: boolean;
@@ -363,6 +365,7 @@ const defaultReportTimeFilter = {
 } as const satisfies ReportTimeFilterConfig;
 
 export type AttendanceWorkflowConfig = {
+  captureTime?: CaptureTimeConfig;
   repetitionPolicy?: AttendanceRepetitionPolicy;
   workflowWritePolicy?: WorkflowWritePolicy;
       type: "WORKFLOW";
@@ -380,6 +383,8 @@ export type AttendanceWorkflowConfig = {
     };
 
 export type StateUpdateWorkflowConfig = {
+  /** Internal automatic capture binding supplied by the Attendance adapter. */
+  captureTime?: CaptureTimeConfig;
   /** Internal Attendance adapter capability; never configurable by STATE_UPDATE. */
   attendanceRepetitionPolicy?: AttendanceRepetitionPolicy;
   workflowWritePolicy?: WorkflowWritePolicy;
@@ -431,6 +436,8 @@ export function getAppViewInput(formData: FormData) {
     }),
     rawConfig: {
       repetitionPolicy: formData.get("repetitionPolicy") || undefined,
+      captureTimeSpecified: formData.has("captureTimeFieldId"),
+      captureTime: formData.get("captureTimeFieldId") ? { fieldId: formData.get("captureTimeFieldId"), timeZone: formData.get("captureTimeZone") } : undefined,
       entityTypeId: formData.get("entityTypeId"),
       entityTypeIds: formData.getAll("entityTypeIds"),
       groupByFieldKey: formData.get("groupByFieldKey"),
@@ -604,8 +611,9 @@ export async function createAppView(
       type: input.common.type,
     },
   });
-  if(config.type==="WORKFLOW"&&config.workflowKey==="attendance"&&config.repetitionPolicy&&config.repetitionPolicy!=="ONE_PER_DAY") return prisma.$transaction(async tx=>{
+  if(config.type==="WORKFLOW"&&config.workflowKey==="attendance"&&((config.repetitionPolicy&&config.repetitionPolicy!=="ONE_PER_DAY")||config.captureTime)) return prisma.$transaction(async tx=>{
     await lockWritePolicyTargets(tx,[config.targetEntityTypeId],true);
+    await validateCaptureBindingChange(tx,{},config);
     await assertAttendanceRepetitionWriters(tx,config);
     return create(tx);
   });
@@ -627,6 +635,7 @@ export async function updateAppView(
   const config = await validateAppViewConfig({
     contractId: authorized.contract.id,
     rawConfig: input.common.type === "WORKFLOW" ? { ...input.rawConfig,
+      ...(!input.rawConfig.captureTimeSpecified ? {captureTime:(authorized.appView.config as {captureTime?:CaptureTimeConfig})?.captureTime}:{}),
       ...(!input.rawConfig.workflowWritePolicySpecified ? {workflowWritePolicy:(authorized.appView.config as {workflowWritePolicy?:WorkflowWritePolicy})?.workflowWritePolicy}:{}),
       ...(!input.rawConfig.codeSearchSpecified ? {codeSearch:(authorized.appView.config as {codeSearch?:{fieldId:string}})?.codeSearch}:{}),
       ...(!input.rawConfig.subjectPresentationSpecified ? {subjectPresentation:(authorized.appView.config as {subjectPresentation?:SubjectPresentationConfig})?.subjectPresentation}:{})
@@ -636,6 +645,7 @@ export async function updateAppView(
 
   return prisma.$transaction(async tx => {
     const previousPolicy = await validateWritePolicyChange(tx, contractId, appViewId, authorized.appView.config, config, input.rawConfig.workflowWritePolicyDisarm);
+    if ((config.type==="WORKFLOW"&&config.workflowKey==="attendance"&&config.captureTime) || (authorized.appView.config as {captureTime?:unknown})?.captureTime) await validateCaptureBindingChange(tx,authorized.appView.config,config);
     if(config.type==="WORKFLOW"&&config.workflowKey==="attendance"&&config.repetitionPolicy!==undefined) await assertAttendanceRepetitionWriters(tx,config,appViewId);
     const lockedView=config.type==="WORKFLOW"&&config.workflowKey==="attendance" ? await tx.appView.findUnique({where:{id:appViewId},select:{config:true}}) : null;
     const previousConfig=(lockedView?.config??authorized.appView.config) as {repetitionPolicy?:string};
@@ -1110,6 +1120,7 @@ async function validateAppViewConfig({
         sourceEntityTypeId: config.sourceEntityTypeId,
         targetEntityTypeId: config.targetEntityTypeId,
         ...(config.repetitionPolicy ? { repetitionPolicy: config.repetitionPolicy } : {}),
+        ...(config.captureTime ? { captureTime: config.captureTime } : {}),
         personFieldId: config.personFieldId,
         dateFieldId: config.dateFieldId,
         statusFieldId: config.statusFieldId,
@@ -1423,6 +1434,7 @@ const workflowBaseConfigInputSchema = z.object({
 });
 
 const attendanceWorkflowConfigInputSchema = workflowBaseConfigInputSchema.extend({
+  captureTime: z.custom<CaptureTimeConfig>(value => { try { return !!parseCaptureTime(value); } catch { return false; } }, "Selecciona un DATETIME y una zona IANA válidos.").optional(),
   repetitionPolicy: z.enum(attendanceRepetitionPolicies).optional(),
   workflowKey: z.literal("attendance"),
   personFieldId: z.string().trim().min(1, "Selecciona el campo Persona."),
@@ -1654,6 +1666,7 @@ const panelTableModuleVisualizationSchema = z.object({
       fieldId: z.string().trim().min(1),
       label: z.string().trim().min(1).optional(),
       valueDisplay: z.enum(["LABEL", "INTERNAL_VALUE"]).optional(),
+      captureTime: z.object({timeZone:z.string().refine(validCaptureZone,"Zona IANA inválida"),operationalDateFieldId:z.string().min(1).optional()}).strict().optional(),
       format: z.string().trim().min(1).optional(),
     }).strict()).min(1, "Selecciona al menos una columna."),
     searchable: z.boolean().optional(),
@@ -1991,6 +2004,7 @@ function parseWorkflowConfigInput(rawConfig: unknown) {
   return attendanceWorkflowConfigInputSchema.parse({
     ...raw,
     contextFieldIds: uniqueStrings(stringArray(raw.contextFieldIds)),
+    ...(raw.captureTime !== undefined ? {captureTime: parseCaptureTime(raw.captureTime)} : {}),
     defaultCheckInOptionId: raw.defaultCheckInOptionId ?? raw.presentOptionId,
     workflowKey,
   });
@@ -2405,6 +2419,13 @@ async function validatePanelAppViewConfig({
 
     if (panelModule.visualization.type === "TABLE") {
       for (const column of panelModule.visualization.config.columns) {
+        if (column.captureTime) {
+          const dataset=config.datasets.find(d=>d.id===panelModule.datasetId)!;
+          const fields=datasetFieldsById.get(dataset.id)!;
+          const managed=await captureTimeFieldIds(client,dataset.source.entityTypeId);
+          if (fields.get(column.fieldId)?.type!=="DATETIME" || !managed.includes(column.fieldId) || column.captureTime.operationalDateFieldId && (!datasetFieldIds.has(column.captureTime.operationalDateFieldId) || fields.get(column.captureTime.operationalDateFieldId)?.type!=="DATE")) throw new AppViewConfigError("La hora compacta requiere el DATETIME automático y un DATE operativo del dataset.","modules");
+        }
+
         if (!datasetFieldIds.has(column.fieldId)) {
           const moduleName = panelModule.title ?? panelModule.id;
           const columnName = column.label ?? fieldNamesById.get(column.fieldId) ?? column.fieldId;
@@ -2856,6 +2877,11 @@ function validateAttendanceAppViewFields({
 
   if (dateField.type !== "DATE") {
     throw new AppViewConfigError("El campo Fecha debe ser de tipo fecha.", "dateFieldId");
+  }
+  if (config.captureTime) {
+    const field = requireActiveTargetField(targetFields, config.captureTime.fieldId, "Hora de captura");
+    assertCaptureFieldRole(field);
+    if (field.type !== "DATETIME" || field.multiple || semanticFieldIds.has(field.id) || config.contextFieldIds.includes(field.id)) throw new AppViewConfigError("La captura requiere un DATETIME simple distinto de los demás roles.", "captureTime");
   }
 
   if (statusField.type !== "SELECT") {

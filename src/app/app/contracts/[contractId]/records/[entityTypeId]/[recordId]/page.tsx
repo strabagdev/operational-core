@@ -1,3 +1,5 @@
+import { captureTimeFieldIds } from "@/lib/capture-time";
+import { prisma as capturePrisma } from "@/lib/prisma";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import type { Prisma } from "@prisma/client";
@@ -162,7 +164,7 @@ export default async function EntityRecordDetailPage({
         </CardHeader>
         <CardContent>
           {isEditing ? (
-            <RecordForm
+            <RecordForm automaticCaptureFieldIds={await captureTimeFieldIds(capturePrisma,entityTypeId)}
               action={updateEntityRecordAction.bind(
                 null,
                 contractId,

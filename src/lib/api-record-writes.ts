@@ -1,3 +1,4 @@
+import { protectCaptureValues } from "./capture-time";
 import { assertGenericEntityWritesAllowed, WorkflowWritePolicyError } from "./workflow-write-policy";
 import { createHash } from "node:crypto";
 import { Prisma } from "@prisma/client";
@@ -713,6 +714,7 @@ async function createRecordInTransaction({
   tx: Prisma.TransactionClient;
   userId: string;
 }) {
+  mutation.values = await protectCaptureValues(tx,entity.id,mutation.values);
   const displayName = displayNameOverride || await buildEntityRecordDisplayName({
     client: tx,
     contractId: entity.contractId,
@@ -823,6 +825,7 @@ async function updateRecordInTransaction({
   tx: Prisma.TransactionClient;
   userId: string;
 }) {
+  mutation.values = await protectCaptureValues(tx,entity.id,mutation.values,existingRecord.id);
   const nextDisplayName = displayNameOverride || await buildEntityRecordDisplayName({
     client: tx,
     contractId: entity.contractId,

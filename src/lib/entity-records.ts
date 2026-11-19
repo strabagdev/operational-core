@@ -1,3 +1,4 @@
+import { protectCaptureValues } from "./capture-time";
 import { assertGenericEntityWritesAllowed, assertRecordDeletionAllowed, assertRelationMutationAllowed } from "./workflow-write-policy";
 import { formatConfiguredDecimal } from "./decimal-precision";
 import { Prisma, type EntityField, type EntityFieldType } from "@prisma/client";
@@ -13,6 +14,7 @@ import { orderEntityFields } from "@/lib/entity-field-order";
 import { buildEntityRecordDisplayName } from "@/lib/entity-record-display";
 import {
   FieldValidationError,
+  fieldInputName,
   getRelationConfig,
   getPrimaryDisplayField,
   getRecordDisplayName,
@@ -956,6 +958,7 @@ export async function createEntityRecord(
 
   return prisma.$transaction(async (tx) => {
     await assertGenericEntityWritesAllowed(tx, [authorized.entityType.id]);
+    await protectCaptureValues(tx,authorized.entityType.id,values);
     const record = await tx.entityRecord.create({
       data: {
         entityTypeId: authorized.entityType.id,
@@ -1023,12 +1026,13 @@ export async function updateEntityRecord(
 
     if (!authorized) return null;
 
-    const values = await validateEntityValues({
+    let values = await validateEntityValues({
       fields: authorized.entityType.fields,
       formData,
       mode: "edit",
       recordId: authorized.record.id,
     });
+    values = await protectCaptureValues(tx,entityTypeId,values,recordId,undefined,authorized.entityType.fields.filter(f=>formData.has(fieldInputName(f.id))).map(f=>f.id));
     const relations = await validateRelationValues({
       contractId: authorized.contract.id,
       entityTypeId: authorized.entityType.id,

@@ -52,10 +52,12 @@ export function RecordForm({
   relationOptions = {},
   relations = [],
   fieldErrors = {},
+  automaticCaptureFieldIds = [],
 }: {
   action: (formData: FormData) => void | Promise<void>;
   formValues?: Record<string, string[]>;
   fields: Field[];
+  automaticCaptureFieldIds?: string[];
   values?: ExistingValue[];
   submitLabel: string;
   relationOptions?: Record<string, RelationOption[]>;
@@ -66,7 +68,10 @@ export function RecordForm({
     <form action={action} className="grid gap-5">
       {fields.length > 0 ? (
         fields.map((field) => (
-          <DynamicField
+          automaticCaptureFieldIds.includes(field.id) ? <div key={field.id} className="grid gap-2 text-sm">
+            <span>{field.name} · Automático</span><span>{getExistingFormValue(field.id,values)?.dateValue?.toISOString() ?? "Hora de captura no disponible"}</span>
+            <input type="hidden" name={`field_${field.id}`} value={getExistingFormValue(field.id,values)?.dateValue?.toISOString() ?? ""}/>
+          </div> : <DynamicField
             field={field}
             key={field.id}
             relationOptions={relationOptions[field.id] ?? []}

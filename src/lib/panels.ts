@@ -1,3 +1,4 @@
+import { captureTimeFieldIds } from "./capture-time";
 import { panelCompatibility, PANEL_UPDATE_MESSAGE } from "./panel-consumer";
 import { apiError } from "./api-response";
 import { createHash } from "node:crypto";
@@ -31,6 +32,7 @@ export type PanelQuery = {
 };
 
 type PanelField = {
+  captureTime?: {source:"DEVICE_CONFIRMATION"};
   config: Prisma.JsonValue | null;
   id: string;
   isActive: boolean;
@@ -331,6 +333,10 @@ async function executePanelDataset({
   }
 
   const fieldsById = new Map(entity.fields.map((field) => [field.id, field as PanelField]));
+  if (config.modules.some(m=>m.datasetId===dataset.id && m.visualization.type==="TABLE" && m.visualization.config.columns.some(c=>c.captureTime))) {
+    const managed=await captureTimeFieldIds(prisma,entity.id);
+    for(const id of managed){const f=fieldsById.get(id);if(f)f.captureTime={source:"DEVICE_CONFIRMATION"};}
+  }
   const relatedSelections = dataset.relatedFields ?? [];
   const relationTargetIds = Array.from(new Set(relatedSelections.map((selection) => {
     const relation = fieldsById.get(selection.relationFieldId);
@@ -691,6 +697,7 @@ function panelDatasetResponse({
             value: option.value,
           })),
         type: field.type,
+        ...(field.captureTime?{captureTime:field.captureTime}:{}),
         ...(field.emptyLabel ? { emptyLabel: field.emptyLabel } : {}),
       })),
     },

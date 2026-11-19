@@ -271,6 +271,9 @@ export function AppViewForm({
       ? initialValues.config.observationFieldId ?? ""
       : ""),
   );
+  const initialCapture = initialValues?.config.type === "WORKFLOW" && initialValues.config.workflowKey === "attendance" ? initialValues.config.captureTime : undefined;
+  const [captureTimeFieldId, setCaptureTimeFieldId] = useState(valueFromState(state,"captureTimeFieldId", initialCapture?.fieldId ?? ""));
+  const [captureTimeZone, setCaptureTimeZone] = useState(valueFromState(state,"captureTimeZone", initialCapture?.timeZone ?? "UTC"));
   const [contextFieldIds, setContextFieldIds] = useState<string[]>(
     valuesFromState(state, "contextFieldIds") ??
       (initialValues?.config.type === "WORKFLOW" && initialValues.config.workflowKey === "attendance"
@@ -761,6 +764,10 @@ export function AppViewForm({
       ) : (
         <ConfigFields
           activeBoardFields={activeBoardFields}
+          captureTimeFieldId={captureTimeFieldId}
+          captureTimeZone={captureTimeZone}
+          setCaptureTimeFieldId={setCaptureTimeFieldId}
+          setCaptureTimeZone={setCaptureTimeZone}
           repetitionPolicy={repetitionPolicy}
           setRepetitionPolicy={setRepetitionPolicy}
           contextFieldIds={contextFieldIds}
@@ -3347,6 +3354,13 @@ export function PanelModuleEditor({
                       options={panelFormatOptions(field.type)}
                       value={column?.format ?? ""}
                     />
+                    {field.type === "DATETIME" ? <>
+                      <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={!!column.captureTime} onChange={e=>updateColumns(replaceAt(columns,columnIndex,{...column,captureTime:e.target.checked?{timeZone:"UTC"}:undefined}))}/>Hora de captura compacta</label>
+                      {column.captureTime ? <>
+                        <TextControl label="Zona IANA de captura" value={column.captureTime.timeZone} onChange={timeZone=>updateColumns(replaceAt(columns,columnIndex,{...column,captureTime:{...column.captureTime!,timeZone}}))}/>
+                        <SelectControl label="DATE operativo para comparar" name={`panelCaptureDate:${module.id}:${field.id}`} value={column.captureTime.operationalDateFieldId??""} options={[{label:"Sin comparación de día",value:""},...datasetFields.filter(f=>f.type==="DATE").map(f=>({label:f.name,value:f.id}))]} onChange={operationalDateFieldId=>updateColumns(replaceAt(columns,columnIndex,{...column,captureTime:{...column.captureTime!,operationalDateFieldId:operationalDateFieldId||undefined}}))}/>
+                      </>:null}
+                    </>:null}
                     {field.type === "SELECT" || field.type === "MULTISELECT" ? (
                       <SelectControl
                         label="Mostrar valores como"
@@ -3770,6 +3784,7 @@ function PanelErrorSummary({
 }
 
 function ConfigFields({
+  captureTimeFieldId, captureTimeZone, setCaptureTimeFieldId, setCaptureTimeZone,
   activeBoardFields,
   appViews,
   repetitionPolicy,
@@ -3859,6 +3874,10 @@ function ConfigFields({
 }: {
   activeBoardFields: AppViewEntityTypeOption["fields"];
   appViews: AppViewOption[];
+  captureTimeFieldId: string;
+  captureTimeZone: string;
+  setCaptureTimeFieldId: (value:string)=>void;
+  setCaptureTimeZone: (value:string)=>void;
   repetitionPolicy: string;
   setRepetitionPolicy: (value:string)=>void;
   contextFieldIds: string[];
@@ -4113,6 +4132,18 @@ function ConfigFields({
         ) : (
           <div className="grid gap-3">
             <div className="grid gap-3 sm:grid-cols-2">
+              <label className="grid gap-2 text-sm">Campo automático de captura (opcional)
+                <select name="captureTimeFieldId" value={captureTimeFieldId} onChange={e=>setCaptureTimeFieldId(e.target.value)} className="min-h-11 rounded-md border px-3">
+                  <option value="">Sin captura automática</option>
+                  {activeTargetFields.filter(f=>f.type==="DATETIME" && !f.multiple).map(f=><option key={f.id} value={f.id}>{f.name}</option>)}
+                </select>
+                <span>Registra la confirmación del dispositivo. No cambia el día operativo ni la hora al editar.</span>
+                <FieldError errors={fieldErrors?.captureTime}/>
+              </label>
+              <label className="grid gap-2 text-sm">Zona horaria de presentación (IANA)
+                <input name="captureTimeZone" value={captureTimeZone} onChange={e=>setCaptureTimeZone(e.target.value)} disabled={!captureTimeFieldId} placeholder="Zona IANA, por ejemplo America/Santiago" className="min-h-11 rounded-md border px-3" />
+                <span>Se almacena un instante UTC; esta zona sólo determina su presentación.</span>
+              </label>
               <label className="grid gap-2 text-sm">Repetición de registros
                 <select name="repetitionPolicy" value={repetitionPolicy} onChange={event=>setRepetitionPolicy(event.target.value)} className="min-h-11 rounded-md border px-3">
                   <option value="ONE_PER_DAY">Uno por día</option>

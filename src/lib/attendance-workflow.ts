@@ -1,3 +1,4 @@
+import { captureTimeContract, captureTimeRead } from "./capture-time";
 import {attendanceRepetitionPolicy, allowsAttendanceRepetition, type AttendanceRepetitionPolicy} from "./attendance-repetition";
 import { releaseRejectedWorkflowClaim, isWorkflowWriteRejectionCode, workflowWriteMetadata, parseWorkflowWriteCommand, WorkflowWritePolicyError, type WorkflowWriteCommand } from "./workflow-write-policy";
 import {withSubjectPresentation} from "./subject-presentation-core";
@@ -194,6 +195,7 @@ export async function getAttendanceWorkflowDay({
     ok: true as const,
     data: await withSubjectPresentation({
       appView: context.context.appView,
+      ...captureTimeContract(context.context.config),
       ...writeMetadata,
       searchComparison,
       ...(codeSearch.metadata ? { codeSearchField: codeSearch.metadata } : {}),
@@ -212,6 +214,7 @@ export async function getAttendanceWorkflowDay({
           dailyRecordCount: attendance?.dailyRecordCount ?? 0,
           attendance: attendance
             ? {
+                ...captureTimeRead(context.context.config,attendance.record.values),
                 ...(attendance.eventOccurredAt ? {eventOccurredAt:attendance.eventOccurredAt} : {}),
                 observation: attendance.observation,
                 contextValues: attendance.contextValues,
@@ -223,7 +226,7 @@ export async function getAttendanceWorkflowDay({
             : null,
         };
       }),
-      ...(allowsAttendanceRepetition(context.context.config.repetitionPolicy) && personRecordId ? {dailyRecords:attendances.map(a=>({person:people.find(p=>p.id===a.personRecordId)!,attendance:{...(a.eventOccurredAt?{eventOccurredAt:a.eventOccurredAt}:{}),recordId:a.record.id,updatedAt:a.record.updatedAt.toISOString(),statusOptionId:a.statusOption?.id??null,statusLabel:a.statusOption?.label??null,observation:a.observation,contextValues:a.contextValues}}))} : {}),
+      ...(allowsAttendanceRepetition(context.context.config.repetitionPolicy) && personRecordId ? {dailyRecords:attendances.map(a=>({person:people.find(p=>p.id===a.personRecordId)!,attendance:{...captureTimeRead(context.context.config,a.record.values),...(a.eventOccurredAt?{eventOccurredAt:a.eventOccurredAt}:{}),recordId:a.record.id,updatedAt:a.record.updatedAt.toISOString(),statusOptionId:a.statusOption?.id??null,statusLabel:a.statusOption?.label??null,observation:a.observation,contextValues:a.contextValues}}))} : {}),
       latest,
       sourceEntityType: {
         id: context.context.sourceEntityType.id,
@@ -306,6 +309,7 @@ export async function saveAttendanceWorkflowDay({
   const results: AttendanceEntryResult[] = [];
   const stateUpdateContext = await getStateUpdateContextForConfig({
     appView: context.context.appView,
+      ...captureTimeContract(context.context.config),
     config: attendanceStateUpdateConfig(context.context.config),
     contractId,
   });
@@ -364,6 +368,7 @@ export async function saveAttendanceWorkflowDay({
 
   const data = {
     appView: context.context.appView,
+      ...captureTimeContract(context.context.config),
     date: parsed.body.dateValue,
     results,
   };
@@ -575,6 +580,7 @@ async function findExistingAttendances({
             in: [
               config.dateFieldId,
               config.statusFieldId,
+              ...(config.captureTime ? [config.captureTime.fieldId] : []),
               ...contextFields.map((field) => field.id),
               ...(config.observationFieldId ? [config.observationFieldId] : []),
             ],
@@ -614,7 +620,7 @@ async function findExistingAttendances({
     const statusValue = record.values.find((value) => value.entityFieldId === config.statusFieldId)?.textValue;
 
     const attendance: ExistingAttendance = {
-      ...(allowsAttendanceRepetition(config.repetitionPolicy)?{eventOccurredAt:attendanceEventTime(record)}:{}),
+      ...(allowsAttendanceRepetition(config.repetitionPolicy)?{eventOccurredAt:config.captureTime ? record.values.find(v=>v.entityFieldId===config.captureTime!.fieldId)?.dateValue?.toISOString() : attendanceEventTime(record)}:{}),
       observation: config.observationFieldId
         ? record.values.find((value) => value.entityFieldId === config.observationFieldId)?.textValue ?? null
         : null,
@@ -782,6 +788,7 @@ async function getLatestAttendanceRecords({
   statusOptionsByValue: Map<string, AttendanceStatusOption>;
   targetEntityTypeId: string;
 }) {
+  const orderedIds = config.captureTime ? await prisma.$queryRaw<Array<{id:string}>>(Prisma.sql`SELECT r.id FROM "EntityRecord" r LEFT JOIN "EntityValue" capture ON capture."entityRecordId"=r.id AND capture."entityFieldId"=${config.captureTime.fieldId} WHERE r."entityTypeId"=${targetEntityTypeId} AND EXISTS(SELECT 1 FROM "EntityValue" d WHERE d."entityRecordId"=r.id AND d."entityFieldId"=${config.dateFieldId} AND d."dateValue"=${date.toISOString().slice(0,10)}::date) ORDER BY capture."dateValue" DESC NULLS LAST,r.id ASC LIMIT ${limit} OFFSET ${offset??0}`) : undefined;
   const records = await prisma.entityRecord.findMany({
     include: {
       ...(allowsAttendanceRepetition(config.repetitionPolicy)?{auditEvents:{where:{action:"RECORD_CREATED" as const},select:{metadata:true as const},orderBy:{createdAt:"asc" as const},take:1}}:{}),
@@ -804,11 +811,13 @@ async function getLatestAttendanceRecords({
         select: {
           entityFieldId: true,
           textValue: true,
+          dateValue: true,
         },
         where: {
           entityFieldId: {
             in: [
               config.statusFieldId,
+              ...(config.captureTime ? [config.captureTime.fieldId] : []),
               ...(config.observationFieldId ? [config.observationFieldId] : []),
               ...contextFields.map((field) => field.id),
             ],
@@ -817,10 +826,11 @@ async function getLatestAttendanceRecords({
       },
     },
     orderBy: [{ updatedAt: "desc" }, { id: "asc" }],
-    take: limit,
-    ...(offset !== undefined ? {skip:offset} : {}),
+    ...(orderedIds ? {} : {take:limit}),
+    ...(!orderedIds && offset !== undefined ? {skip:offset} : {}),
     where: {
       entityTypeId: targetEntityTypeId,
+      ...(orderedIds ? {id:{in:orderedIds.map(r=>r.id)}} : {}),
       values: {
         some: {
           dateValue: date,
@@ -830,6 +840,7 @@ async function getLatestAttendanceRecords({
     },
   });
 
+  if(orderedIds){const order=new Map(orderedIds.map((r,i)=>[r.id,i]));records.sort((a,b)=>order.get(a.id)!-order.get(b.id)!);}
   return records.map((record) => {
     const statusValue = record.values.find((value) => value.entityFieldId === config.statusFieldId)?.textValue;
     const statusOption = statusValue ? statusOptionsByValue.get(statusValue) ?? null : null;
@@ -837,7 +848,8 @@ async function getLatestAttendanceRecords({
 
     return {
       attendanceRecordId: record.id,
-      ...(allowsAttendanceRepetition(config.repetitionPolicy)?{eventOccurredAt:attendanceEventTime(record)}:{}),
+      ...captureTimeRead(config,record.values),
+      ...(allowsAttendanceRepetition(config.repetitionPolicy)?{eventOccurredAt:config.captureTime ? record.values.find(v=>v.entityFieldId===config.captureTime!.fieldId)?.dateValue?.toISOString() : attendanceEventTime(record)}:{}),
       ...(config.observationFieldId ? {observation: record.values.find(value => value.entityFieldId === config.observationFieldId)?.textValue ?? null} : {}),
       person: person
         ? {

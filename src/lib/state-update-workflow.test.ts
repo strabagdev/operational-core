@@ -54,6 +54,7 @@ const queryRaw = vi.mocked(prisma.$queryRaw);
 const transaction = vi.mocked(prisma.$transaction);
 
 const tx = {
+  appView: {findMany: vi.fn(async()=>[])},
   $queryRaw: vi.fn(async () => []),
   apiIdempotencyKey: { update: vi.fn() },
   auditEvent: { create: vi.fn() },

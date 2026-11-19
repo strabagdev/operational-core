@@ -1,3 +1,5 @@
+import { captureTimeFieldIds } from "@/lib/capture-time";
+import { prisma as capturePrisma } from "@/lib/prisma";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
@@ -72,7 +74,7 @@ export default async function NewEntityRecordPage({
           <CardTitle>Datos del registro</CardTitle>
         </CardHeader>
         <CardContent>
-          <RecordForm
+          <RecordForm automaticCaptureFieldIds={await captureTimeFieldIds(capturePrisma,entityTypeId)}
             action={createEntityRecordAction.bind(null, contractId, entityTypeId)}
             fieldErrors={parsedFieldErrors}
             fields={data.entityType.fields}

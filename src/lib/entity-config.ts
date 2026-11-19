@@ -1,3 +1,4 @@
+import {protectCaptureFieldDefinition,captureTimeFieldIds} from "./capture-time";
 import { assertRelationFieldEdit } from "./relation-cardinality-write";
 import { assertGenericEntityWritesAllowed } from "./workflow-write-policy";
 import { fieldSearchComparison, parseSearchComparison, type SearchComparison } from "./search-comparison";
@@ -793,6 +794,7 @@ export async function updateEntityField(
 
   return prisma.$transaction(async (tx) => {
     await assertRelationFieldEdit(tx, authorized.entityType.id, field.id, input);
+    if(field.type==="DATETIME") await protectCaptureFieldDefinition(tx,entityTypeId,fieldId,input);
     if (input.display.primary && !comparisonOnly) {
       await unsetPrimaryFields(
         tx,
@@ -862,6 +864,7 @@ export async function updateEntityFieldWithOptions(
 
   return prisma.$transaction(async (tx) => {
     await assertRelationFieldEdit(tx, authorized.entityType.id, field.id, input);
+    if(field.type==="DATETIME") await protectCaptureFieldDefinition(tx,entityTypeId,fieldId,input);
     if (input.display.primary && !comparisonOnly) {
       await unsetPrimaryFields(
         tx,
@@ -990,6 +993,7 @@ export async function setEntityFieldActive(
     throw userError("Quita Campo principal antes de desactivar este campo.");
   }
 
+  if(field?.type==="DATETIME" && !isActive && (await captureTimeFieldIds(prisma,entityTypeId)).includes(fieldId)) throw userError("El campo automático está vinculado a una experiencia; conserva su definición e historial.");
   return prisma.entityField.update({
     where: { id: fieldId },
     data: { isActive },

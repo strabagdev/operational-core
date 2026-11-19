@@ -730,6 +730,7 @@ describe("incoming record relation summaries", () => {
 
 function tx() {
   return {
+    appView: {findMany:vi.fn(async()=>[])},
     $queryRaw: vi.fn(async () => [{ id: "source_record_1" }]),
     entityRecord: {
       create: vi.fn(),

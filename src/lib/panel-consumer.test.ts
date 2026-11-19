@@ -13,6 +13,7 @@ const accept="application/json;opco-panel=1;features="+PANEL_FEATURES.join(".");
 const view=()=>({id:"p",type:"PANEL",name:"Configurable",slug:"configurable",icon:null,sortOrder:0,config:panelFixtureConfig(),configRevision:"r2"}) as unknown as SerializedApiAppView;
 beforeEach(()=>{vi.clearAllMocks();access.mockResolvedValue(true);app.mockResolvedValue({id:"p",name:"Configurable",slug:"configurable",type:"PANEL",config:panelFixtureConfig()});});
 describe("PANEL consumer compatibility",()=>{
+ it("negotiates compact capture only when that column is configured",()=>{const config=parseAppViewConfig({type:"PANEL",config:panelFixtureConfig()});if(config.type!=="PANEL")throw Error();const m=config.modules.find(m=>m.visualization.type==="TABLE")!;if(m.visualization.type!=="TABLE")throw Error();m.visualization.config.columns[0].captureTime={timeZone:"UTC"};expect(requiredPanelFeatures(config)).toContain("capture-time-v1");expect(panelCompatibility(config,"r",PANEL_FEATURES.filter(f=>f!=="capture-time-v1"))?.status).toBe("update-required");});
  it("does not infer capabilities from absent, malformed, duplicate or unknown-version declarations",()=>{
   for(const value of [null,"application/json","*/*","application/json;opco-panel=2;features=groups-v1","application/json;opco-panel=1;opco-panel=1;features=groups-v1",'application/json;opco-panel=1;features="groups-v1"'])expect(panelConsumerFeatures(value)).toEqual([]);
   expect(panelConsumerFeatures(accept)).toEqual(PANEL_FEATURES);
@@ -20,7 +21,7 @@ describe("PANEL consumer compatibility",()=>{
  });
  it("derives independent requirements and keeps legacy representations identical",()=>{
   const config=parseAppViewConfig({type:"PANEL",config:panelFixtureConfig()});if(config.type!=="PANEL")throw Error();
-  expect(requiredPanelFeatures(config)).toEqual(PANEL_FEATURES);
+  expect(requiredPanelFeatures(config)).toEqual(PANEL_FEATURES.filter(f=>f!=="capture-time-v1"));
   expect(panelCompatibility(config,"r",["groups-v1"])).toMatchObject({status:"update-required",accepted:["groups-v1"]});
   config.filters.forEach(filter=>delete filter.defaultValue);config.datasets.forEach(dataset=>{delete dataset.groupBy;delete dataset.relationCounts;});
   expect(panelCompatibility(config,"r",[])).toBeUndefined();
@@ -29,7 +30,7 @@ describe("PANEL consumer compatibility",()=>{
   const original=view(),snapshot=JSON.stringify(original);const compatible={...original,id:"legacy",type:"RECORDS",config:{entityTypeId:"e"}}as SerializedApiAppView;
   const projected=projectPanelViewsForConsumer([compatible,original],[]);
   expect(projected[0]).toBe(compatible);expect(projected.map(view=>view.id)).toEqual(["legacy","p"]);
-  expect(projected[1]).toMatchObject({name:original.name,configRevision:"r2",panelCompatibility:{status:"update-required",required:PANEL_FEATURES,accepted:[]}});
+  expect(projected[1]).toMatchObject({name:original.name,configRevision:"r2",panelCompatibility:{status:"update-required",required:PANEL_FEATURES.filter(f=>f!=="capture-time-v1"),accepted:[]}});
   const parsed=parseAppViewConfig({type:"PANEL",config:projected[1].config});expect(parsed.type).toBe("PANEL");
   if(parsed.type!=="PANEL")throw Error();expect(parsed.filters).toEqual([]);expect(parsed.metrics).toEqual([]);expect(parsed.datasets[0].groupBy).toBeUndefined();expect(parsed.datasets[0].relationCounts).toBeUndefined();expect(parsed.modules[0].title).toBe("Actualización necesaria");
   expect(JSON.stringify(original)).toBe(snapshot);

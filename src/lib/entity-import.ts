@@ -1,3 +1,4 @@
+import { captureTimeFieldIds, protectCaptureValues } from "./capture-time";
 import { assertRelationMutationCardinality } from "./relation-cardinality-write";
 import { assertGenericEntityWritesAllowed } from "./workflow-write-policy";
 import ExcelJS from "exceljs";
@@ -175,7 +176,8 @@ export async function getEntityImportContext(
     return null;
   }
 
-  const fields = authorized.entityType.fields as ImportField[];
+  const automatic = await captureTimeFieldIds(prisma, entityTypeId);
+  const fields = authorized.entityType.fields.filter(field=>!automatic.includes(field.id)) as ImportField[];
 
   assertEntityImportable(fields);
 
@@ -433,6 +435,9 @@ export async function importEntityRecords({
 
   return prisma.$transaction(async (tx) => {
     await assertGenericEntityWritesAllowed(tx, [context.entityType.id]);
+    if (plan.records.length) await protectCaptureValues(tx,context.entityType.id,[]);
+    const automatic = await captureTimeFieldIds(tx,context.entityType.id);
+    if (context.importableFields.some(f=>automatic.includes(f.id))) throw new Error("La estructura del importador cambió; descarga una plantilla actualizada.");
     const groupedRelations = new Map<string, {fieldId:string;targetRecordIds:string[]}>();
     for (const relation of plan.relations) {
       const key = JSON.stringify([relation.sourceRecordId, relation.sourceFieldId]);

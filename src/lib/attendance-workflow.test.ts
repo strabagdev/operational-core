@@ -69,6 +69,7 @@ type EntityRecordFindManyMockArgs = {
 };
 
 const tx = {
+  appView: {findMany: vi.fn(async()=>[])},
   $queryRaw: vi.fn(async () => []),
   auditEvent: {
     create: vi.fn(),
