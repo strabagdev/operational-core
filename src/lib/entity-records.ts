@@ -1935,6 +1935,19 @@ export function deserializeEntityValue(value: {
       return formatDateOnly(value.dateValue);
     }
 
+    if (value.entityField?.type === "DATETIME") {
+      return `${value.dateValue.toLocaleString("es-CL", {
+        timeZone: "UTC",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hourCycle: "h23",
+      })} UTC`;
+    }
+
     return value.dateValue.toLocaleDateString("es-CL");
   }
 
